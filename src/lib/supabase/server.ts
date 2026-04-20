@@ -1,7 +1,8 @@
 import { createServerClient } from "@supabase/ssr";
-import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 import type { Database } from "./types";
+
+export { createServiceRoleClient } from "./service";
 
 export async function createClient() {
   const url = process.env.NEXT_PUBLIC_APP_SUPABASE_URL;
@@ -30,20 +31,5 @@ export async function createClient() {
         }
       },
     },
-  });
-}
-
-export function createServiceRoleClient() {
-  const url = process.env.NEXT_PUBLIC_APP_SUPABASE_URL;
-  const serviceKey = process.env.APP_SUPABASE_SERVICE_ROLE_KEY;
-
-  if (!url || !serviceKey) {
-    throw new Error(
-      "Missing NEXT_PUBLIC_APP_SUPABASE_URL or APP_SUPABASE_SERVICE_ROLE_KEY — check .env.local",
-    );
-  }
-
-  return createSupabaseClient<Database>(url, serviceKey, {
-    auth: { persistSession: false, autoRefreshToken: false },
   });
 }

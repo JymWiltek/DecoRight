@@ -6,9 +6,12 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "supabase:test": "tsx --env-file=.env.local scripts/supabase-roundtrip.ts",
+    "supabase:seed": "tsx --env-file=.env.local scripts/seed-test-products.ts"
   },
   "dependencies": {
+    "@google/model-viewer": "^4.2.0",
     "@supabase/ssr": "^0.10.2",
     "@supabase/supabase-js": "^2.103.3",
     "next": "16.2.4",
@@ -23,6 +26,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.2.4",
     "tailwindcss": "^4",
+    "tsx": "^4.21.0",
     "typescript": "^5"
   }
 }
