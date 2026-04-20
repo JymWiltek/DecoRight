@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(mv /Users/jymchee/Desktop/decoright/PROJECT_SPEC.md /tmp/PROJECT_SPEC.md.bak)",
-      "Bash(npx --yes create-next-app@latest . --typescript --tailwind --eslint --app --src-dir --import-alias \"@/*\" --use-npm --turbopack --yes)"
+      "Bash(npx --yes create-next-app@latest . --typescript --tailwind --eslint --app --src-dir --import-alias \"@/*\" --use-npm --turbopack --yes)",
+      "Bash(npm install *)"
     ]
   }
 }
