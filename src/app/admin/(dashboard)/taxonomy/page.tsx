@@ -1,5 +1,6 @@
 import { loadTaxonomy } from "@/lib/taxonomy";
-import { addTaxonomyItem, deleteTaxonomyItem } from "./actions";
+import { addTaxonomyItem } from "./actions";
+import DeleteChip from "./DeleteChip";
 
 export const dynamic = "force-dynamic";
 
@@ -9,6 +10,8 @@ type SearchParams = {
   err?: string;
   kind?: string;
   msg?: string;
+  slug?: string;
+  count?: string;
 };
 
 type PageProps = { searchParams: Promise<SearchParams> };
@@ -33,7 +36,7 @@ export default async function TaxonomyPage({ searchParams }: PageProps) {
       )}
       {sp.err && (
         <div className="rounded-md bg-rose-50 px-4 py-2 text-sm text-rose-700">
-          出错了：{errorMessage(sp.err, sp.kind, sp.msg)}
+          {errorMessage(sp.err, sp.kind, sp.msg, sp.slug, sp.count)}
         </div>
       )}
 
@@ -75,18 +78,26 @@ export default async function TaxonomyPage({ searchParams }: PageProps) {
   );
 }
 
-function errorMessage(err: string, kind?: string, msg?: string): string {
+function errorMessage(
+  err: string,
+  kind?: string,
+  msg?: string,
+  slug?: string,
+  count?: string,
+): string {
   switch (err) {
     case "label":
-      return "缺少中文名";
+      return "出错了：缺少中文名";
     case "slug":
-      return "slug 格式错（只能 a-z 0-9 _）";
+      return "出错了：请用包含至少一个英文字母或数字的名字，或手填 slug（例：gamer_pc）";
     case "hex":
-      return "hex 色值格式错（需 #RRGGBB，例 #FF8800）";
+      return "出错了：hex 色值格式错（需 #RRGGBB，例 #FF8800）";
+    case "inuse":
+      return `不能删除：还有 ${count ?? "?"} 件商品在用「${slug ?? ""}」。请先把这些商品改成别的分类，再回来删。`;
     case "db":
-      return `数据库 (${kind}): ${msg ?? ""}`;
+      return `数据库出错 (${kind}): ${msg ?? ""}`;
     default:
-      return err;
+      return `出错了：${err}`;
   }
 }
 
@@ -118,30 +129,13 @@ function Block({
           <span className="text-xs text-neutral-400">（空）</span>
         )}
         {rows.map((r) => (
-          <form
+          <DeleteChip
             key={r.slug}
-            action={deleteTaxonomyItem}
-            className="group inline-flex items-center gap-1 rounded-full border border-neutral-300 px-3 py-1 text-xs"
-          >
-            <input type="hidden" name="kind" value={kind} />
-            <input type="hidden" name="slug" value={r.slug} />
-            {r.hex && (
-              <span
-                className="h-3 w-3 rounded-full border border-neutral-300"
-                style={{ backgroundColor: r.hex }}
-              />
-            )}
-            <span>{r.label}</span>
-            <span className="text-neutral-400">· {r.slug}</span>
-            <button
-              type="submit"
-              className="ml-1 text-neutral-400 hover:text-rose-600"
-              title="删除"
-              aria-label={`删除 ${r.label}`}
-            >
-              ×
-            </button>
-          </form>
+            kind={kind}
+            slug={r.slug}
+            label={r.label}
+            hex={r.hex}
+          />
         ))}
       </div>
 
