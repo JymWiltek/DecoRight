@@ -77,7 +77,7 @@ export default function PillGrid(props: Props) {
         <input key={s} type="hidden" name={name} value={s} />
       ))}
 
-      <div className={variant === "color" ? "flex flex-wrap gap-2" : "flex flex-wrap gap-2"}>
+      <div className={variant === "color" ? "flex flex-wrap gap-x-3 gap-y-3" : "flex flex-wrap gap-2"}>
         {options.map((opt) => {
           const active = selected.includes(opt.slug);
           if (variant === "color") {
@@ -87,15 +87,24 @@ export default function PillGrid(props: Props) {
                 type="button"
                 onClick={() => toggle(opt.slug)}
                 aria-pressed={active}
-                title={opt.label}
-                className={`relative h-9 w-9 rounded-full border transition ${
-                  active
-                    ? "border-black ring-2 ring-black ring-offset-1"
-                    : "border-neutral-300 hover:border-neutral-500"
-                }`}
-                style={{ backgroundColor: opt.hex ?? "#ccc" }}
+                className="flex w-14 flex-col items-center gap-1 text-center"
               >
-                <span className="sr-only">{opt.label}</span>
+                <span
+                  aria-hidden
+                  className={`h-9 w-9 rounded-full border transition ${
+                    active
+                      ? "border-black ring-2 ring-black ring-offset-1"
+                      : "border-neutral-300 group-hover:border-neutral-500"
+                  }`}
+                  style={{ backgroundColor: opt.hex ?? "#ccc" }}
+                />
+                <span
+                  className={`text-[11px] leading-tight ${
+                    active ? "font-semibold text-neutral-900" : "text-neutral-600"
+                  }`}
+                >
+                  {opt.label}
+                </span>
               </button>
             );
           }
