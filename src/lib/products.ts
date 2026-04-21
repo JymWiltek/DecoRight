@@ -3,6 +3,12 @@ import type { ProductRow } from "./supabase/types";
 
 export type ProductFilters = {
   itemTypes?: string[];
+  /**
+   * Post-migration 0003: "rooms" is no longer a product column. A
+   * product's room is inferred from its item_type (each item_type
+   * has a room_slug). When the user picks room(s), we pre-resolve
+   * the matching item_types and AND with any itemTypes picks.
+   */
   rooms?: string[];
   styles?: string[];
   colors?: string[];
@@ -13,6 +19,23 @@ export type ProductFilters = {
   sort?: "latest" | "price_asc" | "price_desc";
 };
 
+/**
+ * Resolve a list of room slugs → the set of item_type slugs that
+ * live in those rooms. Used to turn "picked bedroom+living_room"
+ * into an `item_type in (bed_frame, mattress, sofa, ...)` query.
+ */
+async function itemTypesInRooms(
+  roomSlugs: string[],
+): Promise<string[]> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("item_types")
+    .select("slug")
+    .in("room_slug", roomSlugs);
+  if (error) throw error;
+  return (data ?? []).map((r) => r.slug);
+}
+
 export async function listPublishedProducts(
   filters: ProductFilters = {},
   limit = 60,
@@ -20,13 +43,32 @@ export async function listPublishedProducts(
   const supabase = await createClient();
   let query = supabase.from("products").select("*").eq("status", "published");
 
-  // item_type: single column, OR-match any picked slug
-  if (filters.itemTypes?.length) query = query.in("item_type", filters.itemTypes);
+  // Combine room and item_type picks into one `item_type in (...)`
+  // filter. Semantics: picked rooms ∪ picked item_types, ANDed.
+  let itemTypeSet: Set<string> | null = null;
+  if (filters.rooms?.length) {
+    const fromRooms = await itemTypesInRooms(filters.rooms);
+    itemTypeSet = new Set(fromRooms);
+  }
+  if (filters.itemTypes?.length) {
+    if (itemTypeSet) {
+      // Intersection — "bedroom" AND "sofa" returns no products,
+      // which is the honest answer (no sofas live in bedroom).
+      itemTypeSet = new Set(
+        filters.itemTypes.filter((t) => itemTypeSet!.has(t)),
+      );
+    } else {
+      itemTypeSet = new Set(filters.itemTypes);
+    }
+  }
+  if (itemTypeSet) {
+    if (itemTypeSet.size === 0) return [];
+    query = query.in("item_type", Array.from(itemTypeSet));
+  }
 
-  // array columns: overlap = product matches if ANY of the user's
+  // Array columns: overlap = product matches if ANY of the user's
   // picks is in the product's array. That's the "or" semantics the
   // user described ("选灰色 OR 绿色，这个产品都出现").
-  if (filters.rooms?.length) query = query.overlaps("rooms", filters.rooms);
   if (filters.styles?.length) query = query.overlaps("styles", filters.styles);
   if (filters.colors?.length) query = query.overlaps("colors", filters.colors);
   if (filters.materials?.length)

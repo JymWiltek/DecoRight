@@ -23,7 +23,6 @@ async function main() {
       name: TEST_PRODUCT_MARKER,
       brand: "DecoRight QA",
       item_type: "faucet",
-      rooms: ["bathroom", "kitchen"],
       styles: ["modern"],
       colors: ["chrome"],
       materials: ["chrome_plated"],
@@ -47,12 +46,7 @@ async function main() {
     .single();
   if (readErr || !read) throw readErr ?? new Error("select returned no row");
   if (read.name !== TEST_PRODUCT_MARKER) throw new Error(`name mismatch: ${read.name}`);
-  if (!Array.isArray(read.rooms) || read.rooms.length !== 2) {
-    throw new Error(`rooms mismatch: ${JSON.stringify(read.rooms)}`);
-  }
-  console.log(
-    `  ✓ name="${read.name}", item_type=${read.item_type}, rooms=${read.rooms.join(",")}`,
-  );
+  console.log(`  ✓ name="${read.name}", item_type=${read.item_type}`);
 
   console.log("→ UPDATE (verify updated_at trigger fires)");
   const before = read.updated_at;

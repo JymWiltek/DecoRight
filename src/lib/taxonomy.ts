@@ -1,6 +1,11 @@
 import { unstable_cache, updateTag } from "next/cache";
 import { createClient } from "@supabase/supabase-js";
-import type { Database, TaxonomyRow, ColorRow } from "./supabase/types";
+import type {
+  Database,
+  TaxonomyRow,
+  ColorRow,
+  ItemTypeRow,
+} from "./supabase/types";
 
 /** Cookie-free anon client. Taxonomy tables have public-read RLS, so no
  *  session is needed — and critically, `unstable_cache` forbids `cookies()`
@@ -19,7 +24,7 @@ function createAnonClient() {
 }
 
 export type Taxonomy = {
-  itemTypes: TaxonomyRow[];
+  itemTypes: ItemTypeRow[];
   rooms: TaxonomyRow[];
   styles: TaxonomyRow[];
   materials: TaxonomyRow[];

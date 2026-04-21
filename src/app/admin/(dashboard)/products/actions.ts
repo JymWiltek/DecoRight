@@ -22,22 +22,19 @@ import type {
 // styles / colors / materials without a code change.
 async function loadValidSlugs(): Promise<{
   itemTypes: Set<string>;
-  rooms: Set<string>;
   styles: Set<string>;
   materials: Set<string>;
   colors: Set<string>;
 }> {
   const supabase = createServiceRoleClient();
-  const [it, rm, st, mt, co] = await Promise.all([
+  const [it, st, mt, co] = await Promise.all([
     supabase.from("item_types").select("slug"),
-    supabase.from("rooms").select("slug"),
     supabase.from("styles").select("slug"),
     supabase.from("materials").select("slug"),
     supabase.from("colors").select("slug"),
   ]);
   return {
     itemTypes: new Set((it.data ?? []).map((r) => r.slug)),
-    rooms: new Set((rm.data ?? []).map((r) => r.slug)),
     styles: new Set((st.data ?? []).map((r) => r.slug)),
     materials: new Set((mt.data ?? []).map((r) => r.slug)),
     colors: new Set((co.data ?? []).map((r) => r.slug)),
@@ -102,7 +99,6 @@ async function parsePayload(fd: FormData): Promise<Omit<ProductInsert, "id">> {
     name,
     brand: str(fd, "brand"),
     item_type: pickOneFromSet(str(fd, "item_type"), valid.itemTypes),
-    rooms: pickManyFromSet(fd, "rooms", valid.rooms),
     styles: pickManyFromSet(fd, "styles", valid.styles),
     colors: pickManyFromSet(fd, "colors", valid.colors),
     materials: pickManyFromSet(fd, "materials", valid.materials),

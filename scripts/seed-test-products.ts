@@ -2,9 +2,10 @@
  * Seed 3 permanent test products for Phase 2.5 dev/demo.
  * Idempotent: re-run to refresh. Keyed by fixed UUIDs.
  *
- * Run AFTER applying `supabase/migrations/0002_taxonomy_and_multiselect.sql`,
- * since this seeds against the new schema (item_type + rooms[] + styles[] +
- * colors[] + materials[]).
+ * Run AFTER applying the latest migration. Post-0003, products no
+ * longer have a `rooms[]` column — room is derived from
+ * item_types.room_slug. These seeds only set item_type + the
+ * remaining multi-select arrays.
  *
  * Run: `npm run supabase:seed`
  */
@@ -19,7 +20,6 @@ const products: Seed[] = [
     name: "现代铬色面盆水龙头",
     brand: "Wiltek",
     item_type: "faucet",
-    rooms: ["bathroom", "kitchen"],
     styles: ["modern", "minimalist"],
     colors: ["chrome", "black", "gold"],
     materials: ["chrome_plated", "stainless_steel"],
@@ -42,7 +42,6 @@ const products: Seed[] = [
     name: "北欧风实木餐椅",
     brand: "Wiltek",
     item_type: "dining_chair",
-    rooms: ["dining_room", "living_room"],
     styles: ["scandinavian", "minimalist"],
     colors: ["wood_light", "beige"],
     materials: ["solid_wood", "fabric"],
@@ -64,7 +63,6 @@ const products: Seed[] = [
     name: "极简黄铜吊灯",
     brand: "Wiltek",
     item_type: "pendant_light",
-    rooms: ["dining_room", "living_room"],
     styles: ["minimalist", "modern", "luxury"],
     colors: ["brass", "gold"],
     materials: ["brass"],

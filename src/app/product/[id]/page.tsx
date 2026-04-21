@@ -36,7 +36,15 @@ export default async function ProductPage({ params }: PageProps) {
   const itemTypeLabel = product.item_type
     ? (itemTypeLabels[product.item_type] ?? product.item_type)
     : null;
-  const roomLabelList = product.rooms.map((s) => roomLabels[s] ?? s);
+  // Post-migration 0003: room is derived from the item_type row, not
+  // stored on the product. Look up the single parent room (if any).
+  const itemTypeRow = product.item_type
+    ? taxonomy.itemTypes.find((t) => t.slug === product.item_type)
+    : null;
+  const roomLabelList =
+    itemTypeRow?.room_slug
+      ? [roomLabels[itemTypeRow.room_slug] ?? itemTypeRow.room_slug]
+      : [];
   const styleLabelList = product.styles.map((s) => styleLabels[s] ?? s);
   const materialLabelList = product.materials.map((s) => materialLabels[s] ?? s);
 

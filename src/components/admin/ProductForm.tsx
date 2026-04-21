@@ -43,6 +43,14 @@ export default function ProductForm({ product, taxonomy, action, saved }: Props)
               已保存
             </span>
           )}
+          {isEdit && (
+            <Link
+              href={`/admin/products/${p!.id}/upload`}
+              className="rounded-md border border-neutral-300 px-3 py-1.5 text-sm hover:border-black"
+            >
+              上传图片 →
+            </Link>
+          )}
           <Link
             href="/admin"
             className="rounded-md border border-neutral-300 px-3 py-1.5 text-sm hover:border-black"
@@ -107,7 +115,7 @@ export default function ProductForm({ product, taxonomy, action, saved }: Props)
 
       <Section
         title="物件类型 *"
-        hint="一个产品就是一种东西（单选）。在 /admin/taxonomy 可以加新类型。"
+        hint="一个产品就是一种东西（单选）。房间自动跟着物件类型走（在分类管理设置），不用再选。"
       >
         <PillGrid
           name="item_type"
@@ -116,18 +124,6 @@ export default function ProductForm({ product, taxonomy, action, saved }: Props)
             label: r.label_zh,
           }))}
           initial={p?.item_type ?? null}
-        />
-      </Section>
-
-      <Section title="适用房间（可多选）">
-        <PillGrid
-          name="rooms"
-          multi
-          options={taxonomy.rooms.map((r) => ({
-            slug: r.slug,
-            label: r.label_zh,
-          }))}
-          initial={p?.rooms ?? []}
         />
       </Section>
 
