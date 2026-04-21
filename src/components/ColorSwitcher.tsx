@@ -1,38 +1,40 @@
 "use client";
 
-import type { ColorVariant } from "@/lib/supabase/types";
+export type ColorOption = { slug: string; label: string; hex: string };
 
 type Props = {
-  variants: ColorVariant[];
+  colors: ColorOption[];
   activeIndex: number;
   onChange: (index: number) => void;
 };
 
-export default function ColorSwitcher({ variants, activeIndex, onChange }: Props) {
-  if (variants.length === 0) return null;
+export default function ColorSwitcher({ colors, activeIndex, onChange }: Props) {
+  if (colors.length === 0) return null;
   return (
     <div className="flex flex-col gap-2">
       <div className="text-sm text-neutral-600">颜色</div>
       <div className="flex flex-wrap gap-3">
-        {variants.map((v, i) => {
+        {colors.map((c, i) => {
           const active = i === activeIndex;
           return (
             <button
-              key={`${v.name}-${i}`}
+              key={c.slug}
               type="button"
               onClick={() => onChange(i)}
-              aria-label={v.name}
+              aria-label={c.label}
               aria-pressed={active}
-              title={v.name}
+              title={c.label}
               className={`relative h-10 w-10 rounded-full border transition ${
-                active ? "border-black ring-2 ring-black ring-offset-2" : "border-neutral-300"
+                active
+                  ? "border-black ring-2 ring-black ring-offset-2"
+                  : "border-neutral-300"
               }`}
-              style={{ backgroundColor: v.hex }}
+              style={{ backgroundColor: c.hex }}
             />
           );
         })}
       </div>
-      <div className="text-sm text-neutral-700">{variants[activeIndex]?.name}</div>
+      <div className="text-sm text-neutral-700">{colors[activeIndex]?.label}</div>
     </div>
   );
 }

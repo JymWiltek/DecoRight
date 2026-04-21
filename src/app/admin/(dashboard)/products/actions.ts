@@ -6,29 +6,43 @@ import { createServiceRoleClient } from "@/lib/supabase/service";
 import { uploadGlb, uploadThumbnail } from "@/lib/storage";
 import { inferProductFields } from "@/lib/ai/infer";
 import {
-  CATEGORIES,
-  STYLES,
-  PRIMARY_COLORS,
-  MATERIALS,
-  INSTALLATIONS,
-  APPLICABLE_SPACES,
   PRICE_TIERS,
   PRODUCT_STATUSES,
-  type Category,
-  type Style,
-  type PrimaryColor,
-  type Material,
-  type Installation,
-  type ApplicableSpace,
   type PriceTier,
   type ProductStatus,
 } from "@/lib/constants/enums";
 import type {
-  ColorVariant,
   Dimensions,
   ProductInsert,
   ProductUpdate,
 } from "@/lib/supabase/types";
+
+// Taxonomy slugs are validated against the live DB tables — not a
+// hard-coded list — so operators can add new item types / rooms /
+// styles / colors / materials without a code change.
+async function loadValidSlugs(): Promise<{
+  itemTypes: Set<string>;
+  rooms: Set<string>;
+  styles: Set<string>;
+  materials: Set<string>;
+  colors: Set<string>;
+}> {
+  const supabase = createServiceRoleClient();
+  const [it, rm, st, mt, co] = await Promise.all([
+    supabase.from("item_types").select("slug"),
+    supabase.from("rooms").select("slug"),
+    supabase.from("styles").select("slug"),
+    supabase.from("materials").select("slug"),
+    supabase.from("colors").select("slug"),
+  ]);
+  return {
+    itemTypes: new Set((it.data ?? []).map((r) => r.slug)),
+    rooms: new Set((rm.data ?? []).map((r) => r.slug)),
+    styles: new Set((st.data ?? []).map((r) => r.slug)),
+    materials: new Set((mt.data ?? []).map((r) => r.slug)),
+    colors: new Set((co.data ?? []).map((r) => r.slug)),
+  };
+}
 
 function str(fd: FormData, key: string): string | null {
   const v = fd.get(key);
@@ -52,13 +66,18 @@ function pickOne<T extends readonly string[]>(
   return (allowed as readonly string[]).includes(v) ? (v as T[number]) : null;
 }
 
-function pickMany<T extends readonly string[]>(
+function pickManyFromSet(
   fd: FormData,
   key: string,
-  allowed: T,
-): T[number][] {
+  allowed: Set<string>,
+): string[] {
   const raw = fd.getAll(key).map((x) => x.toString());
-  return raw.filter((p): p is T[number] => (allowed as readonly string[]).includes(p));
+  return raw.filter((s) => allowed.has(s));
+}
+
+function pickOneFromSet(v: string | null, allowed: Set<string>): string | null {
+  if (!v) return null;
+  return allowed.has(v) ? v : null;
 }
 
 function parseDimensions(fd: FormData): Dimensions | null {
@@ -73,59 +92,29 @@ function parseDimensions(fd: FormData): Dimensions | null {
   return out;
 }
 
-function parseColorVariants(raw: string | null): ColorVariant[] {
-  if (!raw) return [];
-  try {
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed
-      .map((v): ColorVariant | null => {
-        if (!v || typeof v !== "object") return null;
-        const name = typeof v.name === "string" ? v.name : null;
-        const hex = typeof v.hex === "string" ? v.hex : null;
-        if (!name || !hex) return null;
-        return {
-          name,
-          hex,
-          price_adjustment_myr:
-            typeof v.price_adjustment_myr === "number" ? v.price_adjustment_myr : 0,
-          purchase_url_override:
-            typeof v.purchase_url_override === "string" && v.purchase_url_override
-              ? v.purchase_url_override
-              : null,
-        };
-      })
-      .filter((x): x is ColorVariant => x !== null);
-  } catch {
-    return [];
-  }
-}
+async function parsePayload(fd: FormData): Promise<Omit<ProductInsert, "id">> {
+  const valid = await loadValidSlugs();
 
-function parsePayload(fd: FormData): Omit<ProductInsert, "id"> {
-  const category = pickOne(str(fd, "category"), CATEGORIES);
-  if (!category) throw new Error("category required");
   const name = str(fd, "name");
   if (!name) throw new Error("name required");
 
   return {
     name,
     brand: str(fd, "brand"),
-    category: category as Category,
-    subcategory: str(fd, "subcategory"),
-    style: pickOne(str(fd, "style"), STYLES) as Style | null,
-    primary_color: pickOne(str(fd, "primary_color"), PRIMARY_COLORS) as PrimaryColor | null,
-    material: pickOne(str(fd, "material"), MATERIALS) as Material | null,
-    installation: pickOne(str(fd, "installation"), INSTALLATIONS) as Installation | null,
-    applicable_space: pickMany(fd, "applicable_space", APPLICABLE_SPACES) as ApplicableSpace[],
+    item_type: pickOneFromSet(str(fd, "item_type"), valid.itemTypes),
+    rooms: pickManyFromSet(fd, "rooms", valid.rooms),
+    styles: pickManyFromSet(fd, "styles", valid.styles),
+    colors: pickManyFromSet(fd, "colors", valid.colors),
+    materials: pickManyFromSet(fd, "materials", valid.materials),
     dimensions_mm: parseDimensions(fd),
     weight_kg: num(fd, "weight_kg"),
     price_myr: num(fd, "price_myr"),
     price_tier: pickOne(str(fd, "price_tier"), PRICE_TIERS) as PriceTier | null,
-    color_variants: parseColorVariants(str(fd, "color_variants_json")),
     purchase_url: str(fd, "purchase_url"),
     supplier: str(fd, "supplier"),
     description: str(fd, "description"),
-    status: (pickOne(str(fd, "status"), PRODUCT_STATUSES) as ProductStatus) ?? "draft",
+    status:
+      (pickOne(str(fd, "status"), PRODUCT_STATUSES) as ProductStatus) ?? "draft",
     ai_filled_fields: fd.getAll("ai_filled_fields").map((x) => x.toString()),
   };
 }
@@ -137,7 +126,7 @@ function fileOrNull(fd: FormData, key: string): File | null {
 }
 
 export async function createProduct(fd: FormData): Promise<void> {
-  const payload = parsePayload(fd);
+  const payload = await parsePayload(fd);
   const id = crypto.randomUUID();
   const supabase = createServiceRoleClient();
 
@@ -166,7 +155,7 @@ export async function createProduct(fd: FormData): Promise<void> {
 }
 
 export async function updateProduct(id: string, fd: FormData): Promise<void> {
-  const payload = parsePayload(fd);
+  const payload = await parsePayload(fd);
   const supabase = createServiceRoleClient();
 
   const updates: ProductUpdate = { ...payload };

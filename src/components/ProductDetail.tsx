@@ -2,19 +2,29 @@
 
 import { useState } from "react";
 import ModelViewer from "./ModelViewer";
-import ColorSwitcher from "./ColorSwitcher";
+import ColorSwitcher, { type ColorOption } from "./ColorSwitcher";
 import { formatMYR } from "@/lib/format";
 import type { ProductRow } from "@/lib/supabase/types";
 
-type Props = { product: ProductRow };
+type Props = {
+  product: ProductRow;
+  itemTypeLabel: string | null;
+  roomLabels: string[];
+  styleLabels: string[];
+  materialLabels: string[];
+  colors: ColorOption[]; // tags from taxonomy, used for both filter + 3D switcher
+};
 
-export default function ProductDetail({ product }: Props) {
+export default function ProductDetail({
+  product,
+  itemTypeLabel,
+  roomLabels,
+  styleLabels,
+  materialLabels,
+  colors,
+}: Props) {
   const [variantIndex, setVariantIndex] = useState(0);
-  const variants = product.color_variants ?? [];
-  const active = variants[variantIndex];
-  const basePrice = product.price_myr ?? 0;
-  const adjusted = active ? basePrice + (active.price_adjustment_myr ?? 0) : basePrice;
-  const buyUrl = active?.purchase_url_override || product.purchase_url || null;
+  const active = colors[variantIndex];
   const overrideColorHex = active?.hex ?? null;
 
   return (
@@ -37,16 +47,18 @@ export default function ProductDetail({ product }: Props) {
       <div className="flex flex-col gap-5">
         <div>
           {product.brand && (
-            <div className="text-sm uppercase tracking-wide text-neutral-500">{product.brand}</div>
+            <div className="text-sm uppercase tracking-wide text-neutral-500">
+              {product.brand}
+            </div>
           )}
           <h1 className="mt-1 text-2xl font-semibold">{product.name}</h1>
         </div>
 
-        <div className="text-3xl font-semibold">{formatMYR(adjusted)}</div>
+        <div className="text-3xl font-semibold">{formatMYR(product.price_myr)}</div>
 
-        {variants.length > 0 && (
+        {colors.length > 0 && (
           <ColorSwitcher
-            variants={variants}
+            colors={colors}
             activeIndex={variantIndex}
             onChange={setVariantIndex}
           />
@@ -59,35 +71,39 @@ export default function ProductDetail({ product }: Props) {
         )}
 
         <dl className="grid grid-cols-2 gap-y-2 text-sm text-neutral-700">
-          {product.category && (
+          {itemTypeLabel && (
             <>
-              <dt className="text-neutral-500">分类</dt>
-              <dd>{product.category}</dd>
+              <dt className="text-neutral-500">物件</dt>
+              <dd>{itemTypeLabel}</dd>
             </>
           )}
-          {product.style && (
+          {roomLabels.length > 0 && (
+            <>
+              <dt className="text-neutral-500">适用房间</dt>
+              <dd>{roomLabels.join("、")}</dd>
+            </>
+          )}
+          {styleLabels.length > 0 && (
             <>
               <dt className="text-neutral-500">风格</dt>
-              <dd>{product.style}</dd>
+              <dd>{styleLabels.join("、")}</dd>
             </>
           )}
-          {product.material && (
+          {materialLabels.length > 0 && (
             <>
               <dt className="text-neutral-500">材质</dt>
-              <dd>{product.material}</dd>
-            </>
-          )}
-          {product.installation && (
-            <>
-              <dt className="text-neutral-500">安装方式</dt>
-              <dd>{product.installation}</dd>
+              <dd>{materialLabels.join("、")}</dd>
             </>
           )}
           {product.dimensions_mm && (
             <>
               <dt className="text-neutral-500">尺寸 (mm)</dt>
               <dd>
-                {[product.dimensions_mm.length, product.dimensions_mm.width, product.dimensions_mm.height]
+                {[
+                  product.dimensions_mm.length,
+                  product.dimensions_mm.width,
+                  product.dimensions_mm.height,
+                ]
                   .filter((n) => n != null)
                   .join(" × ") || "—"}
               </dd>
@@ -101,9 +117,9 @@ export default function ProductDetail({ product }: Props) {
           )}
         </dl>
 
-        {buyUrl ? (
+        {product.purchase_url ? (
           <a
-            href={buyUrl}
+            href={product.purchase_url}
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex items-center justify-center rounded-md bg-black px-5 py-3 text-sm font-medium text-white transition hover:bg-neutral-800"

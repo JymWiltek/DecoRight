@@ -1,17 +1,12 @@
 import { createClient } from "./supabase/server";
 import type { ProductRow } from "./supabase/types";
-import type {
-  Style,
-  PrimaryColor,
-  Category,
-  ApplicableSpace,
-} from "./constants/enums";
 
 export type ProductFilters = {
-  category?: Category;
-  styles?: Style[];
-  colors?: PrimaryColor[];
-  spaces?: ApplicableSpace[];
+  itemTypes?: string[];
+  rooms?: string[];
+  styles?: string[];
+  colors?: string[];
+  materials?: string[];
   minPrice?: number;
   maxPrice?: number;
   q?: string;
@@ -23,15 +18,20 @@ export async function listPublishedProducts(
   limit = 60,
 ): Promise<ProductRow[]> {
   const supabase = await createClient();
-  let query = supabase
-    .from("products")
-    .select("*")
-    .eq("status", "published");
+  let query = supabase.from("products").select("*").eq("status", "published");
 
-  if (filters.category) query = query.eq("category", filters.category);
-  if (filters.styles?.length) query = query.in("style", filters.styles);
-  if (filters.colors?.length) query = query.in("primary_color", filters.colors);
-  if (filters.spaces?.length) query = query.overlaps("applicable_space", filters.spaces);
+  // item_type: single column, OR-match any picked slug
+  if (filters.itemTypes?.length) query = query.in("item_type", filters.itemTypes);
+
+  // array columns: overlap = product matches if ANY of the user's
+  // picks is in the product's array. That's the "or" semantics the
+  // user described ("选灰色 OR 绿色，这个产品都出现").
+  if (filters.rooms?.length) query = query.overlaps("rooms", filters.rooms);
+  if (filters.styles?.length) query = query.overlaps("styles", filters.styles);
+  if (filters.colors?.length) query = query.overlaps("colors", filters.colors);
+  if (filters.materials?.length)
+    query = query.overlaps("materials", filters.materials);
+
   if (filters.minPrice != null) query = query.gte("price_myr", filters.minPrice);
   if (filters.maxPrice != null) query = query.lte("price_myr", filters.maxPrice);
   if (filters.q) {
@@ -71,24 +71,28 @@ export async function getPublishedProductById(id: string): Promise<ProductRow | 
   return data;
 }
 
-export async function getRelatedProducts(product: ProductRow, limit = 6): Promise<ProductRow[]> {
-  if (!product.style) return [];
+export async function getRelatedProducts(
+  product: ProductRow,
+  limit = 6,
+): Promise<ProductRow[]> {
+  // Related = same item_type, excluding self, published.
+  // If no item_type on this product, fall back to matching on styles overlap.
   const supabase = await createClient();
-  const colors = Array.from(
-    new Set(
-      [product.primary_color, "white", "black"].filter(
-        (c): c is PrimaryColor => c != null,
-      ),
-    ),
-  );
-  const { data, error } = await supabase
+  let query = supabase
     .from("products")
     .select("*")
     .eq("status", "published")
-    .eq("style", product.style)
-    .in("primary_color", colors)
-    .neq("id", product.id)
-    .limit(limit);
+    .neq("id", product.id);
+
+  if (product.item_type) {
+    query = query.eq("item_type", product.item_type);
+  } else if (product.styles.length > 0) {
+    query = query.overlaps("styles", product.styles);
+  } else {
+    return [];
+  }
+
+  const { data, error } = await query.limit(limit);
   if (error) throw error;
   return data ?? [];
 }

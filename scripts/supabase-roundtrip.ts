@@ -4,6 +4,10 @@
  * Run: `npm run supabase:test`
  *
  * Uses the service-role client (bypasses RLS) so we can write without auth.
+ *
+ * Post Phase-2.5: taxonomy is DB-managed. Slug validity is enforced in the
+ * admin UI against live taxonomy tables — NOT by Postgres CHECK — so the
+ * old "verify CHECK rejects bad enum" step was dropped.
  */
 import { createServiceRoleClient } from "../src/lib/supabase/service";
 
@@ -18,13 +22,11 @@ async function main() {
     .insert({
       name: TEST_PRODUCT_MARKER,
       brand: "DecoRight QA",
-      category: "bathroom",
-      subcategory: "faucet",
-      style: "modern",
-      primary_color: "chrome",
-      material: "chrome_plated",
-      installation: "wall_mounted",
-      applicable_space: ["master_bathroom", "guest_bathroom"],
+      item_type: "faucet",
+      rooms: ["bathroom", "kitchen"],
+      styles: ["modern"],
+      colors: ["chrome"],
+      materials: ["chrome_plated"],
       price_myr: 499,
       price_tier: "mid",
       description: "A throwaway product created by scripts/supabase-roundtrip.ts",
@@ -33,7 +35,9 @@ async function main() {
     .single();
 
   if (insertErr || !inserted) throw insertErr ?? new Error("insert returned no row");
-  console.log(`  ✓ id=${inserted.id}, status=${inserted.status}, created_at=${inserted.created_at}`);
+  console.log(
+    `  ✓ id=${inserted.id}, status=${inserted.status}, created_at=${inserted.created_at}`,
+  );
 
   console.log("→ SELECT back by id");
   const { data: read, error: readErr } = await supabase
@@ -43,10 +47,12 @@ async function main() {
     .single();
   if (readErr || !read) throw readErr ?? new Error("select returned no row");
   if (read.name !== TEST_PRODUCT_MARKER) throw new Error(`name mismatch: ${read.name}`);
-  if (!Array.isArray(read.applicable_space) || read.applicable_space.length !== 2) {
-    throw new Error(`applicable_space mismatch: ${JSON.stringify(read.applicable_space)}`);
+  if (!Array.isArray(read.rooms) || read.rooms.length !== 2) {
+    throw new Error(`rooms mismatch: ${JSON.stringify(read.rooms)}`);
   }
-  console.log(`  ✓ name="${read.name}", spaces=${read.applicable_space.join(",")}`);
+  console.log(
+    `  ✓ name="${read.name}", item_type=${read.item_type}, rooms=${read.rooms.join(",")}`,
+  );
 
   console.log("→ UPDATE (verify updated_at trigger fires)");
   const before = read.updated_at;
@@ -62,15 +68,6 @@ async function main() {
     throw new Error(`updated_at did not advance (${before} === ${updated.updated_at})`);
   }
   console.log(`  ✓ updated_at advanced: ${before} → ${updated.updated_at}`);
-
-  console.log("→ UPDATE with invalid enum (should fail with CHECK violation)");
-  const { error: checkErr } = await supabase
-    .from("products")
-    // @ts-expect-error intentional bad value to exercise CHECK constraint
-    .update({ style: "not_a_real_style" })
-    .eq("id", inserted.id);
-  if (!checkErr) throw new Error("CHECK constraint did NOT reject invalid style — schema broken");
-  console.log(`  ✓ CHECK rejected as expected: ${checkErr.code} ${checkErr.message.slice(0, 80)}`);
 
   console.log("→ DELETE");
   const { error: delErr } = await supabase

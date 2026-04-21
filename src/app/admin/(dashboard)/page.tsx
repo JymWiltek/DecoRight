@@ -1,16 +1,10 @@
 import Link from "next/link";
 import { listAllProducts } from "@/lib/admin/products";
 import { formatMYR } from "@/lib/format";
-import { CATEGORY_LABELS } from "@/lib/constants/enum-labels";
+import { loadTaxonomy, labelMap } from "@/lib/taxonomy";
+import { PRODUCT_STATUS_LABELS } from "@/lib/constants/enum-labels";
 
 export const dynamic = "force-dynamic";
-
-const STATUS_LABELS: Record<string, string> = {
-  draft: "草稿",
-  published: "已上架",
-  archived: "归档",
-  link_broken: "链接失效",
-};
 
 const STATUS_STYLES: Record<string, string> = {
   draft: "bg-neutral-100 text-neutral-700",
@@ -20,7 +14,12 @@ const STATUS_STYLES: Record<string, string> = {
 };
 
 export default async function AdminProductsPage() {
-  const products = await listAllProducts();
+  const [products, taxonomy] = await Promise.all([
+    listAllProducts(),
+    loadTaxonomy(),
+  ]);
+  const itemTypeLabels = labelMap(taxonomy.itemTypes);
+
   const byStatus = products.reduce<Record<string, number>>((acc, p) => {
     acc[p.status] = (acc[p.status] ?? 0) + 1;
     return acc;
@@ -33,9 +32,9 @@ export default async function AdminProductsPage() {
           <h1 className="text-2xl font-semibold">商品管理</h1>
           <p className="mt-1 text-sm text-neutral-500">
             共 {products.length} 件
-            {["published", "draft", "archived", "link_broken"]
+            {(["published", "draft", "archived", "link_broken"] as const)
               .filter((s) => byStatus[s])
-              .map((s) => ` · ${STATUS_LABELS[s]} ${byStatus[s]}`)
+              .map((s) => ` · ${PRODUCT_STATUS_LABELS[s]} ${byStatus[s]}`)
               .join("")}
           </p>
         </div>
@@ -52,7 +51,7 @@ export default async function AdminProductsPage() {
           <thead className="border-b border-neutral-200 bg-neutral-50 text-xs uppercase tracking-wide text-neutral-500">
             <tr>
               <th className="px-4 py-3">商品</th>
-              <th className="px-4 py-3">分类</th>
+              <th className="px-4 py-3">物件</th>
               <th className="px-4 py-3">价格</th>
               <th className="px-4 py-3">状态</th>
               <th className="px-4 py-3">3D</th>
@@ -82,7 +81,7 @@ export default async function AdminProductsPage() {
                   </div>
                 </td>
                 <td className="px-4 py-3 text-neutral-700">
-                  {CATEGORY_LABELS[p.category]}
+                  {p.item_type ? (itemTypeLabels[p.item_type] ?? p.item_type) : "—"}
                 </td>
                 <td className="px-4 py-3 text-neutral-700">
                   {formatMYR(p.price_myr)}
@@ -91,7 +90,7 @@ export default async function AdminProductsPage() {
                   <span
                     className={`rounded-full px-2 py-0.5 text-xs ${STATUS_STYLES[p.status]}`}
                   >
-                    {STATUS_LABELS[p.status]}
+                    {PRODUCT_STATUS_LABELS[p.status]}
                   </span>
                 </td>
                 <td className="px-4 py-3 text-xs text-neutral-500">

@@ -1,42 +1,23 @@
 import Link from "next/link";
+import { PRICE_TIERS, PRODUCT_STATUSES } from "@/lib/constants/enums";
 import {
-  CATEGORIES,
-  STYLES,
-  PRIMARY_COLORS,
-  MATERIALS,
-  INSTALLATIONS,
-  APPLICABLE_SPACES,
-  PRICE_TIERS,
-  PRODUCT_STATUSES,
-} from "@/lib/constants/enums";
-import {
-  CATEGORY_LABELS,
-  STYLE_LABELS,
-  PRIMARY_COLOR_LABELS,
-  MATERIAL_LABELS,
-  INSTALLATION_LABELS,
-  APPLICABLE_SPACE_LABELS,
   PRICE_TIER_LABELS,
+  PRODUCT_STATUS_LABELS,
 } from "@/lib/constants/enum-labels";
 import type { ProductRow } from "@/lib/supabase/types";
-import ColorVariantsEditor from "./ColorVariantsEditor";
+import type { Taxonomy } from "@/lib/taxonomy";
+import PillGrid from "./PillGrid";
 import AIInferButton from "./AIInferButton";
 import DeleteButton from "./DeleteButton";
 
 type Props = {
   product?: ProductRow | null;
+  taxonomy: Taxonomy;
   action: (fd: FormData) => void | Promise<void>;
   saved?: boolean;
 };
 
-const STATUS_LABELS: Record<string, string> = {
-  draft: "草稿",
-  published: "已上架",
-  archived: "归档",
-  link_broken: "链接失效",
-};
-
-export default function ProductForm({ product, action, saved }: Props) {
+export default function ProductForm({ product, taxonomy, action, saved }: Props) {
   const p = product;
   const isEdit = Boolean(p);
 
@@ -94,43 +75,24 @@ export default function ProductForm({ product, action, saved }: Props) {
           <Field label="品牌">
             <input name="brand" defaultValue={p?.brand ?? ""} className={inputCls} />
           </Field>
-          <Field label="分类 *">
-            <select
-              name="category"
-              required
-              defaultValue={p?.category ?? ""}
-              className={inputCls}
-            >
-              <option value="" disabled>
-                请选择
-              </option>
-              {CATEGORIES.map((c) => (
-                <option key={c} value={c}>
-                  {CATEGORY_LABELS[c]}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="子分类">
-            <input
-              name="subcategory"
-              defaultValue={p?.subcategory ?? ""}
-              placeholder="e.g. faucet / dining_chair"
-              className={inputCls}
-            />
-          </Field>
           <Field label="状态" wide>
-            <select
-              name="status"
-              defaultValue={p?.status ?? "draft"}
-              className={inputCls}
-            >
+            <div className="flex flex-wrap gap-2">
               {PRODUCT_STATUSES.map((s) => (
-                <option key={s} value={s}>
-                  {STATUS_LABELS[s]}
-                </option>
+                <label
+                  key={s}
+                  className="inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-neutral-300 px-3 py-1 text-xs has-[:checked]:border-black has-[:checked]:bg-black has-[:checked]:text-white"
+                >
+                  <input
+                    type="radio"
+                    name="status"
+                    value={s}
+                    defaultChecked={(p?.status ?? "draft") === s}
+                    className="sr-only"
+                  />
+                  {PRODUCT_STATUS_LABELS[s]}
+                </label>
               ))}
-            </select>
+            </div>
           </Field>
           <Field label="描述" wide>
             <textarea
@@ -143,87 +105,68 @@ export default function ProductForm({ product, action, saved }: Props) {
         </Grid>
       </Section>
 
-      <Section title="属性">
-        <Grid>
-          <Field label="风格">
-            <select
-              name="style"
-              defaultValue={p?.style ?? ""}
-              className={inputCls}
-            >
-              <option value="">—</option>
-              {STYLES.map((s) => (
-                <option key={s} value={s}>
-                  {STYLE_LABELS[s]}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="主色">
-            <select
-              name="primary_color"
-              defaultValue={p?.primary_color ?? ""}
-              className={inputCls}
-            >
-              <option value="">—</option>
-              {PRIMARY_COLORS.map((c) => (
-                <option key={c} value={c}>
-                  {PRIMARY_COLOR_LABELS[c]}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="材质">
-            <select
-              name="material"
-              defaultValue={p?.material ?? ""}
-              className={inputCls}
-            >
-              <option value="">—</option>
-              {MATERIALS.map((m) => (
-                <option key={m} value={m}>
-                  {MATERIAL_LABELS[m]}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="安装方式">
-            <select
-              name="installation"
-              defaultValue={p?.installation ?? ""}
-              className={inputCls}
-            >
-              <option value="">—</option>
-              {INSTALLATIONS.map((i) => (
-                <option key={i} value={i}>
-                  {INSTALLATION_LABELS[i]}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="适用空间（多选）" wide>
-            <div className="flex flex-wrap gap-2">
-              {APPLICABLE_SPACES.map((s) => {
-                const checked = p?.applicable_space?.includes(s) ?? false;
-                return (
-                  <label
-                    key={s}
-                    className="inline-flex items-center gap-1 rounded-full border border-neutral-300 px-3 py-1 text-xs"
-                  >
-                    <input
-                      type="checkbox"
-                      name="applicable_space"
-                      value={s}
-                      defaultChecked={checked}
-                      className="h-3 w-3"
-                    />
-                    {APPLICABLE_SPACE_LABELS[s]}
-                  </label>
-                );
-              })}
-            </div>
-          </Field>
-        </Grid>
+      <Section
+        title="物件类型 *"
+        hint="一个产品就是一种东西（单选）。在 /admin/taxonomy 可以加新类型。"
+      >
+        <PillGrid
+          name="item_type"
+          options={taxonomy.itemTypes.map((r) => ({
+            slug: r.slug,
+            label: r.label_zh,
+          }))}
+          initial={p?.item_type ?? null}
+        />
+      </Section>
+
+      <Section title="适用房间（可多选）">
+        <PillGrid
+          name="rooms"
+          multi
+          options={taxonomy.rooms.map((r) => ({
+            slug: r.slug,
+            label: r.label_zh,
+          }))}
+          initial={p?.rooms ?? []}
+        />
+      </Section>
+
+      <Section title="风格（可多选）">
+        <PillGrid
+          name="styles"
+          multi
+          options={taxonomy.styles.map((r) => ({
+            slug: r.slug,
+            label: r.label_zh,
+          }))}
+          initial={p?.styles ?? []}
+        />
+      </Section>
+
+      <Section title="颜色（可多选）">
+        <PillGrid
+          name="colors"
+          multi
+          variant="color"
+          options={taxonomy.colors.map((c) => ({
+            slug: c.slug,
+            label: c.label_zh,
+            hex: c.hex,
+          }))}
+          initial={p?.colors ?? []}
+        />
+      </Section>
+
+      <Section title="材质（可多选）">
+        <PillGrid
+          name="materials"
+          multi
+          options={taxonomy.materials.map((r) => ({
+            slug: r.slug,
+            label: r.label_zh,
+          }))}
+          initial={p?.materials ?? []}
+        />
       </Section>
 
       <Section title="价格与尺寸">
@@ -238,18 +181,18 @@ export default function ProductForm({ product, action, saved }: Props) {
             />
           </Field>
           <Field label="价格档次">
-            <select
-              name="price_tier"
-              defaultValue={p?.price_tier ?? ""}
-              className={inputCls}
-            >
-              <option value="">—</option>
+            <div className="flex flex-wrap gap-2">
+              <RadioPill name="price_tier" value="" label="—" checked={!p?.price_tier} />
               {PRICE_TIERS.map((t) => (
-                <option key={t} value={t}>
-                  {PRICE_TIER_LABELS[t]}
-                </option>
+                <RadioPill
+                  key={t}
+                  name="price_tier"
+                  value={t}
+                  label={PRICE_TIER_LABELS[t]}
+                  checked={p?.price_tier === t}
+                />
               ))}
-            </select>
+            </div>
           </Field>
           <Field label="尺寸 · 长 (mm)">
             <input
@@ -287,13 +230,6 @@ export default function ProductForm({ product, action, saved }: Props) {
         </Grid>
       </Section>
 
-      <Section title="色变（Phase-1 简化版：颜色切换时前端 override 基色）">
-        <ColorVariantsEditor
-          name="color_variants_json"
-          initial={p?.color_variants ?? []}
-        />
-      </Section>
-
       <Section title="3D 模型与缩略图">
         <Grid>
           <Field label="上传 .glb (替换)">
@@ -305,7 +241,15 @@ export default function ProductForm({ product, action, saved }: Props) {
             />
             {p?.glb_url && (
               <div className="mt-2 text-xs text-neutral-500">
-                当前：<a href={p.glb_url} target="_blank" rel="noopener" className="text-sky-600 hover:underline">{p.glb_url.split("/").slice(-2).join("/")}</a>
+                当前：
+                <a
+                  href={p.glb_url}
+                  target="_blank"
+                  rel="noopener"
+                  className="text-sky-600 hover:underline"
+                >
+                  {p.glb_url.split("/").slice(-2).join("/")}
+                </a>
                 {p.glb_size_kb != null && <> · {p.glb_size_kb} KB</>}
               </div>
             )}
@@ -398,12 +342,23 @@ export default function ProductForm({ product, action, saved }: Props) {
 const inputCls =
   "w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm focus:border-black focus:outline-none";
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+function Section({
+  title,
+  hint,
+  children,
+}: {
+  title: string;
+  hint?: string;
+  children: React.ReactNode;
+}) {
   return (
     <section className="rounded-lg border border-neutral-200 bg-white p-5">
-      <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-neutral-500">
-        {title}
-      </h2>
+      <div className="mb-4 flex items-baseline justify-between gap-4">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-neutral-500">
+          {title}
+        </h2>
+        {hint && <span className="text-xs text-neutral-400">{hint}</span>}
+      </div>
       {children}
     </section>
   );
@@ -426,6 +381,31 @@ function Field({
     <label className={`flex flex-col gap-1.5 ${wide ? "md:col-span-2" : ""}`}>
       <span className="text-xs font-medium text-neutral-600">{label}</span>
       {children}
+    </label>
+  );
+}
+
+function RadioPill({
+  name,
+  value,
+  label,
+  checked,
+}: {
+  name: string;
+  value: string;
+  label: string;
+  checked: boolean;
+}) {
+  return (
+    <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-neutral-300 px-3 py-1 text-xs has-[:checked]:border-black has-[:checked]:bg-black has-[:checked]:text-white">
+      <input
+        type="radio"
+        name={name}
+        value={value}
+        defaultChecked={checked}
+        className="sr-only"
+      />
+      {label}
     </label>
   );
 }

@@ -16,6 +16,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             <Link href="/admin/products/new" className="hover:text-black">
               新增
             </Link>
+            <Link href="/admin/taxonomy" className="hover:text-black">
+              分类管理
+            </Link>
           </nav>
         </div>
         <div className="flex items-center gap-4 text-xs text-neutral-500">

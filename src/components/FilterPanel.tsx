@@ -2,43 +2,29 @@
 
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useMemo, useTransition } from "react";
-import {
-  CATEGORIES,
-  STYLES,
-  PRIMARY_COLORS,
-  APPLICABLE_SPACES,
-  type Category,
-  type Style,
-  type PrimaryColor,
-  type ApplicableSpace,
-} from "@/lib/constants/enums";
-import {
-  CATEGORY_LABELS,
-  STYLE_LABELS,
-  PRIMARY_COLOR_LABELS,
-  PRIMARY_COLOR_HEX,
-  APPLICABLE_SPACE_LABELS,
-} from "@/lib/constants/enum-labels";
+import type { Taxonomy } from "@/lib/taxonomy";
 
 type SortKey = "latest" | "price_asc" | "price_desc";
 
-export default function FilterPanel() {
+type Props = { taxonomy: Taxonomy };
+
+export default function FilterPanel({ taxonomy }: Props) {
   const router = useRouter();
   const params = useSearchParams();
   const [pending, startTransition] = useTransition();
 
-  const current = useMemo(() => {
-    return {
+  const current = useMemo(
+    () => ({
       q: params.get("q") ?? "",
-      category: (params.get("category") || "") as Category | "",
-      styles: (params.get("styles") || "").split(",").filter(Boolean) as Style[],
-      colors: (params.get("colors") || "").split(",").filter(Boolean) as PrimaryColor[],
-      spaces: (params.get("spaces") || "")
-        .split(",")
-        .filter(Boolean) as ApplicableSpace[],
+      itemTypes: splitCsv(params.get("item_types")),
+      rooms: splitCsv(params.get("rooms")),
+      styles: splitCsv(params.get("styles")),
+      colors: splitCsv(params.get("colors")),
+      materials: splitCsv(params.get("materials")),
       sort: (params.get("sort") || "latest") as SortKey,
-    };
-  }, [params]);
+    }),
+    [params],
+  );
 
   const push = useCallback(
     (updates: Record<string, string | null>) => {
@@ -55,8 +41,17 @@ export default function FilterPanel() {
     [params, router],
   );
 
-  const toggleInList = (list: string[], value: string) =>
+  const toggle = (list: string[], value: string) =>
     list.includes(value) ? list.filter((v) => v !== value) : [...list, value];
+
+  const hasAny =
+    current.q ||
+    current.itemTypes.length ||
+    current.rooms.length ||
+    current.styles.length ||
+    current.colors.length ||
+    current.materials.length ||
+    current.sort !== "latest";
 
   return (
     <aside
@@ -84,132 +79,127 @@ export default function FilterPanel() {
         </form>
       </div>
 
-      <div>
-        <div className="mb-2 text-xs font-medium uppercase tracking-wide text-neutral-500">
-          分类
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <Chip
-            active={!current.category}
-            onClick={() => push({ category: null })}
-            label="全部"
-          />
-          {CATEGORIES.map((c) => (
-            <Chip
-              key={c}
-              active={current.category === c}
-              onClick={() => push({ category: current.category === c ? null : c })}
-              label={CATEGORY_LABELS[c]}
-            />
-          ))}
-        </div>
-      </div>
+      <Group
+        label="物件"
+        options={taxonomy.itemTypes.map((r) => ({
+          slug: r.slug,
+          label: r.label_zh,
+        }))}
+        selected={current.itemTypes}
+        onToggle={(s) => {
+          const next = toggle(current.itemTypes, s);
+          push({ item_types: next.length ? next.join(",") : null });
+        }}
+      />
+
+      <Group
+        label="房间"
+        options={taxonomy.rooms.map((r) => ({
+          slug: r.slug,
+          label: r.label_zh,
+        }))}
+        selected={current.rooms}
+        onToggle={(s) => {
+          const next = toggle(current.rooms, s);
+          push({ rooms: next.length ? next.join(",") : null });
+        }}
+      />
+
+      <Group
+        label="风格"
+        options={taxonomy.styles.map((r) => ({
+          slug: r.slug,
+          label: r.label_zh,
+        }))}
+        selected={current.styles}
+        onToggle={(s) => {
+          const next = toggle(current.styles, s);
+          push({ styles: next.length ? next.join(",") : null });
+        }}
+      />
 
       <div>
         <div className="mb-2 text-xs font-medium uppercase tracking-wide text-neutral-500">
-          风格
+          颜色
         </div>
         <div className="flex flex-wrap gap-2">
-          {STYLES.map((s) => {
-            const active = current.styles.includes(s);
-            return (
-              <Chip
-                key={s}
-                active={active}
-                onClick={() => {
-                  const next = toggleInList(current.styles, s);
-                  push({ styles: next.length ? next.join(",") : null });
-                }}
-                label={STYLE_LABELS[s]}
-              />
-            );
-          })}
-        </div>
-      </div>
-
-      <div>
-        <div className="mb-2 text-xs font-medium uppercase tracking-wide text-neutral-500">
-          主色
-        </div>
-        <div className="grid grid-cols-5 gap-2">
-          {PRIMARY_COLORS.map((c) => {
-            const active = current.colors.includes(c);
+          {taxonomy.colors.map((c) => {
+            const active = current.colors.includes(c.slug);
             return (
               <button
-                key={c}
+                key={c.slug}
                 type="button"
                 onClick={() => {
-                  const next = toggleInList(current.colors, c);
+                  const next = toggle(current.colors, c.slug);
                   push({ colors: next.length ? next.join(",") : null });
                 }}
                 aria-pressed={active}
-                title={PRIMARY_COLOR_LABELS[c]}
+                title={c.label_zh}
                 className={`h-8 w-8 rounded-full border transition ${
                   active
                     ? "border-black ring-2 ring-black ring-offset-1"
                     : "border-neutral-300"
                 }`}
-                style={{ backgroundColor: PRIMARY_COLOR_HEX[c] }}
+                style={{ backgroundColor: c.hex }}
               />
             );
           })}
         </div>
       </div>
 
-      <div>
-        <div className="mb-2 text-xs font-medium uppercase tracking-wide text-neutral-500">
-          空间
-        </div>
-        <div className="flex flex-wrap gap-2">
-          {APPLICABLE_SPACES.map((s) => {
-            const active = current.spaces.includes(s);
-            return (
-              <Chip
-                key={s}
-                active={active}
-                onClick={() => {
-                  const next = toggleInList(current.spaces, s);
-                  push({ spaces: next.length ? next.join(",") : null });
-                }}
-                label={APPLICABLE_SPACE_LABELS[s]}
-              />
-            );
-          })}
-        </div>
-      </div>
+      <Group
+        label="材质"
+        options={taxonomy.materials.map((r) => ({
+          slug: r.slug,
+          label: r.label_zh,
+        }))}
+        selected={current.materials}
+        onToggle={(s) => {
+          const next = toggle(current.materials, s);
+          push({ materials: next.length ? next.join(",") : null });
+        }}
+      />
 
       <div>
         <label className="mb-2 block text-xs font-medium uppercase tracking-wide text-neutral-500">
           排序
         </label>
-        <select
-          value={current.sort}
-          onChange={(e) =>
-            push({ sort: e.target.value === "latest" ? null : e.target.value })
-          }
-          className="w-full rounded-md border border-neutral-300 px-3 py-2 text-sm focus:border-black focus:outline-none"
-        >
-          <option value="latest">最新上架</option>
-          <option value="price_asc">价格从低到高</option>
-          <option value="price_desc">价格从高到低</option>
-        </select>
+        <div className="flex flex-wrap gap-2">
+          {(
+            [
+              ["latest", "最新上架"],
+              ["price_asc", "价格 ↑"],
+              ["price_desc", "价格 ↓"],
+            ] as const
+          ).map(([val, label]) => (
+            <button
+              key={val}
+              type="button"
+              onClick={() => push({ sort: val === "latest" ? null : val })}
+              aria-pressed={current.sort === val}
+              className={`rounded-full border px-3 py-1 text-xs transition ${
+                current.sort === val
+                  ? "border-black bg-black text-white"
+                  : "border-neutral-300 bg-white text-neutral-700 hover:border-neutral-500"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
       </div>
 
-      {(current.q ||
-        current.category ||
-        current.styles.length ||
-        current.colors.length ||
-        current.spaces.length ||
-        current.sort !== "latest") && (
+      {hasAny && (
         <button
           type="button"
           onClick={() =>
             push({
               q: null,
-              category: null,
+              item_types: null,
+              rooms: null,
               styles: null,
               colors: null,
-              spaces: null,
+              materials: null,
               sort: null,
             })
           }
@@ -222,27 +212,50 @@ export default function FilterPanel() {
   );
 }
 
-function Chip({
-  active,
-  onClick,
+function splitCsv(v: string | null): string[] {
+  return (v ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+function Group({
   label,
+  options,
+  selected,
+  onToggle,
 }: {
-  active: boolean;
-  onClick: () => void;
   label: string;
+  options: { slug: string; label: string }[];
+  selected: string[];
+  onToggle: (slug: string) => void;
 }) {
+  if (options.length === 0) return null;
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-pressed={active}
-      className={`rounded-full border px-3 py-1 text-xs transition ${
-        active
-          ? "border-black bg-black text-white"
-          : "border-neutral-300 bg-white text-neutral-700 hover:border-neutral-500"
-      }`}
-    >
-      {label}
-    </button>
+    <div>
+      <div className="mb-2 text-xs font-medium uppercase tracking-wide text-neutral-500">
+        {label}
+      </div>
+      <div className="flex flex-wrap gap-2">
+        {options.map((o) => {
+          const active = selected.includes(o.slug);
+          return (
+            <button
+              key={o.slug}
+              type="button"
+              onClick={() => onToggle(o.slug)}
+              aria-pressed={active}
+              className={`rounded-full border px-3 py-1 text-xs transition ${
+                active
+                  ? "border-black bg-black text-white"
+                  : "border-neutral-300 bg-white text-neutral-700 hover:border-neutral-500"
+              }`}
+            >
+              {o.label}
+            </button>
+          );
+        })}
+      </div>
+    </div>
   );
 }

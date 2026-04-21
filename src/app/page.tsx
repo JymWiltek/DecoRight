@@ -3,57 +3,59 @@ import { BRAND } from "@config/brand";
 import FilterPanel from "@/components/FilterPanel";
 import ProductCard from "@/components/ProductCard";
 import { listPublishedProducts, type ProductFilters } from "@/lib/products";
-import {
-  CATEGORIES,
-  STYLES,
-  PRIMARY_COLORS,
-  APPLICABLE_SPACES,
-  type Category,
-  type Style,
-  type PrimaryColor,
-  type ApplicableSpace,
-} from "@/lib/constants/enums";
+import { loadTaxonomy, labelMap, colorHexMap } from "@/lib/taxonomy";
 
 export const dynamic = "force-dynamic";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
-function pickOne<T extends readonly string[]>(
+function pickOne(
   v: string | string[] | undefined,
-  allowed: T,
-): T[number] | undefined {
+  allowed: readonly string[],
+): string | undefined {
   const s = Array.isArray(v) ? v[0] : v;
   if (!s) return undefined;
-  return (allowed as readonly string[]).includes(s) ? (s as T[number]) : undefined;
+  return allowed.includes(s) ? s : undefined;
 }
 
-function pickMany<T extends readonly string[]>(
-  v: string | string[] | undefined,
-  allowed: T,
-): T[number][] {
+function pickMany(v: string | string[] | undefined, allowed: Set<string>): string[] {
   const raw = Array.isArray(v) ? v.join(",") : v ?? "";
-  const parts = raw.split(",").map((s) => s.trim()).filter(Boolean);
-  return parts.filter((p): p is T[number] => (allowed as readonly string[]).includes(p));
-}
-
-function parseFilters(sp: SearchParams): ProductFilters {
-  const sort = pickOne(sp.sort, ["latest", "price_asc", "price_desc"] as const);
-  return {
-    q: typeof sp.q === "string" ? sp.q : undefined,
-    category: pickOne(sp.category, CATEGORIES) as Category | undefined,
-    styles: pickMany(sp.styles, STYLES) as Style[],
-    colors: pickMany(sp.colors, PRIMARY_COLORS) as PrimaryColor[],
-    spaces: pickMany(sp.spaces, APPLICABLE_SPACES) as ApplicableSpace[],
-    sort,
-  };
+  return raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s && allowed.has(s));
 }
 
 type PageProps = { searchParams: Promise<SearchParams> };
 
 export default async function Home({ searchParams }: PageProps) {
   const sp = await searchParams;
-  const filters = parseFilters(sp);
+  const taxonomy = await loadTaxonomy();
+
+  const itemTypeSlugs = new Set(taxonomy.itemTypes.map((r) => r.slug));
+  const roomSlugs = new Set(taxonomy.rooms.map((r) => r.slug));
+  const styleSlugs = new Set(taxonomy.styles.map((r) => r.slug));
+  const colorSlugs = new Set(taxonomy.colors.map((r) => r.slug));
+  const materialSlugs = new Set(taxonomy.materials.map((r) => r.slug));
+
+  const filters: ProductFilters = {
+    q: typeof sp.q === "string" ? sp.q : undefined,
+    itemTypes: pickMany(sp.item_types, itemTypeSlugs),
+    rooms: pickMany(sp.rooms, roomSlugs),
+    styles: pickMany(sp.styles, styleSlugs),
+    colors: pickMany(sp.colors, colorSlugs),
+    materials: pickMany(sp.materials, materialSlugs),
+    sort: pickOne(sp.sort, ["latest", "price_asc", "price_desc"]) as
+      | "latest"
+      | "price_asc"
+      | "price_desc"
+      | undefined,
+  };
+
   const products = await listPublishedProducts(filters);
+  const itemTypeLabels = labelMap(taxonomy.itemTypes);
+  const styleLabels = labelMap(taxonomy.styles);
+  const colorHex = colorHexMap(taxonomy.colors);
 
   return (
     <main className="mx-auto max-w-7xl px-4 py-8">
@@ -69,7 +71,7 @@ export default async function Home({ searchParams }: PageProps) {
 
       <div className="grid gap-8 md:grid-cols-[240px_1fr]">
         <Suspense>
-          <FilterPanel />
+          <FilterPanel taxonomy={taxonomy} />
         </Suspense>
 
         <section>
@@ -80,7 +82,13 @@ export default async function Home({ searchParams }: PageProps) {
           ) : (
             <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
               {products.map((p) => (
-                <ProductCard key={p.id} product={p} />
+                <ProductCard
+                  key={p.id}
+                  product={p}
+                  itemTypeLabels={itemTypeLabels}
+                  styleLabels={styleLabels}
+                  colorHex={colorHex}
+                />
               ))}
             </div>
           )}

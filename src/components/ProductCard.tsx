@@ -1,11 +1,23 @@
 import Link from "next/link";
 import { formatMYR } from "@/lib/format";
-import { CATEGORY_LABELS, STYLE_LABELS } from "@/lib/constants/enum-labels";
 import type { ProductRow } from "@/lib/supabase/types";
 
-type Props = { product: ProductRow };
+type Props = {
+  product: ProductRow;
+  itemTypeLabels: Record<string, string>;
+  styleLabels: Record<string, string>;
+  colorHex: Record<string, string>;
+};
 
-export default function ProductCard({ product }: Props) {
+export default function ProductCard({
+  product,
+  itemTypeLabels,
+  styleLabels,
+  colorHex,
+}: Props) {
+  const typeLabel = product.item_type ? itemTypeLabels[product.item_type] : null;
+  const styleLabel = product.styles[0] ? styleLabels[product.styles[0]] : null;
+
   return (
     <Link
       href={`/product/${product.id}`}
@@ -29,17 +41,24 @@ export default function ProductCard({ product }: Props) {
 
       <div className="flex flex-1 flex-col gap-1.5 p-3">
         <div className="flex items-center gap-2 text-xs text-neutral-500">
-          <span>{CATEGORY_LABELS[product.category]}</span>
-          {product.style && (
-            <>
-              <span>·</span>
-              <span>{STYLE_LABELS[product.style]}</span>
-            </>
-          )}
+          {typeLabel && <span>{typeLabel}</span>}
+          {typeLabel && styleLabel && <span>·</span>}
+          {styleLabel && <span>{styleLabel}</span>}
         </div>
         <div className="line-clamp-2 text-sm font-medium text-neutral-900">
           {product.name}
         </div>
+        {product.colors.length > 0 && (
+          <div className="flex items-center gap-1">
+            {product.colors.slice(0, 5).map((slug) => (
+              <span
+                key={slug}
+                className="h-3 w-3 rounded-full border border-neutral-200"
+                style={{ backgroundColor: colorHex[slug] ?? "#ccc" }}
+              />
+            ))}
+          </div>
+        )}
         <div className="mt-auto pt-1 text-base font-semibold text-neutral-900">
           {formatMYR(product.price_myr)}
         </div>
