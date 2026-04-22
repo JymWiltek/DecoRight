@@ -56,7 +56,7 @@ on conflict (slug) do update
 -- =========================================================================
 alter table public.item_types
   add column if not exists room_slug        text,
-  add column if not exists attribute_schema jsonb not null default '{}'::jsonb;
+  add column if not exists attribute_schema jsonb not null default '[]'::jsonb;
 
 -- Assign room parent for all seeded items. User-added items stay null;
 -- admin UI will flag orphans so they can be reassigned.
@@ -116,9 +116,11 @@ create policy "public read item_subtypes" on public.item_subtypes
 -- =========================================================================
 -- STEP 5. app_config (KV) + api_usage (quota tracking, shared across APIs)
 -- =========================================================================
+-- value is plain text — TS code parses to int/float/bool as needed.
+-- Avoids the jsonb-vs-string-vs-number juggling on the JS side.
 create table if not exists public.app_config (
   key        text        primary key,
-  value      jsonb       not null,
+  value      text        not null,
   updated_at timestamptz not null default now()
 );
 
@@ -126,30 +128,34 @@ create table if not exists public.app_config (
 -- remove.bg is the high-accuracy fallback for reviewer-rejected cutouts.
 -- Meshy is stage B.
 insert into public.app_config (key, value) values
-  ('replicate_rembg_daily_limit',       '500'::jsonb),
-  ('removebg_daily_limit',              '50'::jsonb),
-  ('meshy_daily_limit',                 '20'::jsonb),
-  ('replicate_rembg_cost_per_call_usd', '0.001'::jsonb),
-  ('removebg_cost_per_call_usd',        '0.20'::jsonb),
-  ('meshy_cost_per_job_usd',            '0.25'::jsonb),
-  ('emergency_stop',                    'false'::jsonb)
+  ('replicate_rembg_daily_limit',       '500'),
+  ('removebg_daily_limit',              '50'),
+  ('meshy_daily_limit',                 '20'),
+  ('replicate_rembg_cost_per_call_usd', '0.001'),
+  ('removebg_cost_per_call_usd',        '0.20'),
+  ('meshy_cost_per_job_usd',            '0.25'),
+  ('emergency_stop',                    'false')
 on conflict (key) do nothing;
 
 -- app_config is admin-only. RLS on, no public policies → only service-role
 -- (which bypasses RLS) can read/write.
 alter table public.app_config enable row level security;
 
+-- api_usage is the audit log for every paid third-party call.
+-- One row inserted on reservation by reserve_api_slot(); patched by
+-- billSlot()/refundSlot() in src/lib/api-usage.ts.
+--   status: free text. Conventional values used by the JS layer:
+--           'reserved' | 'ok' | 'error' | 'timeout' | 'rejected'
+--           | 'refund' (compensating row) | 'refunded' (original after refund)
 create table if not exists public.api_usage (
-  id          bigserial     primary key,
-  service     text          not null check (service in ('replicate_rembg','removebg','meshy')),
-  product_id  uuid          null references public.products(id) on delete set null,
-  image_id    uuid          null,   -- FK to product_images.id added after that table exists
-  status      text          not null check (status in ('reserved','billed','refunded')),
-  job_id      text          null,
-  cost_usd    numeric(10,4) not null default 0,
-  error       text          null,
-  created_at  timestamptz   not null default now(),
-  updated_at  timestamptz   not null default now()
+  id                uuid          primary key default gen_random_uuid(),
+  service           text          not null check (service in ('replicate_rembg','removebg','meshy')),
+  product_id        uuid          null references public.products(id) on delete set null,
+  product_image_id  uuid          null,   -- FK to product_images.id added after that table exists
+  status            text          null,
+  note              text          null,
+  cost_usd          numeric(10,4) not null default 0,
+  created_at        timestamptz   not null default now()
 );
 create index if not exists api_usage_service_day_idx
   on public.api_usage (service, ((created_at at time zone 'UTC')::date));
@@ -162,35 +168,43 @@ alter table public.api_usage enable row level security;
 -- =========================================================================
 -- STEP 6. product_images (1:N with products — image pipeline lives here)
 -- =========================================================================
+-- state lifecycle:
+--   raw              → just uploaded, no rembg yet
+--   cutout_pending   → rembg done, awaiting human approval
+--   cutout_approved  → operator OK'd it
+--   cutout_rejected  → operator rejected it (may rerun with different provider)
 create table if not exists public.product_images (
-  id                uuid        primary key default gen_random_uuid(),
-  product_id        uuid        not null references public.products(id) on delete cascade,
-  raw_image_url     text        null,
-  cutout_image_url  text        null,
-  cutout_status     text        null check (cutout_status in ('pending','approved','rejected')),
-  sort_order        int         not null default 0,
-  is_primary        boolean     not null default false,
-  created_at        timestamptz not null default now(),
-  updated_at        timestamptz not null default now()
+  id                uuid          primary key default gen_random_uuid(),
+  product_id        uuid          not null references public.products(id) on delete cascade,
+  raw_image_url     text          null,
+  cutout_image_url  text          null,
+  state             text          not null default 'raw'
+                       check (state in ('raw','cutout_pending','cutout_approved','cutout_rejected')),
+  is_primary        boolean       not null default false,
+  rembg_provider    text          null,   -- 'replicate_rembg' | 'removebg' (free text — provider id strings)
+  rembg_cost_usd    numeric(10,4) null,
+  sort_order        int           not null default 0,
+  created_at        timestamptz   not null default now(),
+  updated_at        timestamptz   not null default now()
 );
 create index if not exists product_images_product_idx
   on public.product_images(product_id);
-create index if not exists product_images_cutout_status_idx
-  on public.product_images(cutout_status);
+create index if not exists product_images_state_idx
+  on public.product_images(state);
 
--- At most ONE primary image per product.
+-- At most ONE primary image per product (partial unique index).
 create unique index if not exists product_images_primary_unique
   on public.product_images(product_id) where is_primary;
 
--- Now link api_usage.image_id to product_images.id.
-alter table public.api_usage drop constraint if exists api_usage_image_id_fkey;
+-- Now link api_usage.product_image_id to product_images.id.
+alter table public.api_usage drop constraint if exists api_usage_product_image_id_fkey;
 alter table public.api_usage
-  add constraint api_usage_image_id_fkey
-  foreign key (image_id) references public.product_images(id) on delete set null;
+  add constraint api_usage_product_image_id_fkey
+  foreign key (product_image_id) references public.product_images(id) on delete set null;
 
--- Sync trigger: when an image becomes primary (or its cutout arrives),
--- copy cutout_image_url into products.thumbnail_url so catalog queries
--- don't need to join product_images.
+-- Sync trigger: when an image becomes primary AND has a cutout, copy
+-- the cutout URL into products.thumbnail_url so catalog queries don't
+-- need to join product_images.
 create or replace function public.sync_primary_thumbnail()
 returns trigger language plpgsql as $$
 begin
@@ -212,18 +226,17 @@ for each row execute function public.sync_primary_thumbnail();
 alter table public.product_images enable row level security;
 drop policy if exists "public read approved images" on public.product_images;
 create policy "public read approved images" on public.product_images
-  for select using (cutout_status = 'approved');
+  for select using (state = 'cutout_approved');
 
 -- =========================================================================
 -- STEP 7. products: subtype_slug + attributes + meshy_* reserved fields
 -- =========================================================================
 alter table public.products
-  add column if not exists subtype_slug    text          null,
-  add column if not exists attributes      jsonb         not null default '{}'::jsonb,
-  add column if not exists meshy_job_id    text          null,
-  add column if not exists meshy_status    text          null,
-  add column if not exists meshy_model_url text          null,
-  add column if not exists meshy_cost_usd  numeric(10,4) null;
+  add column if not exists subtype_slug        text          null,
+  add column if not exists attributes          jsonb         not null default '{}'::jsonb,
+  add column if not exists meshy_job_id        text          null,
+  add column if not exists meshy_status        text          null,
+  add column if not exists meshy_requested_at  timestamptz   null;
 
 alter table public.products drop constraint if exists products_meshy_status_check;
 alter table public.products
@@ -260,63 +273,84 @@ before insert or update of subtype_slug, item_type on public.products
 for each row execute function public.validate_product_subtype();
 
 -- =========================================================================
--- STEP 8. reserve_api_slot(service, product_id, image_id, estimate)
---   Atomic guard used by BOTH rembg and meshy workers.
---   Returns reservation_id (bigint) or NULL if denied.
+-- STEP 8. reserve_api_slot(...)  — atomic per-service quota guard
+--   Used by BOTH rembg providers and the future Meshy worker.
+--   Returns one row: (usage_id uuid, cost_usd numeric).
+--   RAISES exception if emergency_stop or daily_limit hit — the JS
+--   wrapper in src/lib/api-usage.ts catches it as QuotaExceededError.
 -- =========================================================================
+drop function if exists public.reserve_api_slot(text, uuid, uuid, numeric);
+drop function if exists public.reserve_api_slot(text, uuid, uuid, text);
+
 create or replace function public.reserve_api_slot(
-  p_service    text,
-  p_product_id uuid,
-  p_image_id   uuid,
-  p_estimate   numeric
-) returns bigint language plpgsql security definer as $$
+  p_service          text,
+  p_product_id       uuid default null,
+  p_product_image_id uuid default null,
+  p_note             text default null
+) returns table(usage_id uuid, cost_usd numeric)
+language plpgsql security definer as $$
 declare
-  reservation_id bigint;
-  limit_value    int;
-  used_today     int;
-  stop_flag      boolean;
+  v_id          uuid;
+  v_cost        numeric;
+  v_limit       int;
+  v_used_today  int;
+  v_stop        boolean;
 begin
   if p_service not in ('replicate_rembg','removebg','meshy') then
     raise exception 'unknown service %', p_service;
   end if;
 
-  -- Advisory lock serializes concurrent callers on this service only.
+  -- Advisory lock: serialize concurrent callers on this service only.
   perform pg_advisory_xact_lock(hashtext('api_slot_' || p_service));
 
-  -- Emergency stop (single global flag, kills both services)
-  select (value #>> '{}')::boolean into stop_flag
+  -- Emergency stop (single global flag, kills every paid service).
+  select (value)::boolean into v_stop
     from public.app_config where key='emergency_stop';
-  if coalesce(stop_flag, false) then
-    return null;
+  if coalesce(v_stop, false) then
+    raise exception 'emergency_stop is on — refusing to call %', p_service;
   end if;
 
   -- Per-service daily limit
-  select (value #>> '{}')::int into limit_value
+  select (value)::int into v_limit
     from public.app_config
     where key = p_service || '_daily_limit';
-  if limit_value is null then
+  if v_limit is null then
     raise exception 'no daily_limit configured for service %', p_service;
   end if;
 
-  -- Count reserved + billed today (UTC date)
-  select count(*) into used_today
+  -- Per-call cost (sourced from app_config so ops can adjust without code change).
+  select (value)::numeric into v_cost
+    from public.app_config
+    where key = p_service || '_cost_per_call_usd';
+  if v_cost is null then
+    raise exception 'no cost_per_call_usd configured for service %', p_service;
+  end if;
+
+  -- Count today's positive-cost rows (refund rows have cost_usd < 0).
+  select count(*) into v_used_today
     from public.api_usage
    where service = p_service
-     and status in ('reserved','billed')
+     and cost_usd > 0
      and (created_at at time zone 'UTC')::date = (now() at time zone 'UTC')::date;
 
-  if used_today >= limit_value then
-    return null;
+  if v_used_today >= v_limit then
+    raise exception 'daily_limit reached for % (% / %)', p_service, v_used_today, v_limit;
   end if;
 
   insert into public.api_usage
-    (service, product_id, image_id, status, cost_usd)
+    (service, product_id, product_image_id, status, note, cost_usd)
   values
-    (p_service, p_product_id, p_image_id, 'reserved', coalesce(p_estimate, 0))
-  returning id into reservation_id;
+    (p_service, p_product_id, p_product_image_id, 'reserved', p_note, v_cost)
+  returning id into v_id;
 
-  return reservation_id;
+  usage_id := v_id;
+  cost_usd := v_cost;
+  return next;
 end $$;
+
+-- Make the RPC callable through PostgREST under the service role.
+revoke all on function public.reserve_api_slot(text, uuid, uuid, text) from public;
+grant execute on function public.reserve_api_slot(text, uuid, uuid, text) to service_role;
 
 -- =========================================================================
 -- STEP 9. Storage buckets (idempotent)
