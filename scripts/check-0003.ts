@@ -159,15 +159,18 @@ async function main() {
       //   - emergency_stop on
       //   - any other domain error from inside the function body
       // Failure modes we reject as broken installs:
-      //   - "does not exist" or "could not find the function": wrong sig
+      //   - "does not exist" / "could not find the function": wrong sig
       //   - "ambiguous": output param of RETURNS TABLE shadowing a column
       //   - "syntax error": function body itself won't parse
+      //   - "invalid input syntax for type uuid": api_usage.id is the
+      //     wrong type, function can't return it (post-0006 fix)
       const msg = error.message.toLowerCase();
       const broken =
         msg.includes("does not exist") ||
         msg.includes("could not find the function") ||
         msg.includes("ambiguous") ||
-        msg.includes("syntax error");
+        msg.includes("syntax error") ||
+        msg.includes("invalid input syntax for type uuid");
       return {
         ok: !broken,
         detail: broken
