@@ -1,9 +1,9 @@
 import { UploadDropzone } from "./UploadDropzone";
+import DeleteImageButton from "./DeleteImageButton";
 import {
   uploadRawImages,
   processImage,
   processAllRaw,
-  deleteProductImage,
 } from "@/app/admin/(dashboard)/products/[id]/upload/actions";
 import {
   approveCutout,
@@ -311,20 +311,16 @@ function ImageCard({
           </>
         )}
 
-        {/* Destructive: always available. Confirms client-side.
-            Primary gets a sterner message because deleting primary
-            wipes products.thumbnail_url and the catalog goes
-            placeholder until another image is promoted. */}
-        <form action={deleteProductImage}>
-          <input type="hidden" name="imageId" value={image.id} />
-          <input type="hidden" name="returnTo" value={returnTo} />
-          <button
-            type="submit"
-            className="w-full rounded-md border border-neutral-200 px-3 py-1 text-[11px] text-neutral-500 hover:border-rose-300 hover:text-rose-600"
-          >
-            Delete
-          </button>
-        </form>
+        {/* Destructive: always available. Delegated to a client
+            component that owns the confirm() dialog. Primary gets a
+            sterner message because deleting primary wipes
+            products.thumbnail_url and the catalog goes placeholder
+            until another image is promoted. */}
+        <DeleteImageButton
+          imageId={image.id}
+          returnTo={returnTo}
+          isPrimary={image.is_primary}
+        />
       </div>
     </div>
   );
