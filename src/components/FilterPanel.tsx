@@ -1,6 +1,6 @@
 "use client";
 
-import { useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useMemo, useTransition } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import type { Locale } from "@/i18n/config";
@@ -8,12 +8,20 @@ import { labelFor, type Taxonomy } from "@/lib/taxonomy";
 
 type SortKey = "latest" | "price_asc" | "price_desc";
 
-type Props = { taxonomy: Taxonomy };
+type Props = {
+  taxonomy: Taxonomy;
+  /** Hide filter groups that are already fixed by the current route.
+   *  On /item/[slug] the item_type and its parent room are implicit
+   *  from the URL — we don't want the user to pick another one here
+   *  (that's what navigating back up to the room/home page is for). */
+  hide?: { itemType?: boolean; room?: boolean };
+};
 
-export default function FilterPanel({ taxonomy }: Props) {
+export default function FilterPanel({ taxonomy, hide }: Props) {
   const t = useTranslations("filters");
   const locale = useLocale() as Locale;
   const router = useRouter();
+  const pathname = usePathname();
   const params = useSearchParams();
   const [pending, startTransition] = useTransition();
 
@@ -39,10 +47,15 @@ export default function FilterPanel({ taxonomy }: Props) {
       }
       const qs = next.toString();
       startTransition(() => {
-        router.push(qs ? `/?${qs}` : "/", { scroll: false });
+        // Stay on the current route — FilterPanel is shared between
+        // the rooms landing (historical), the item-type page, and any
+        // future filtered views. Hard-coding "/" sent every filter
+        // click back to the rooms grid, blowing away the user's
+        // position in the funnel.
+        router.push(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
       });
     },
-    [params, router],
+    [params, pathname, router],
   );
 
   const toggle = (list: string[], value: string) =>
@@ -83,31 +96,35 @@ export default function FilterPanel({ taxonomy }: Props) {
         </form>
       </div>
 
-      <Group
-        label={t("itemType")}
-        options={taxonomy.itemTypes.map((r) => ({
-          slug: r.slug,
-          label: labelFor(r, locale),
-        }))}
-        selected={current.itemTypes}
-        onToggle={(s) => {
-          const next = toggle(current.itemTypes, s);
-          push({ item_types: next.length ? next.join(",") : null });
-        }}
-      />
+      {!hide?.itemType && (
+        <Group
+          label={t("itemType")}
+          options={taxonomy.itemTypes.map((r) => ({
+            slug: r.slug,
+            label: labelFor(r, locale),
+          }))}
+          selected={current.itemTypes}
+          onToggle={(s) => {
+            const next = toggle(current.itemTypes, s);
+            push({ item_types: next.length ? next.join(",") : null });
+          }}
+        />
+      )}
 
-      <Group
-        label={t("room")}
-        options={taxonomy.rooms.map((r) => ({
-          slug: r.slug,
-          label: labelFor(r, locale),
-        }))}
-        selected={current.rooms}
-        onToggle={(s) => {
-          const next = toggle(current.rooms, s);
-          push({ rooms: next.length ? next.join(",") : null });
-        }}
-      />
+      {!hide?.room && (
+        <Group
+          label={t("room")}
+          options={taxonomy.rooms.map((r) => ({
+            slug: r.slug,
+            label: labelFor(r, locale),
+          }))}
+          selected={current.rooms}
+          onToggle={(s) => {
+            const next = toggle(current.rooms, s);
+            push({ rooms: next.length ? next.join(",") : null });
+          }}
+        />
+      )}
 
       <Group
         label={t("style")}

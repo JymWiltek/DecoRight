@@ -113,6 +113,33 @@ export async function getPublishedProductById(id: string): Promise<ProductRow | 
   return data;
 }
 
+/**
+ * Count published products grouped by item_type. Returns a lookup
+ * map keyed by the item_type slug. Used by the 3-layer landing pages
+ * to decorate room / item_type tiles with "{N} items".
+ *
+ * Single query for the whole catalog — cheaper than N queries even
+ * at 100+ item_types, and we need all counts at once on the landing
+ * and room pages.
+ */
+export async function publishedCountsByItemType(): Promise<
+  Record<string, number>
+> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("products")
+    .select("item_type")
+    .eq("status", "published");
+  if (error) throw error;
+  const out: Record<string, number> = {};
+  for (const row of data ?? []) {
+    const slug = row.item_type;
+    if (!slug) continue;
+    out[slug] = (out[slug] ?? 0) + 1;
+  }
+  return out;
+}
+
 export async function getRelatedProducts(
   product: ProductRow,
   limit = 6,

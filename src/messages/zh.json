@@ -2,14 +2,28 @@
   "site": {
     "tagline": "看到什么，就买到什么",
     "viewSite": "查看前台 →",
-    "backToCatalog": "← 返回目录"
+    "backToCatalog": "← 返回目录",
+    "home": "首页"
   },
   "language": {
     "label": "语言"
   },
   "home": {
     "itemCount": "{count, plural, =0 {暂无商品} other {# 件商品}}",
-    "emptyResults": "没有符合条件的商品，试试调整筛选。"
+    "emptyResults": "没有符合条件的商品，试试调整筛选。",
+    "pickRoom": "选择房间",
+    "pickRoomSubtitle": "按摆放的房间浏览家具。",
+    "roomEmpty": "暂无房间。"
+  },
+  "room": {
+    "pickItem": "选择物件",
+    "pickItemSubtitle": "在{room}里，你想买点什么？",
+    "empty": "该房间暂无物件分类。",
+    "notFound": "未找到该房间"
+  },
+  "itemType": {
+    "empty": "该分类下暂无商品，稍后再来看看。",
+    "notFound": "未找到该物件分类"
   },
   "filters": {
     "search": "搜索",

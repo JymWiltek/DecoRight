@@ -1,103 +1,75 @@
-import { Suspense } from "react";
 import { getLocale, getTranslations } from "next-intl/server";
 import type { Locale } from "@/i18n/config";
 import SiteHeader from "@/components/SiteHeader";
-import FilterPanel from "@/components/FilterPanel";
-import ProductCard from "@/components/ProductCard";
-import { listPublishedProducts, type ProductFilters } from "@/lib/products";
-import { loadTaxonomy, labelMap, colorHexMap } from "@/lib/taxonomy";
+import CategoryTile from "@/components/CategoryTile";
+import { loadTaxonomy, labelFor } from "@/lib/taxonomy";
+import { publishedCountsByItemType } from "@/lib/products";
 
 export const dynamic = "force-dynamic";
 
-type SearchParams = Record<string, string | string[] | undefined>;
-
-function pickOne(
-  v: string | string[] | undefined,
-  allowed: readonly string[],
-): string | undefined {
-  const s = Array.isArray(v) ? v[0] : v;
-  if (!s) return undefined;
-  return allowed.includes(s) ? s : undefined;
-}
-
-function pickMany(v: string | string[] | undefined, allowed: Set<string>): string[] {
-  const raw = Array.isArray(v) ? v.join(",") : v ?? "";
-  return raw
-    .split(",")
-    .map((s) => s.trim())
-    .filter((s) => s && allowed.has(s));
-}
-
-type PageProps = { searchParams: Promise<SearchParams> };
-
-export default async function Home({ searchParams }: PageProps) {
-  const sp = await searchParams;
-  const [taxonomy, t, locale] = await Promise.all([
+/**
+ * Layer 1 of the three-layer catalog: choose a room.
+ *
+ * Was: flat product grid with filters. That design made sense when
+ * the catalog was small, but once we have ~200+ SKUs across 11 rooms
+ * the funnel "which room am I decorating? → what do I need? → which
+ * one?" matches how people actually shop. The old flat page collapsed
+ * three decisions into one, which is paralyzing on mobile.
+ *
+ * Rooms are ordered by `sort_order` (curated in migration 0003). Each
+ * tile shows a count of published products currently in that room,
+ * summed across its item_types — a zero count signals an empty
+ * section but we still render it (the catalog is growing).
+ */
+export default async function Home() {
+  const [taxonomy, counts, tHome, locale] = await Promise.all([
     loadTaxonomy(),
+    publishedCountsByItemType(),
     getTranslations("home"),
     getLocale() as Promise<Locale>,
   ]);
 
-  const itemTypeSlugs = new Set(taxonomy.itemTypes.map((r) => r.slug));
-  const roomSlugs = new Set(taxonomy.rooms.map((r) => r.slug));
-  const styleSlugs = new Set(taxonomy.styles.map((r) => r.slug));
-  const colorSlugs = new Set(taxonomy.colors.map((r) => r.slug));
-  const materialSlugs = new Set(taxonomy.materials.map((r) => r.slug));
-
-  const filters: ProductFilters = {
-    q: typeof sp.q === "string" ? sp.q : undefined,
-    itemTypes: pickMany(sp.item_types, itemTypeSlugs),
-    rooms: pickMany(sp.rooms, roomSlugs),
-    styles: pickMany(sp.styles, styleSlugs),
-    colors: pickMany(sp.colors, colorSlugs),
-    materials: pickMany(sp.materials, materialSlugs),
-    sort: pickOne(sp.sort, ["latest", "price_asc", "price_desc"]) as
-      | "latest"
-      | "price_asc"
-      | "price_desc"
-      | undefined,
-  };
-
-  const products = await listPublishedProducts(filters);
-  const itemTypeLabels = labelMap(taxonomy.itemTypes, locale);
-  const styleLabels = labelMap(taxonomy.styles, locale);
-  const colorHex = colorHexMap(taxonomy.colors);
+  // Sum product counts per room via item_types.room_slug.
+  const roomCounts: Record<string, number> = {};
+  for (const it of taxonomy.itemTypes) {
+    if (!it.room_slug) continue;
+    roomCounts[it.room_slug] =
+      (roomCounts[it.room_slug] ?? 0) + (counts[it.slug] ?? 0);
+  }
 
   return (
     <>
       <SiteHeader />
-      <main className="mx-auto max-w-7xl px-4 py-8">
-        <div className="mb-6 flex items-end justify-end">
-          <div className="text-xs text-neutral-500">
-            {t("itemCount", { count: products.length })}
+      <main className="mx-auto max-w-7xl px-4 py-10">
+        <header className="mb-8">
+          <h1 className="text-2xl font-semibold text-neutral-900 sm:text-3xl">
+            {tHome("pickRoom")}
+          </h1>
+          <p className="mt-2 max-w-2xl text-sm text-neutral-600">
+            {tHome("pickRoomSubtitle")}
+          </p>
+        </header>
+
+        {taxonomy.rooms.length === 0 ? (
+          <div className="flex min-h-[40vh] items-center justify-center rounded-lg border border-dashed border-neutral-300 px-4 text-center text-sm text-neutral-500">
+            {tHome("roomEmpty")}
           </div>
-        </div>
-
-        <div className="grid gap-8 md:grid-cols-[240px_1fr]">
-          <Suspense>
-            <FilterPanel taxonomy={taxonomy} />
-          </Suspense>
-
-          <section>
-            {products.length === 0 ? (
-              <div className="flex min-h-[40vh] items-center justify-center rounded-lg border border-dashed border-neutral-300 px-4 text-center text-sm text-neutral-500">
-                {t("emptyResults")}
-              </div>
-            ) : (
-              <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
-                {products.map((p) => (
-                  <ProductCard
-                    key={p.id}
-                    product={p}
-                    itemTypeLabels={itemTypeLabels}
-                    styleLabels={styleLabels}
-                    colorHex={colorHex}
-                  />
-                ))}
-              </div>
-            )}
-          </section>
-        </div>
+        ) : (
+          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+            {taxonomy.rooms.map((r) => {
+              const count = roomCounts[r.slug] ?? 0;
+              return (
+                <CategoryTile
+                  key={r.slug}
+                  href={`/room/${r.slug}`}
+                  label={labelFor(r, locale)}
+                  count={count}
+                  countLabel={tHome("itemCount", { count })}
+                />
+              );
+            })}
+          </div>
+        )}
       </main>
     </>
   );

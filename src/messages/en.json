@@ -2,14 +2,28 @@
   "site": {
     "tagline": "See it, buy it",
     "viewSite": "View site →",
-    "backToCatalog": "← Back to catalog"
+    "backToCatalog": "← Back to catalog",
+    "home": "Home"
   },
   "language": {
     "label": "Language"
   },
   "home": {
     "itemCount": "{count, plural, =0 {No items} one {# item} other {# items}}",
-    "emptyResults": "No products match your filters. Try adjusting them."
+    "emptyResults": "No products match your filters. Try adjusting them.",
+    "pickRoom": "Pick a room",
+    "pickRoomSubtitle": "Browse furniture by the room it goes in.",
+    "roomEmpty": "No rooms yet."
+  },
+  "room": {
+    "pickItem": "Pick an item",
+    "pickItemSubtitle": "Choose what you want to shop for in {room}.",
+    "empty": "No item types in this room yet.",
+    "notFound": "Room not found"
+  },
+  "itemType": {
+    "empty": "No products in this category yet. Check back soon.",
+    "notFound": "Item type not found"
   },
   "filters": {
     "search": "Search",

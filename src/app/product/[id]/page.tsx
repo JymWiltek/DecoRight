@@ -1,9 +1,9 @@
 import { notFound } from "next/navigation";
-import Link from "next/link";
 import { getLocale, getTranslations } from "next-intl/server";
 import type { Locale } from "@/i18n/config";
 import SiteHeader from "@/components/SiteHeader";
 import ProductDetail from "@/components/ProductDetail";
+import Breadcrumb, { type BreadcrumbItem } from "@/components/Breadcrumb";
 import { getPublishedProductById } from "@/lib/products";
 import { labelFor, labelMap, loadTaxonomy } from "@/lib/taxonomy";
 import { BRAND } from "@config/brand";
@@ -64,15 +64,31 @@ export default async function ProductPage({ params }: PageProps) {
     })
     .filter((c): c is { slug: string; label: string; hex: string } => c !== null);
 
+  // Home › Room › Item Type › Product. Each ancestor is a link so a
+  // visitor who arrived from a deep link (Google, shared URL) can
+  // still climb back up the three-layer funnel. Skip any segment
+  // whose data is missing — e.g. legacy products without an
+  // item_type get "Home › Product" with no mid-layer rubble.
+  const breadcrumb: BreadcrumbItem[] = [{ label: tSite("home"), href: "/" }];
+  if (itemTypeRow?.room_slug) {
+    breadcrumb.push({
+      label: roomLabels[itemTypeRow.room_slug] ?? itemTypeRow.room_slug,
+      href: `/room/${itemTypeRow.room_slug}`,
+    });
+  }
+  if (itemTypeRow && itemTypeLabel) {
+    breadcrumb.push({
+      label: itemTypeLabel,
+      href: `/item/${itemTypeRow.slug}`,
+    });
+  }
+  breadcrumb.push({ label: product.name });
+
   return (
     <>
       <SiteHeader tight />
       <main className="mx-auto max-w-6xl px-4 py-8">
-        <div className="mb-6 text-sm">
-          <Link href="/" className="text-neutral-500 hover:text-black">
-            {tSite("backToCatalog")}
-          </Link>
-        </div>
+        <Breadcrumb items={breadcrumb} />
         <ProductDetail
           product={product}
           itemTypeLabel={itemTypeLabel}
