@@ -23,15 +23,16 @@ export default async function TaxonomyPage({ searchParams }: PageProps) {
   return (
     <div className="mx-auto max-w-5xl space-y-6 px-6 py-8">
       <header>
-        <h1 className="text-2xl font-semibold">分类管理</h1>
+        <h1 className="text-2xl font-semibold">Taxonomy</h1>
         <p className="mt-1 text-sm text-neutral-600">
-          物件、房间、风格、材质、颜色都在这里加。加完以后，编辑商品页会立刻出现新按钮。
+          Manage items, rooms, styles, materials, and colors here.
+          Anything added shows up in the product form immediately.
         </p>
       </header>
 
       {(sp.added || sp.deleted) && (
         <div className="rounded-md bg-emerald-50 px-4 py-2 text-sm text-emerald-700">
-          {sp.added ? `已添加 (${sp.added})` : `已删除 (${sp.deleted})`}
+          {sp.added ? `Added (${sp.added})` : `Deleted (${sp.deleted})`}
         </div>
       )}
       {sp.err && (
@@ -42,32 +43,32 @@ export default async function TaxonomyPage({ searchParams }: PageProps) {
 
       <Block
         kind="item_types"
-        title="物件类型"
-        hint="一个产品就是一种东西 · 单选"
+        title="Item types"
+        hint="A product is one kind of thing · single-select"
         rows={tx.itemTypes.map((r) => ({ slug: r.slug, label: r.label_zh }))}
       />
       <Block
         kind="rooms"
-        title="房间 / 使用场景"
-        hint="一个产品可属于多个房间"
+        title="Rooms / usage"
+        hint="A product may belong to multiple rooms"
         rows={tx.rooms.map((r) => ({ slug: r.slug, label: r.label_zh }))}
       />
       <Block
         kind="styles"
-        title="风格"
-        hint="一个产品可有多种风格"
+        title="Styles"
+        hint="A product may have multiple styles"
         rows={tx.styles.map((r) => ({ slug: r.slug, label: r.label_zh }))}
       />
       <Block
         kind="materials"
-        title="材质"
-        hint="可多选"
+        title="Materials"
+        hint="Multi-select"
         rows={tx.materials.map((r) => ({ slug: r.slug, label: r.label_zh }))}
       />
       <Block
         kind="colors"
-        title="颜色"
-        hint="可多选 · 带 hex 色值"
+        title="Colors"
+        hint="Multi-select · with hex value"
         rows={tx.colors.map((r) => ({
           slug: r.slug,
           label: r.label_zh,
@@ -87,17 +88,17 @@ function errorMessage(
 ): string {
   switch (err) {
     case "label":
-      return "出错了：缺少中文名";
+      return "Error: missing label";
     case "slug":
-      return "出错了：请用包含至少一个英文字母或数字的名字，或手填 slug（例：gamer_pc）";
+      return "Error: name must contain at least one ASCII letter/digit, or provide a slug manually (e.g. gamer_pc)";
     case "hex":
-      return "出错了：hex 色值格式错（需 #RRGGBB，例 #FF8800）";
+      return "Error: hex value must be #RRGGBB (e.g. #FF8800)";
     case "inuse":
-      return `不能删除：还有 ${count ?? "?"} 件商品在用「${slug ?? ""}」。请先把这些商品改成别的分类，再回来删。`;
+      return `Can't delete: ${count ?? "?"} product(s) still reference "${slug ?? ""}". Reassign those products first, then retry.`;
     case "db":
-      return `数据库出错 (${kind}): ${msg ?? ""}`;
+      return `Database error (${kind}): ${msg ?? ""}`;
     default:
-      return `出错了：${err}`;
+      return `Error: ${err}`;
   }
 }
 
@@ -126,7 +127,7 @@ function Block({
 
       <div className="mb-4 flex flex-wrap gap-2">
         {rows.length === 0 && (
-          <span className="text-xs text-neutral-400">（空）</span>
+          <span className="text-xs text-neutral-400">(empty)</span>
         )}
         {rows.map((r) => (
           <DeleteChip
@@ -145,16 +146,18 @@ function Block({
       >
         <input type="hidden" name="kind" value={kind} />
         <label className="flex flex-col gap-1">
-          <span className="text-xs text-neutral-600">中文名 *</span>
+          {/* Phase 2 will introduce label_en/label_ms; for now the
+              source-of-truth label ships as label_zh. */}
+          <span className="text-xs text-neutral-600">Label (zh) *</span>
           <input
             name="label_zh"
             required
-            placeholder="例如：Gamer PC"
+            placeholder="e.g. Gamer PC"
             className="rounded-md border border-neutral-300 px-3 py-2 text-sm focus:border-black focus:outline-none"
           />
         </label>
         <label className="flex flex-col gap-1">
-          <span className="text-xs text-neutral-600">slug（可选，不填自动生成）</span>
+          <span className="text-xs text-neutral-600">slug (optional, auto-generated)</span>
           <input
             name="slug"
             placeholder="a-z 0-9 _"
@@ -178,7 +181,7 @@ function Block({
           type="submit"
           className="rounded-md bg-black px-4 py-2 text-sm font-medium text-white hover:bg-neutral-800"
         >
-          添加
+          Add
         </button>
       </form>
     </section>

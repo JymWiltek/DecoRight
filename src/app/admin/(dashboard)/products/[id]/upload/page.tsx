@@ -66,17 +66,17 @@ export default async function UploadPage({ params, searchParams }: PageProps) {
         <div>
           <div className="text-xs text-neutral-500">
             <Link href="/admin" className="hover:text-black">
-              ← 商品管理
+              ← Products
             </Link>
             {" · "}
             <Link
               href={`/admin/products/${id}/edit`}
               className="hover:text-black"
             >
-              编辑商品
+              Edit product
             </Link>
           </div>
-          <h1 className="mt-2 text-2xl font-semibold">上传图片</h1>
+          <h1 className="mt-2 text-2xl font-semibold">Upload images</h1>
           <div className="mt-1 text-sm text-neutral-600">
             {product.name}
           </div>
@@ -85,14 +85,15 @@ export default async function UploadPage({ params, searchParams }: PageProps) {
           href="/admin/cutouts"
           className="rounded-md border border-neutral-300 px-4 py-2 text-sm hover:border-black"
         >
-          审核队列 →
+          Review queue →
         </Link>
       </header>
 
       {/* banners */}
       {sp.uploaded && (
         <div className="rounded-md bg-emerald-50 px-4 py-2 text-sm text-emerald-700">
-          已上传 {sp.uploaded} 张原图。点下面的「抠图」把每张送去 rembg。
+          Uploaded {sp.uploaded} raw image(s). Click &ldquo;Cut out&rdquo; below to
+          send each one to rembg.
         </div>
       )}
       {sp.err && (
@@ -108,7 +109,7 @@ export default async function UploadPage({ params, searchParams }: PageProps) {
       <section className="rounded-lg border border-neutral-200 bg-white p-5">
         <div className="mb-3 flex items-baseline justify-between">
           <h2 className="text-sm font-semibold uppercase tracking-wide text-neutral-500">
-            上传原图（可选多张）
+            Upload raw images (multi-select)
           </h2>
           {rawCount > 0 && (
             // Hoist the batch-process form OUT of the upload form. Two
@@ -119,9 +120,9 @@ export default async function UploadPage({ params, searchParams }: PageProps) {
               <button
                 type="submit"
                 className="rounded-md border border-neutral-300 px-4 py-2 text-sm hover:border-black"
-                title={`把 ${rawCount} 张原图全部送去抠图`}
+                title={`Send all ${rawCount} raw images through rembg`}
               >
-                全部抠图 ({rawCount})
+                Cut out all ({rawCount})
               </button>
             </form>
           )}
@@ -140,13 +141,14 @@ export default async function UploadPage({ params, searchParams }: PageProps) {
             type="submit"
             className="rounded-md bg-black px-4 py-2 text-sm font-medium text-white hover:bg-neutral-800"
           >
-            上传
+            Upload
           </button>
         </form>
         <p className="mt-3 text-xs text-neutral-500">
-          建议：白底或干净背景的产品正面照。单张最佳在 1–4 MB。
-          抠图会自动用 Replicate (约 $0.001/张)；如果结果不满意，到审核队列
-          点「用 Remove.bg 重抠」（约 $0.20/张）。
+          Tip: front-on product photos on a clean or white background work
+          best. 1–4 MB per image is ideal. Cutout runs on Replicate
+          (~$0.001/image); if a result looks bad, re-run it on Remove.bg
+          from the review queue (~$0.20/image).
         </p>
       </section>
 
@@ -154,15 +156,15 @@ export default async function UploadPage({ params, searchParams }: PageProps) {
       <section className="rounded-lg border border-neutral-200 bg-white p-5">
         <div className="mb-3 flex items-baseline justify-between">
           <h2 className="text-sm font-semibold uppercase tracking-wide text-neutral-500">
-            已上传 ({imagesWithPreviews.length})
+            Uploaded ({imagesWithPreviews.length})
           </h2>
           <div className="text-xs text-neutral-400">
-            {rawCount > 0 && <>原图 {rawCount} · </>}
-            {pendingCount > 0 && <>待审核 {pendingCount}</>}
+            {rawCount > 0 && <>Raw {rawCount} · </>}
+            {pendingCount > 0 && <>Pending {pendingCount}</>}
           </div>
         </div>
         {imagesWithPreviews.length === 0 ? (
-          <p className="text-sm text-neutral-400">还没有图。</p>
+          <p className="text-sm text-neutral-400">No images yet.</p>
         ) : (
           <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-4">
             {imagesWithPreviews.map((img) => (
@@ -195,7 +197,7 @@ function QuotaCard({
   return (
     <section className="rounded-lg border border-neutral-200 bg-white p-5">
       <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-neutral-500">
-        今日 API 用量
+        Today&rsquo;s API usage
       </h2>
       <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
         {(["replicate_rembg", "removebg", "meshy"] as const).map((s) => {
@@ -218,17 +220,17 @@ function QuotaCard({
                 </span>
                 {!configured && (
                   <span className="rounded bg-neutral-200 px-1.5 py-0.5 text-[10px] text-neutral-600">
-                    未配置
+                    Not configured
                   </span>
                 )}
                 {u.blocked && (
                   <span className="rounded bg-rose-200 px-1.5 py-0.5 text-[10px] text-rose-800">
-                    已阻止
+                    Blocked
                   </span>
                 )}
               </div>
               <div className="mt-1 text-neutral-500">
-                {u.count} / {u.limit} 次 · ${u.spentUsd.toFixed(3)}
+                {u.count} / {u.limit} calls · ${u.spentUsd.toFixed(3)}
               </div>
               <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-neutral-200">
                 <div
@@ -298,7 +300,7 @@ function ImageCard({
           />
         ) : (
           <div className="flex h-full items-center justify-center text-neutral-400">
-            无预览
+            No preview
           </div>
         )}
       </div>
@@ -306,7 +308,7 @@ function ImageCard({
         <StateTag state={state} />
         {isPrimary && (
           <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] text-amber-800">
-            主图
+            Primary
           </span>
         )}
       </div>
@@ -323,7 +325,7 @@ function ImageCard({
             type="submit"
             className="w-full rounded-md bg-black px-3 py-1.5 text-xs font-medium text-white hover:bg-neutral-800"
           >
-            抠图
+            Cut out
           </button>
         </form>
       )}
@@ -332,7 +334,7 @@ function ImageCard({
           href="/admin/cutouts"
           className="mt-2 block rounded-md border border-neutral-300 px-3 py-1.5 text-center text-xs hover:border-black"
         >
-          去审核 →
+          Review →
         </Link>
       )}
     </div>
@@ -342,19 +344,19 @@ function ImageCard({
 function StateTag({ state }: { state: string }) {
   const map: Record<string, { label: string; cls: string }> = {
     raw: {
-      label: "原图",
+      label: "Raw",
       cls: "bg-neutral-100 text-neutral-600",
     },
     cutout_pending: {
-      label: "待审核",
+      label: "Pending",
       cls: "bg-amber-100 text-amber-800",
     },
     cutout_approved: {
-      label: "已通过",
+      label: "Approved",
       cls: "bg-emerald-100 text-emerald-800",
     },
     cutout_rejected: {
-      label: "已拒",
+      label: "Rejected",
       cls: "bg-rose-100 text-rose-700",
     },
   };
@@ -369,20 +371,20 @@ function StateTag({ state }: { state: string }) {
 function renderErr(err: string, msg?: string): string {
   switch (err) {
     case "no_files":
-      return "请先选文件再点上传。";
+      return "Pick at least one file before clicking Upload.";
     case "upload":
-      return `上传失败：${msg ?? "unknown"}`;
+      return `Upload failed: ${msg ?? "unknown"}`;
     case "db":
-      return `数据库错误：${msg ?? "unknown"}`;
+      return `Database error: ${msg ?? "unknown"}`;
     case "missing_raw":
-      return "这张图没有原图路径，可能已被删除。刷新重试。";
+      return "This image has no raw path — it may have been deleted. Refresh and try again.";
     case "no_provider":
-      return `抠图服务未配置：请在 Vercel 设 REPLICATE_API_TOKEN 或 REMOVEBG_API_KEY。${msg ?? ""}`;
+      return `No rembg provider configured: set REPLICATE_API_TOKEN or REMOVEBG_API_KEY in Vercel. ${msg ?? ""}`;
     case "quota":
-      return `今日配额已满或紧急停止：${msg ?? ""}`;
+      return `Daily quota exhausted or emergency stop: ${msg ?? ""}`;
     case "rembg":
-      return `抠图失败：${msg ?? ""}`;
+      return `Rembg failed: ${msg ?? ""}`;
     default:
-      return `出错：${err}`;
+      return `Error: ${err}`;
   }
 }

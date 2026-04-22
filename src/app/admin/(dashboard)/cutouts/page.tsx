@@ -61,27 +61,28 @@ export default async function CutoutsPage({ searchParams }: PageProps) {
   return (
     <div className="mx-auto max-w-6xl space-y-6 px-6 py-8">
       <header>
-        <h1 className="text-2xl font-semibold">抠图审核</h1>
+        <h1 className="text-2xl font-semibold">Cutout review</h1>
         <p className="mt-1 text-sm text-neutral-600">
-          Replicate 跑完的抠图在这里过人工。通过就进产品主图；拒绝可以用
-          Remove.bg 重抠（贵但更干净）。
+          Replicate cutouts land here for human approval. Approve to set
+          as the product&rsquo;s primary image; reject to re-run on
+          Remove.bg (pricier, cleaner).
         </p>
       </header>
 
       {/* banners */}
       {sp.approved && (
-        <Banner tone="emerald">已通过，商品主图已自动更新。</Banner>
+        <Banner tone="emerald">Approved — primary image updated.</Banner>
       )}
-      {sp.rejected && <Banner tone="amber">已拒绝这张抠图。</Banner>}
+      {sp.rejected && <Banner tone="amber">Cutout rejected.</Banner>}
       {sp.reran && (
         <Banner tone="sky">
-          已用 Remove.bg 重抠，新结果回到「待审核」列表。
+          Re-ran on Remove.bg — new result is back in the Pending queue.
         </Banner>
       )}
-      {sp.primary && <Banner tone="emerald">已切换主图。</Banner>}
+      {sp.primary && <Banner tone="emerald">Primary image switched.</Banner>}
       {sp.err && (
         <Banner tone="rose">
-          出错了：{sp.err}
+          Error: {sp.err}
           {sp.msg ? ` — ${sp.msg}` : ""}
         </Banner>
       )}
@@ -96,7 +97,7 @@ export default async function CutoutsPage({ searchParams }: PageProps) {
               : "border border-neutral-300 hover:border-black"
           }`}
         >
-          待审核 ({pendingCount})
+          Pending ({pendingCount})
         </Link>
         <Link
           href="/admin/cutouts?tab=all"
@@ -106,7 +107,7 @@ export default async function CutoutsPage({ searchParams }: PageProps) {
               : "border border-neutral-300 hover:border-black"
           }`}
         >
-          全部
+          All
         </Link>
       </div>
 
@@ -114,8 +115,8 @@ export default async function CutoutsPage({ searchParams }: PageProps) {
       {(images ?? []).length === 0 ? (
         <div className="rounded-lg border border-dashed border-neutral-300 bg-white p-12 text-center text-sm text-neutral-500">
           {tab === "pending"
-            ? "空闲中 · 没有待审核的抠图。"
-            : "还没有抠图。去商品详情页上传。"}
+            ? "All clear — nothing pending review."
+            : "No cutouts yet. Upload some from a product page."}
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
@@ -194,7 +195,7 @@ function ReviewCard({
           />
         ) : (
           <div className="flex h-full items-center justify-center text-xs text-neutral-400">
-            （无抠图预览）
+            (no cutout preview)
           </div>
         )}
       </div>
@@ -208,7 +209,7 @@ function ReviewCard({
           </Link>
           {isPrimary && (
             <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] text-amber-800">
-              主图
+              Primary
             </span>
           )}
         </div>
@@ -217,7 +218,7 @@ function ReviewCard({
           {provider ?? "—"}
           {costUsd != null && <> · ${costUsd.toFixed(3)}</>}
           {" · "}
-          {new Date(createdAt).toLocaleString("zh-CN")}
+          {new Date(createdAt).toLocaleString("en-MY")}
         </div>
       </div>
 
@@ -229,7 +230,7 @@ function ReviewCard({
               type="submit"
               className="rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700"
             >
-              ✓ 通过
+              ✓ Approve
             </button>
           </form>
           <form action={rejectCutout}>
@@ -238,7 +239,7 @@ function ReviewCard({
               type="submit"
               className="rounded-md border border-neutral-300 px-3 py-1.5 text-xs hover:border-rose-500 hover:text-rose-600"
             >
-              × 拒绝
+              × Reject
             </button>
           </form>
           {canRerunRemoveBg && (
@@ -248,9 +249,9 @@ function ReviewCard({
               <button
                 type="submit"
                 className="rounded-md border border-sky-300 bg-sky-50 px-3 py-1.5 text-xs text-sky-700 hover:bg-sky-100"
-                title="用 Remove.bg 重新抠一次（约 $0.20）"
+                title="Re-run with Remove.bg (~$0.20)"
               >
-                用 Remove.bg 重抠 →
+                Re-run on Remove.bg →
               </button>
             </form>
           )}
@@ -265,7 +266,7 @@ function ReviewCard({
               type="submit"
               className="w-full rounded-md border border-neutral-300 px-3 py-1.5 text-xs hover:border-black"
             >
-              设为主图
+              Set as primary
             </button>
           </form>
         </div>
@@ -277,7 +278,7 @@ function ReviewCard({
           href={`/admin/products/${productId}/upload`}
           className="hover:text-black"
         >
-          在产品页看 →
+          Open in product →
         </Link>
       </div>
     </div>
@@ -286,13 +287,13 @@ function ReviewCard({
 
 function StateChip({ state }: { state: string }) {
   const map: Record<string, { label: string; cls: string }> = {
-    cutout_pending: { label: "待审核", cls: "bg-amber-100 text-amber-800" },
+    cutout_pending: { label: "Pending", cls: "bg-amber-100 text-amber-800" },
     cutout_approved: {
-      label: "已通过",
+      label: "Approved",
       cls: "bg-emerald-100 text-emerald-800",
     },
-    cutout_rejected: { label: "已拒", cls: "bg-rose-100 text-rose-700" },
-    raw: { label: "原图", cls: "bg-neutral-100 text-neutral-600" },
+    cutout_rejected: { label: "Rejected", cls: "bg-rose-100 text-rose-700" },
+    raw: { label: "Raw", cls: "bg-neutral-100 text-neutral-600" },
   };
   const m = map[state] ?? { label: state, cls: "bg-neutral-100 text-neutral-600" };
   return (

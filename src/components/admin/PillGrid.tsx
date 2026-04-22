@@ -61,11 +61,11 @@ export default function PillGrid(props: Props) {
   if (options.length === 0) {
     return (
       <div className="rounded-md border border-dashed border-neutral-300 px-3 py-4 text-xs text-neutral-500">
-        {emptyLabel ?? "没有选项。前往"}
+        {emptyLabel ?? "No options yet — add some under "}
         <a href="/admin/taxonomy" className="mx-1 text-sky-600 hover:underline">
-          分类管理
+          Taxonomy
         </a>
-        添加。
+        .
       </div>
     );
   }

@@ -10,12 +10,12 @@ export default function DeleteButton({ id, name }: { id: string; name: string })
       type="button"
       disabled={pending}
       onClick={() => {
-        if (!confirm(`确定删除 "${name}"？此操作不可撤销。`)) return;
+        if (!confirm(`Delete "${name}"? This can't be undone.`)) return;
         startTransition(() => deleteProduct(id));
       }}
       className="rounded-md border border-red-300 px-3 py-1.5 text-xs text-red-600 hover:border-red-500 disabled:opacity-50"
     >
-      {pending ? "删除中…" : "删除"}
+      {pending ? "Deleting…" : "Delete"}
     </button>
   );
 }

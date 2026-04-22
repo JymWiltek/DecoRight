@@ -1,0 +1,44 @@
+{
+  "site": {
+    "tagline": "Lihat, terus beli",
+    "viewSite": "Lihat laman →",
+    "backToCatalog": "← Kembali ke katalog"
+  },
+  "language": {
+    "label": "Bahasa"
+  },
+  "home": {
+    "itemCount": "{count, plural, =0 {Tiada produk} other {# produk}}",
+    "emptyResults": "Tiada produk yang sepadan. Cuba laraskan penapis."
+  },
+  "filters": {
+    "search": "Cari",
+    "searchPlaceholder": "Nama, jenama, keterangan",
+    "itemType": "Jenis",
+    "room": "Bilik",
+    "style": "Gaya",
+    "color": "Warna",
+    "material": "Bahan",
+    "sort": "Susun",
+    "sortLatest": "Terkini",
+    "sortPriceAsc": "Harga ↑",
+    "sortPriceDesc": "Harga ↓",
+    "clearAll": "Kosongkan penapis"
+  },
+  "product": {
+    "notFound": "Produk tidak dijumpai",
+    "noModel": "Tiada model 3D lagi",
+    "itemType": "Jenis",
+    "room": "Bilik",
+    "style": "Gaya",
+    "material": "Bahan",
+    "dimensionsMm": "Dimensi (mm)",
+    "weight": "Berat",
+    "weightValue": "{kg} kg",
+    "color": "Warna",
+    "buyNow": "Beli sekarang →",
+    "noPurchaseLink": "Pautan beli belum ada",
+    "arHintLine1": "Tekan ikon AR di kanan bawah model untuk pratonton produk saiz sebenar dengan kamera telefon.",
+    "arHintLine2": "iOS perlukan USDZ (Fasa 3); Android Scene Viewer sudah boleh guna."
+  }
+}

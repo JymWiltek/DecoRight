@@ -10,11 +10,11 @@ type Props = {
 };
 
 const KIND_LABELS: Record<Props["kind"], string> = {
-  item_types: "物件类型",
-  rooms: "房间",
-  styles: "风格",
-  materials: "材质",
-  colors: "颜色",
+  item_types: "item type",
+  rooms: "room",
+  styles: "style",
+  materials: "material",
+  colors: "color",
 };
 
 /**
@@ -31,9 +31,9 @@ export default function DeleteChip({ kind, slug, label, hex }: Props) {
       action={deleteTaxonomyItem}
       onSubmit={(e) => {
         const ok = window.confirm(
-          `确定删除${KIND_LABELS[kind]}「${label}」？\n\n` +
-            `如果有商品在用，系统会阻止删除。\n` +
-            `想暂时隐藏它而不删除，建议先改掉商品里用到它的地方。`,
+          `Delete ${KIND_LABELS[kind]} "${label}"?\n\n` +
+            `If any product still uses it, the server will block the delete.\n` +
+            `To hide an option without removing it, reassign the products that use it first.`,
         );
         if (!ok) e.preventDefault();
       }}
@@ -52,8 +52,8 @@ export default function DeleteChip({ kind, slug, label, hex }: Props) {
       <button
         type="submit"
         className="ml-1 text-neutral-400 hover:text-rose-600"
-        title="删除"
-        aria-label={`删除 ${label}`}
+        title="Delete"
+        aria-label={`Delete ${label}`}
       >
         ×
       </button>

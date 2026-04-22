@@ -1,0 +1,44 @@
+{
+  "site": {
+    "tagline": "See it, buy it",
+    "viewSite": "View site →",
+    "backToCatalog": "← Back to catalog"
+  },
+  "language": {
+    "label": "Language"
+  },
+  "home": {
+    "itemCount": "{count, plural, =0 {No items} one {# item} other {# items}}",
+    "emptyResults": "No products match your filters. Try adjusting them."
+  },
+  "filters": {
+    "search": "Search",
+    "searchPlaceholder": "Name, brand, description",
+    "itemType": "Item",
+    "room": "Room",
+    "style": "Style",
+    "color": "Color",
+    "material": "Material",
+    "sort": "Sort",
+    "sortLatest": "Latest",
+    "sortPriceAsc": "Price ↑",
+    "sortPriceDesc": "Price ↓",
+    "clearAll": "Clear all filters"
+  },
+  "product": {
+    "notFound": "Product not found",
+    "noModel": "No 3D model yet",
+    "itemType": "Item",
+    "room": "Room",
+    "style": "Style",
+    "material": "Material",
+    "dimensionsMm": "Dimensions (mm)",
+    "weight": "Weight",
+    "weightValue": "{kg} kg",
+    "color": "Color",
+    "buyNow": "Buy now →",
+    "noPurchaseLink": "No purchase link yet",
+    "arHintLine1": "Tap the AR icon at the bottom-right of the model to preview this product life-size with your phone camera.",
+    "arHintLine2": "iOS needs USDZ (Phase 3); Android Scene Viewer is live now."
+  }
+}

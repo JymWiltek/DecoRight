@@ -2,6 +2,7 @@
 
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useMemo, useTransition } from "react";
+import { useTranslations } from "next-intl";
 import type { Taxonomy } from "@/lib/taxonomy";
 
 type SortKey = "latest" | "price_asc" | "price_desc";
@@ -9,6 +10,7 @@ type SortKey = "latest" | "price_asc" | "price_desc";
 type Props = { taxonomy: Taxonomy };
 
 export default function FilterPanel({ taxonomy }: Props) {
+  const t = useTranslations("filters");
   const router = useRouter();
   const params = useSearchParams();
   const [pending, startTransition] = useTransition();
@@ -60,7 +62,7 @@ export default function FilterPanel({ taxonomy }: Props) {
     >
       <div>
         <label className="mb-2 block text-xs font-medium uppercase tracking-wide text-neutral-500">
-          搜索
+          {t("search")}
         </label>
         <form
           onSubmit={(e) => {
@@ -73,14 +75,14 @@ export default function FilterPanel({ taxonomy }: Props) {
           <input
             name="q"
             defaultValue={current.q}
-            placeholder="名称、品牌、描述"
+            placeholder={t("searchPlaceholder")}
             className="w-full rounded-md border border-neutral-300 px-3 py-2 text-sm focus:border-black focus:outline-none"
           />
         </form>
       </div>
 
       <Group
-        label="物件"
+        label={t("itemType")}
         options={taxonomy.itemTypes.map((r) => ({
           slug: r.slug,
           label: r.label_zh,
@@ -93,7 +95,7 @@ export default function FilterPanel({ taxonomy }: Props) {
       />
 
       <Group
-        label="房间"
+        label={t("room")}
         options={taxonomy.rooms.map((r) => ({
           slug: r.slug,
           label: r.label_zh,
@@ -106,7 +108,7 @@ export default function FilterPanel({ taxonomy }: Props) {
       />
 
       <Group
-        label="风格"
+        label={t("style")}
         options={taxonomy.styles.map((r) => ({
           slug: r.slug,
           label: r.label_zh,
@@ -120,7 +122,7 @@ export default function FilterPanel({ taxonomy }: Props) {
 
       <div>
         <div className="mb-2 text-xs font-medium uppercase tracking-wide text-neutral-500">
-          颜色
+          {t("color")}
         </div>
         <div className="flex flex-wrap gap-2">
           {taxonomy.colors.map((c) => {
@@ -148,7 +150,7 @@ export default function FilterPanel({ taxonomy }: Props) {
       </div>
 
       <Group
-        label="材质"
+        label={t("material")}
         options={taxonomy.materials.map((r) => ({
           slug: r.slug,
           label: r.label_zh,
@@ -162,14 +164,14 @@ export default function FilterPanel({ taxonomy }: Props) {
 
       <div>
         <label className="mb-2 block text-xs font-medium uppercase tracking-wide text-neutral-500">
-          排序
+          {t("sort")}
         </label>
         <div className="flex flex-wrap gap-2">
           {(
             [
-              ["latest", "最新上架"],
-              ["price_asc", "价格 ↑"],
-              ["price_desc", "价格 ↓"],
+              ["latest", t("sortLatest")],
+              ["price_asc", t("sortPriceAsc")],
+              ["price_desc", t("sortPriceDesc")],
             ] as const
           ).map(([val, label]) => (
             <button
@@ -205,7 +207,7 @@ export default function FilterPanel({ taxonomy }: Props) {
           }
           className="self-start rounded-md border border-neutral-300 px-3 py-1.5 text-xs text-neutral-700 hover:border-black"
         >
-          清除所有筛选
+          {t("clearAll")}
         </button>
       )}
     </aside>

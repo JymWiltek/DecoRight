@@ -1,5 +1,7 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
+import { getTranslations } from "next-intl/server";
+import SiteHeader from "@/components/SiteHeader";
 import ProductDetail from "@/components/ProductDetail";
 import { getPublishedProductById } from "@/lib/products";
 import { loadTaxonomy, labelMap } from "@/lib/taxonomy";
@@ -12,7 +14,10 @@ type PageProps = { params: Promise<{ id: string }> };
 export async function generateMetadata({ params }: PageProps) {
   const { id } = await params;
   const product = await getPublishedProductById(id);
-  if (!product) return { title: `未找到商品 · ${BRAND.name}` };
+  if (!product) {
+    const t = await getTranslations("product");
+    return { title: `${t("notFound")} · ${BRAND.name}` };
+  }
   return {
     title: `${product.name} · ${BRAND.name}`,
     description: product.description ?? undefined,
@@ -21,9 +26,10 @@ export async function generateMetadata({ params }: PageProps) {
 
 export default async function ProductPage({ params }: PageProps) {
   const { id } = await params;
-  const [product, taxonomy] = await Promise.all([
+  const [product, taxonomy, tSite] = await Promise.all([
     getPublishedProductById(id),
     loadTaxonomy(),
+    getTranslations("site"),
   ]);
   if (!product) notFound();
 
@@ -57,20 +63,23 @@ export default async function ProductPage({ params }: PageProps) {
     .filter((c): c is { slug: string; label: string; hex: string } => c !== null);
 
   return (
-    <main className="mx-auto max-w-6xl px-4 py-8">
-      <div className="mb-6 text-sm">
-        <Link href="/" className="text-neutral-500 hover:text-black">
-          ← 返回目录
-        </Link>
-      </div>
-      <ProductDetail
-        product={product}
-        itemTypeLabel={itemTypeLabel}
-        roomLabels={roomLabelList}
-        styleLabels={styleLabelList}
-        materialLabels={materialLabelList}
-        colors={colorOptions}
-      />
-    </main>
+    <>
+      <SiteHeader tight />
+      <main className="mx-auto max-w-6xl px-4 py-8">
+        <div className="mb-6 text-sm">
+          <Link href="/" className="text-neutral-500 hover:text-black">
+            {tSite("backToCatalog")}
+          </Link>
+        </div>
+        <ProductDetail
+          product={product}
+          itemTypeLabel={itemTypeLabel}
+          roomLabels={roomLabelList}
+          styleLabels={styleLabelList}
+          materialLabels={materialLabelList}
+          colors={colorOptions}
+        />
+      </main>
+    </>
   );
 }

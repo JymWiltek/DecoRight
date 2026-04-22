@@ -1,0 +1,44 @@
+{
+  "site": {
+    "tagline": "看到什么，就买到什么",
+    "viewSite": "查看前台 →",
+    "backToCatalog": "← 返回目录"
+  },
+  "language": {
+    "label": "语言"
+  },
+  "home": {
+    "itemCount": "{count, plural, =0 {暂无商品} other {# 件商品}}",
+    "emptyResults": "没有符合条件的商品，试试调整筛选。"
+  },
+  "filters": {
+    "search": "搜索",
+    "searchPlaceholder": "名称、品牌、描述",
+    "itemType": "物件",
+    "room": "房间",
+    "style": "风格",
+    "color": "颜色",
+    "material": "材质",
+    "sort": "排序",
+    "sortLatest": "最新上架",
+    "sortPriceAsc": "价格 ↑",
+    "sortPriceDesc": "价格 ↓",
+    "clearAll": "清除所有筛选"
+  },
+  "product": {
+    "notFound": "未找到商品",
+    "noModel": "暂无 3D 模型",
+    "itemType": "物件",
+    "room": "适用房间",
+    "style": "风格",
+    "material": "材质",
+    "dimensionsMm": "尺寸 (mm)",
+    "weight": "重量",
+    "weightValue": "{kg} kg",
+    "color": "颜色",
+    "buyNow": "前往购买 →",
+    "noPurchaseLink": "暂无购买链接",
+    "arHintLine1": "点击模型右下角 AR 图标，用手机摄像头 1:1 预览该产品。",
+    "arHintLine2": "iOS 需要 USDZ（Phase 3 开放），当前 Android Scene Viewer 可用。"
+  }
+}

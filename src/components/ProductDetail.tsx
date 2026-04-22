@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useTranslations } from "next-intl";
 import ModelViewer from "./ModelViewer";
 import ColorSwitcher, { type ColorOption } from "./ColorSwitcher";
 import { formatMYR } from "@/lib/format";
@@ -23,6 +24,7 @@ export default function ProductDetail({
   materialLabels,
   colors,
 }: Props) {
+  const t = useTranslations("product");
   const [variantIndex, setVariantIndex] = useState(0);
   const active = colors[variantIndex];
   const overrideColorHex = active?.hex ?? null;
@@ -39,7 +41,7 @@ export default function ProductDetail({
           />
         ) : (
           <div className="flex h-full w-full items-center justify-center text-neutral-400">
-            暂无 3D 模型
+            {t("noModel")}
           </div>
         )}
       </div>
@@ -73,31 +75,31 @@ export default function ProductDetail({
         <dl className="grid grid-cols-2 gap-y-2 text-sm text-neutral-700">
           {itemTypeLabel && (
             <>
-              <dt className="text-neutral-500">物件</dt>
+              <dt className="text-neutral-500">{t("itemType")}</dt>
               <dd>{itemTypeLabel}</dd>
             </>
           )}
           {roomLabels.length > 0 && (
             <>
-              <dt className="text-neutral-500">适用房间</dt>
+              <dt className="text-neutral-500">{t("room")}</dt>
               <dd>{roomLabels.join("、")}</dd>
             </>
           )}
           {styleLabels.length > 0 && (
             <>
-              <dt className="text-neutral-500">风格</dt>
+              <dt className="text-neutral-500">{t("style")}</dt>
               <dd>{styleLabels.join("、")}</dd>
             </>
           )}
           {materialLabels.length > 0 && (
             <>
-              <dt className="text-neutral-500">材质</dt>
+              <dt className="text-neutral-500">{t("material")}</dt>
               <dd>{materialLabels.join("、")}</dd>
             </>
           )}
           {product.dimensions_mm && (
             <>
-              <dt className="text-neutral-500">尺寸 (mm)</dt>
+              <dt className="text-neutral-500">{t("dimensionsMm")}</dt>
               <dd>
                 {[
                   product.dimensions_mm.length,
@@ -111,8 +113,8 @@ export default function ProductDetail({
           )}
           {product.weight_kg != null && (
             <>
-              <dt className="text-neutral-500">重量</dt>
-              <dd>{product.weight_kg} kg</dd>
+              <dt className="text-neutral-500">{t("weight")}</dt>
+              <dd>{t("weightValue", { kg: product.weight_kg })}</dd>
             </>
           )}
         </dl>
@@ -124,21 +126,21 @@ export default function ProductDetail({
             rel="noopener noreferrer"
             className="inline-flex items-center justify-center rounded-md bg-black px-5 py-3 text-sm font-medium text-white transition hover:bg-neutral-800"
           >
-            前往购买 →
+            {t("buyNow")}
           </a>
         ) : (
           <button
             disabled
             className="inline-flex cursor-not-allowed items-center justify-center rounded-md bg-neutral-200 px-5 py-3 text-sm font-medium text-neutral-500"
           >
-            暂无购买链接
+            {t("noPurchaseLink")}
           </button>
         )}
 
         <div className="text-xs text-neutral-500">
-          点击模型右下角 AR 图标，用手机摄像头 1:1 预览该产品。
+          {t("arHintLine1")}
           <br />
-          iOS 需要 USDZ（Phase 3 开放），当前 Android Scene Viewer 可用。
+          {t("arHintLine2")}
         </div>
       </div>
     </div>

@@ -1,5 +1,7 @@
 "use client";
 
+import { useTranslations } from "next-intl";
+
 export type ColorOption = { slug: string; label: string; hex: string };
 
 type Props = {
@@ -9,10 +11,11 @@ type Props = {
 };
 
 export default function ColorSwitcher({ colors, activeIndex, onChange }: Props) {
+  const t = useTranslations("product");
   if (colors.length === 0) return null;
   return (
     <div className="flex flex-col gap-2">
-      <div className="text-sm text-neutral-600">颜色</div>
+      <div className="text-sm text-neutral-600">{t("color")}</div>
       <div className="flex flex-wrap gap-3">
         {colors.map((c, i) => {
           const active = i === activeIndex;

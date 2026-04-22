@@ -1,14 +1,17 @@
 import type { PriceTier, ProductStatus } from "./enums";
 
+// Admin-facing labels. /admin is English-only (we don't ship the
+// localized public switcher there), so these can stay hardcoded.
+// If we later localize admin, move these under src/messages/*.json.
 export const PRICE_TIER_LABELS: Record<PriceTier, string> = {
-  economy: "经济",
-  mid: "中端",
-  premium: "高端",
+  economy: "Economy",
+  mid: "Mid-range",
+  premium: "Premium",
 };
 
 export const PRODUCT_STATUS_LABELS: Record<ProductStatus, string> = {
-  draft: "草稿",
-  published: "已上架",
-  archived: "归档",
-  link_broken: "链接失效",
+  draft: "Draft",
+  published: "Published",
+  archived: "Archived",
+  link_broken: "Link broken",
 };

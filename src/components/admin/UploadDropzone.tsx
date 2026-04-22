@@ -27,7 +27,7 @@ type Props = {
   maxFileMb?: number;
 };
 
-const PROVIDER_HINT = "支持 JPG / PNG / WebP";
+const PROVIDER_HINT = "JPG / PNG / WebP supported";
 
 export function UploadDropzone({
   name,
@@ -50,12 +50,14 @@ export function UploadDropzone({
     const allowed = accept.split(",").map((m) => m.trim());
     for (const f of incoming) {
       if (allowed.length && !allowed.includes(f.type)) {
-        errs.push(`${f.name}：不支持的格式 (${f.type || "unknown"})`);
+        errs.push(`${f.name}: unsupported format (${f.type || "unknown"})`);
         continue;
       }
       if (f.size > maxBytes) {
         const mb = (f.size / 1024 / 1024).toFixed(1);
-        errs.push(`${f.name}：${mb} MB 超过 ${maxFileMb} MB 上限，请先压缩`);
+        errs.push(
+          `${f.name}: ${mb} MB exceeds the ${maxFileMb} MB limit — please compress first`,
+        );
         continue;
       }
       ok.push(f);
@@ -143,33 +145,33 @@ export function UploadDropzone({
       {files.length === 0 ? (
         <>
           <div className="text-neutral-700">
-            点击选文件，或把图片拖到这里
+            Click to pick files, or drop images here
           </div>
           <div className="mt-1 text-xs text-neutral-500">
-            {PROVIDER_HINT} · 单张 ≤ {maxFileMb} MB
-            {multiple ? " · 可多选" : ""}
+            {PROVIDER_HINT} · each ≤ {maxFileMb} MB
+            {multiple ? " · multi-select" : ""}
           </div>
         </>
       ) : (
         <>
           <div className="font-medium text-neutral-800">
-            已选 {files.length} 张
+            {files.length} file{files.length === 1 ? "" : "s"} selected
           </div>
           <div className="mt-1 max-w-full truncate text-xs text-neutral-500">
-            {files.map((f) => f.name).join("、")}
+            {files.map((f) => f.name).join(", ")}
           </div>
           <button
             type="button"
             onClick={handleClear}
             className="mt-2 text-xs text-neutral-500 underline hover:text-rose-600"
           >
-            清空
+            Clear
           </button>
         </>
       )}
       {errors.length > 0 && (
         <div className="mt-3 w-full rounded-md bg-rose-50 px-3 py-2 text-left text-xs text-rose-700">
-          <div className="mb-1 font-medium">以下文件被跳过：</div>
+          <div className="mb-1 font-medium">Skipped files:</div>
           <ul className="list-disc space-y-0.5 pl-4">
             {errors.map((e) => (
               <li key={e}>{e}</li>

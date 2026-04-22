@@ -31,7 +31,7 @@ export default function ProductForm({ product, taxonomy, action, saved }: Props)
       <header className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-semibold">
-            {isEdit ? "编辑商品" : "新增商品"}
+            {isEdit ? "Edit product" : "New product"}
           </h1>
           {isEdit && (
             <div className="mt-1 text-xs text-neutral-500">ID: {p!.id}</div>
@@ -40,7 +40,7 @@ export default function ProductForm({ product, taxonomy, action, saved }: Props)
         <div className="flex items-center gap-3">
           {saved && (
             <span className="rounded-md bg-emerald-50 px-3 py-1 text-xs text-emerald-700">
-              已保存
+              Saved
             </span>
           )}
           {isEdit && (
@@ -48,31 +48,31 @@ export default function ProductForm({ product, taxonomy, action, saved }: Props)
               href={`/admin/products/${p!.id}/upload`}
               className="rounded-md border border-neutral-300 px-3 py-1.5 text-sm hover:border-black"
             >
-              上传图片 →
+              Upload images →
             </Link>
           )}
           <Link
             href="/admin"
             className="rounded-md border border-neutral-300 px-3 py-1.5 text-sm hover:border-black"
           >
-            返回
+            Back
           </Link>
           <button
             type="submit"
             className="rounded-md bg-black px-4 py-2 text-sm font-medium text-white hover:bg-neutral-800"
           >
-            {isEdit ? "保存修改" : "创建商品"}
+            {isEdit ? "Save changes" : "Create product"}
           </button>
         </div>
       </header>
 
-      <Section title="AI 辅助">
+      <Section title="AI assist">
         <AIInferButton />
       </Section>
 
-      <Section title="基础">
+      <Section title="Basics">
         <Grid>
-          <Field label="名称 *">
+          <Field label="Name *">
             <input
               name="name"
               required
@@ -80,10 +80,10 @@ export default function ProductForm({ product, taxonomy, action, saved }: Props)
               className={inputCls}
             />
           </Field>
-          <Field label="品牌">
+          <Field label="Brand">
             <input name="brand" defaultValue={p?.brand ?? ""} className={inputCls} />
           </Field>
-          <Field label="状态" wide>
+          <Field label="Status" wide>
             <div className="flex flex-wrap gap-2">
               {PRODUCT_STATUSES.map((s) => (
                 <label
@@ -102,7 +102,7 @@ export default function ProductForm({ product, taxonomy, action, saved }: Props)
               ))}
             </div>
           </Field>
-          <Field label="描述" wide>
+          <Field label="Description" wide>
             <textarea
               name="description"
               rows={4}
@@ -114,8 +114,8 @@ export default function ProductForm({ product, taxonomy, action, saved }: Props)
       </Section>
 
       <Section
-        title="物件类型 *"
-        hint="一个产品就是一种东西（单选）。房间自动跟着物件类型走（在分类管理设置），不用再选。"
+        title="Item type *"
+        hint="Pick one — a product is one kind of thing. Room is derived from the item type (set under Taxonomy)."
       >
         <PillGrid
           name="item_type"
@@ -127,7 +127,7 @@ export default function ProductForm({ product, taxonomy, action, saved }: Props)
         />
       </Section>
 
-      <Section title="风格（可多选）">
+      <Section title="Styles (multi)">
         <PillGrid
           name="styles"
           multi
@@ -139,7 +139,7 @@ export default function ProductForm({ product, taxonomy, action, saved }: Props)
         />
       </Section>
 
-      <Section title="颜色（可多选）">
+      <Section title="Colors (multi)">
         <PillGrid
           name="colors"
           multi
@@ -153,7 +153,7 @@ export default function ProductForm({ product, taxonomy, action, saved }: Props)
         />
       </Section>
 
-      <Section title="材质（可多选）">
+      <Section title="Materials (multi)">
         <PillGrid
           name="materials"
           multi
@@ -165,9 +165,9 @@ export default function ProductForm({ product, taxonomy, action, saved }: Props)
         />
       </Section>
 
-      <Section title="价格与尺寸">
+      <Section title="Price & dimensions">
         <Grid>
-          <Field label="售价 (MYR)">
+          <Field label="Price (MYR)">
             <input
               type="number"
               step="0.01"
@@ -176,7 +176,7 @@ export default function ProductForm({ product, taxonomy, action, saved }: Props)
               className={inputCls}
             />
           </Field>
-          <Field label="价格档次">
+          <Field label="Price tier">
             <div className="flex flex-wrap gap-2">
               <RadioPill name="price_tier" value="" label="—" checked={!p?.price_tier} />
               {PRICE_TIERS.map((t) => (
@@ -190,7 +190,7 @@ export default function ProductForm({ product, taxonomy, action, saved }: Props)
               ))}
             </div>
           </Field>
-          <Field label="尺寸 · 长 (mm)">
+          <Field label="Length (mm)">
             <input
               type="number"
               name="dim_length"
@@ -198,7 +198,7 @@ export default function ProductForm({ product, taxonomy, action, saved }: Props)
               className={inputCls}
             />
           </Field>
-          <Field label="尺寸 · 宽 (mm)">
+          <Field label="Width (mm)">
             <input
               type="number"
               name="dim_width"
@@ -206,7 +206,7 @@ export default function ProductForm({ product, taxonomy, action, saved }: Props)
               className={inputCls}
             />
           </Field>
-          <Field label="尺寸 · 高 (mm)">
+          <Field label="Height (mm)">
             <input
               type="number"
               name="dim_height"
@@ -214,7 +214,7 @@ export default function ProductForm({ product, taxonomy, action, saved }: Props)
               className={inputCls}
             />
           </Field>
-          <Field label="重量 (kg)">
+          <Field label="Weight (kg)">
             <input
               type="number"
               step="0.01"
@@ -226,9 +226,9 @@ export default function ProductForm({ product, taxonomy, action, saved }: Props)
         </Grid>
       </Section>
 
-      <Section title="3D 模型与缩略图">
+      <Section title="3D model & thumbnail">
         <Grid>
-          <Field label="上传 .glb (替换)">
+          <Field label="Upload .glb (replace)">
             <input
               type="file"
               name="glb_file"
@@ -237,7 +237,7 @@ export default function ProductForm({ product, taxonomy, action, saved }: Props)
             />
             {p?.glb_url && (
               <div className="mt-2 text-xs text-neutral-500">
-                当前：
+                Current:
                 <a
                   href={p.glb_url}
                   target="_blank"
@@ -250,7 +250,7 @@ export default function ProductForm({ product, taxonomy, action, saved }: Props)
               </div>
             )}
           </Field>
-          <Field label="上传缩略图 (webp/png/jpg，替换)">
+          <Field label="Upload thumbnail (webp/png/jpg, replace)">
             <input
               type="file"
               name="thumbnail_file"
@@ -271,9 +271,9 @@ export default function ProductForm({ product, taxonomy, action, saved }: Props)
         </Grid>
       </Section>
 
-      <Section title="购买链接与来源">
+      <Section title="Purchase link & source">
         <Grid>
-          <Field label="购买外链" wide>
+          <Field label="External purchase URL" wide>
             <input
               type="url"
               name="purchase_url"
@@ -282,7 +282,7 @@ export default function ProductForm({ product, taxonomy, action, saved }: Props)
               className={inputCls}
             />
           </Field>
-          <Field label="供应商">
+          <Field label="Supplier">
             <input
               name="supplier"
               defaultValue={p?.supplier ?? ""}
@@ -293,7 +293,7 @@ export default function ProductForm({ product, taxonomy, action, saved }: Props)
       </Section>
 
       {isEdit && p?.ai_filled_fields && p.ai_filled_fields.length > 0 && (
-        <Section title="AI 填充记录">
+        <Section title="AI-filled fields">
           <div className="flex flex-wrap gap-2">
             {p.ai_filled_fields.map((f) => (
               <span
@@ -305,7 +305,7 @@ export default function ProductForm({ product, taxonomy, action, saved }: Props)
             ))}
           </div>
           <div className="mt-2 text-xs text-neutral-500">
-            这些字段由 AI 推断，已被人类 review。
+            These fields were inferred by AI and have been human-reviewed.
           </div>
         </Section>
       )}
@@ -321,13 +321,13 @@ export default function ProductForm({ product, taxonomy, action, saved }: Props)
             href="/admin"
             className="rounded-md border border-neutral-300 px-4 py-2 text-sm hover:border-black"
           >
-            取消
+            Cancel
           </Link>
           <button
             type="submit"
             className="rounded-md bg-black px-4 py-2 text-sm font-medium text-white hover:bg-neutral-800"
           >
-            {isEdit ? "保存修改" : "创建商品"}
+            {isEdit ? "Save changes" : "Create product"}
           </button>
         </div>
       </footer>

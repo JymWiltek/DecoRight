@@ -29,9 +29,9 @@ export default async function AdminProductsPage() {
     <div className="mx-auto max-w-7xl px-6 py-8">
       <div className="mb-6 flex items-end justify-between">
         <div>
-          <h1 className="text-2xl font-semibold">商品管理</h1>
+          <h1 className="text-2xl font-semibold">Products</h1>
           <p className="mt-1 text-sm text-neutral-500">
-            共 {products.length} 件
+            {products.length} total
             {(["published", "draft", "archived", "link_broken"] as const)
               .filter((s) => byStatus[s])
               .map((s) => ` · ${PRODUCT_STATUS_LABELS[s]} ${byStatus[s]}`)
@@ -42,7 +42,7 @@ export default async function AdminProductsPage() {
           href="/admin/products/new"
           className="rounded-md bg-black px-4 py-2 text-sm font-medium text-white hover:bg-neutral-800"
         >
-          + 新增商品
+          + New product
         </Link>
       </div>
 
@@ -50,12 +50,12 @@ export default async function AdminProductsPage() {
         <table className="w-full text-left text-sm">
           <thead className="border-b border-neutral-200 bg-neutral-50 text-xs uppercase tracking-wide text-neutral-500">
             <tr>
-              <th className="px-4 py-3">商品</th>
-              <th className="px-4 py-3">物件</th>
-              <th className="px-4 py-3">价格</th>
-              <th className="px-4 py-3">状态</th>
+              <th className="px-4 py-3">Product</th>
+              <th className="px-4 py-3">Item</th>
+              <th className="px-4 py-3">Price</th>
+              <th className="px-4 py-3">Status</th>
               <th className="px-4 py-3">3D</th>
-              <th className="px-4 py-3">更新时间</th>
+              <th className="px-4 py-3">Updated</th>
               <th className="px-4 py-3"></th>
             </tr>
           </thead>
@@ -97,14 +97,14 @@ export default async function AdminProductsPage() {
                   {p.glb_url ? `${p.glb_size_kb ?? "?"} KB` : "—"}
                 </td>
                 <td className="px-4 py-3 text-xs text-neutral-500">
-                  {new Date(p.updated_at).toLocaleString("zh-CN")}
+                  {new Date(p.updated_at).toLocaleString("en-MY")}
                 </td>
                 <td className="px-4 py-3 text-right">
                   <Link
                     href={`/admin/products/${p.id}/edit`}
                     className="text-sm text-neutral-700 hover:text-black"
                   >
-                    编辑
+                    Edit
                   </Link>
                 </td>
               </tr>
@@ -112,7 +112,7 @@ export default async function AdminProductsPage() {
             {products.length === 0 && (
               <tr>
                 <td colSpan={7} className="px-4 py-12 text-center text-sm text-neutral-500">
-                  还没有商品，点击右上角新增。
+                  No products yet. Click &ldquo;New product&rdquo; above.
                 </td>
               </tr>
             )}

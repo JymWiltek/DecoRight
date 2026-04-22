@@ -1,5 +1,6 @@
 import { Suspense } from "react";
-import { BRAND } from "@config/brand";
+import { getTranslations } from "next-intl/server";
+import SiteHeader from "@/components/SiteHeader";
 import FilterPanel from "@/components/FilterPanel";
 import ProductCard from "@/components/ProductCard";
 import { listPublishedProducts, type ProductFilters } from "@/lib/products";
@@ -30,7 +31,10 @@ type PageProps = { searchParams: Promise<SearchParams> };
 
 export default async function Home({ searchParams }: PageProps) {
   const sp = await searchParams;
-  const taxonomy = await loadTaxonomy();
+  const [taxonomy, t] = await Promise.all([
+    loadTaxonomy(),
+    getTranslations("home"),
+  ]);
 
   const itemTypeSlugs = new Set(taxonomy.itemTypes.map((r) => r.slug));
   const roomSlugs = new Set(taxonomy.rooms.map((r) => r.slug));
@@ -58,42 +62,41 @@ export default async function Home({ searchParams }: PageProps) {
   const colorHex = colorHexMap(taxonomy.colors);
 
   return (
-    <main className="mx-auto max-w-7xl px-4 py-8">
-      <header className="mb-8 flex items-end justify-between">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">{BRAND.name}</h1>
-          <p className="mt-1 text-sm text-neutral-600">{BRAND.tagline}</p>
+    <>
+      <SiteHeader />
+      <main className="mx-auto max-w-7xl px-4 py-8">
+        <div className="mb-6 flex items-end justify-end">
+          <div className="text-xs text-neutral-500">
+            {t("itemCount", { count: products.length })}
+          </div>
         </div>
-        <div className="hidden text-xs text-neutral-500 sm:block">
-          {products.length} 件商品
+
+        <div className="grid gap-8 md:grid-cols-[240px_1fr]">
+          <Suspense>
+            <FilterPanel taxonomy={taxonomy} />
+          </Suspense>
+
+          <section>
+            {products.length === 0 ? (
+              <div className="flex min-h-[40vh] items-center justify-center rounded-lg border border-dashed border-neutral-300 px-4 text-center text-sm text-neutral-500">
+                {t("emptyResults")}
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+                {products.map((p) => (
+                  <ProductCard
+                    key={p.id}
+                    product={p}
+                    itemTypeLabels={itemTypeLabels}
+                    styleLabels={styleLabels}
+                    colorHex={colorHex}
+                  />
+                ))}
+              </div>
+            )}
+          </section>
         </div>
-      </header>
-
-      <div className="grid gap-8 md:grid-cols-[240px_1fr]">
-        <Suspense>
-          <FilterPanel taxonomy={taxonomy} />
-        </Suspense>
-
-        <section>
-          {products.length === 0 ? (
-            <div className="flex min-h-[40vh] items-center justify-center rounded-lg border border-dashed border-neutral-300 text-sm text-neutral-500">
-              没有符合条件的商品，试试调整筛选。
-            </div>
-          ) : (
-            <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
-              {products.map((p) => (
-                <ProductCard
-                  key={p.id}
-                  product={p}
-                  itemTypeLabels={itemTypeLabels}
-                  styleLabels={styleLabels}
-                  colorHex={colorHex}
-                />
-              ))}
-            </div>
-          )}
-        </section>
-      </div>
-    </main>
+      </main>
+    </>
   );
 }
