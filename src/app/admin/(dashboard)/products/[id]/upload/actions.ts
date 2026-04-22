@@ -159,8 +159,16 @@ export async function processImage(
   providerId?: RemBgProviderId,
 ): Promise<void> {
   const res = await runRembgForImage(productId, imageId, providerId);
+  // Invalidate everywhere the cutout / thumbnail might render. On a
+  // reject-and-rerun the cutout_image_url (which the sync trigger
+  // also copies into products.thumbnail_url if this row is primary
+  // and approved) changes — so /admin and / can go stale too.
   revalidatePath(`/admin/products/${productId}/upload`);
+  revalidatePath(`/admin/products/${productId}/edit`);
   revalidatePath(`/admin/cutouts`);
+  revalidatePath(`/admin`);
+  revalidatePath(`/`);
+  revalidatePath(`/product/${productId}`);
 
   if (!res.ok) {
     const e = res.error;

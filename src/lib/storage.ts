@@ -89,7 +89,12 @@ export async function uploadCutout(
     );
   if (error) throw error;
   const { data } = supabase.storage.from(CUTOUTS_BUCKET).getPublicUrl(path);
-  return data.publicUrl;
+  // Append a cache-busting version. The storage path is stable per image,
+  // and we upsert on reject-and-rerun — without this query param the CDN
+  // / browser would keep serving the OLD bytes for a year (cacheControl
+  // above). Using Date.now() guarantees a fresh URL per upload; the bytes
+  // live at the same path, the URL we record just carries a new token.
+  return `${data.publicUrl}?v=${Date.now()}`;
 }
 
 // ─── models (public) — Stage B ──────────────────────────────

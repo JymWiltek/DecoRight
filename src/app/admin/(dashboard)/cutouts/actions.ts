@@ -28,13 +28,22 @@ export async function approveCutout(fd: FormData): Promise<void> {
   }
 
   // Does this product already have an approved primary? If not, we
-  // auto-promote this one.
-  const { data: existingPrimary } = await supabase
+  // auto-promote this one. We check for an error explicitly because
+  // treating a failed read as "no primary" would incorrectly promote
+  // a second image — something the partial unique index catches, but
+  // surfacing the underlying DB error is friendlier than a confusing
+  // constraint violation.
+  const { data: existingPrimary, error: primaryErr } = await supabase
     .from("product_images")
     .select("id")
     .eq("product_id", img.product_id)
     .eq("is_primary", true)
     .maybeSingle();
+  if (primaryErr) {
+    redirect(
+      `/admin/cutouts?err=db&msg=${encodeURIComponent(primaryErr.message)}`,
+    );
+  }
 
   const patch: { state: "cutout_approved"; is_primary?: boolean } = {
     state: "cutout_approved",
@@ -51,8 +60,16 @@ export async function approveCutout(fd: FormData): Promise<void> {
     );
   }
 
+  // Revalidate everywhere a thumbnail may show up. /admin and / are
+  // public lists that read products.thumbnail_url; without these,
+  // after an approval the catalog can keep rendering the pre-approval
+  // snapshot — which was the most likely source of the "wrong
+  // product's thumbnail" reports.
   revalidatePath("/admin/cutouts");
+  revalidatePath("/admin");
+  revalidatePath("/");
   revalidatePath(`/admin/products/${img.product_id}/upload`);
+  revalidatePath(`/admin/products/${img.product_id}/edit`);
   revalidatePath(`/product/${img.product_id}`);
   redirect("/admin/cutouts?approved=1");
 }
@@ -100,6 +117,8 @@ export async function rejectCutout(fd: FormData): Promise<void> {
     await processImage(img.product_id, imageId, "removebg");
     // processImage redirects on its own path; if it returned, fall through.
     revalidatePath("/admin/cutouts");
+    revalidatePath("/admin");
+    revalidatePath("/");
     redirect("/admin/cutouts?reran=removebg");
   }
 
@@ -114,6 +133,7 @@ export async function rejectCutout(fd: FormData): Promise<void> {
   }
 
   revalidatePath("/admin/cutouts");
+  revalidatePath(`/admin/products/${img.product_id}/upload`);
   redirect("/admin/cutouts?rejected=1");
 }
 
@@ -152,7 +172,10 @@ export async function setPrimary(fd: FormData): Promise<void> {
   }
 
   revalidatePath("/admin/cutouts");
+  revalidatePath("/admin");
+  revalidatePath("/");
   revalidatePath(`/admin/products/${img.product_id}/upload`);
+  revalidatePath(`/admin/products/${img.product_id}/edit`);
   revalidatePath(`/product/${img.product_id}`);
   redirect("/admin/cutouts?primary=1");
 }
