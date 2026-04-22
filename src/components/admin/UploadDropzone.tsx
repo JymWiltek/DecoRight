@@ -20,12 +20,48 @@ type Props = {
   accept: string;
   /** Whether the input should be `multiple`. */
   multiple?: boolean;
+  /** Max per-file size in MB. Anything bigger is rejected client-side
+   *  with a clear message instead of being thrown at the server,
+   *  where it'd hit Next.js bodySizeLimit / Vercel's platform limit
+   *  and bounce back as the generic "server error" page. */
+  maxFileMb?: number;
 };
 
-export function UploadDropzone({ name, accept, multiple = true }: Props) {
+const PROVIDER_HINT = "支持 JPG / PNG / WebP";
+
+export function UploadDropzone({
+  name,
+  accept,
+  multiple = true,
+  maxFileMb = 8,
+}: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [files, setFiles] = useState<File[]>([]);
+  const [errors, setErrors] = useState<string[]>([]);
+
+  const maxBytes = maxFileMb * 1024 * 1024;
+
+  /** Filter incoming files by MIME + size. Returns the survivors and
+   *  collects per-file rejection messages for display. */
+  function vet(incoming: File[]): { ok: File[]; errors: string[] } {
+    const ok: File[] = [];
+    const errs: string[] = [];
+    const allowed = accept.split(",").map((m) => m.trim());
+    for (const f of incoming) {
+      if (allowed.length && !allowed.includes(f.type)) {
+        errs.push(`${f.name}：不支持的格式 (${f.type || "unknown"})`);
+        continue;
+      }
+      if (f.size > maxBytes) {
+        const mb = (f.size / 1024 / 1024).toFixed(1);
+        errs.push(`${f.name}：${mb} MB 超过 ${maxFileMb} MB 上限，请先压缩`);
+        continue;
+      }
+      ok.push(f);
+    }
+    return { ok, errors: errs };
+  }
 
   function syncFilesToInput(next: File[]) {
     if (!inputRef.current) return;
@@ -41,12 +77,10 @@ export function UploadDropzone({ name, accept, multiple = true }: Props) {
   function handleDrop(e: DragEvent<HTMLDivElement>) {
     e.preventDefault();
     setIsDragging(false);
-    const dropped = Array.from(e.dataTransfer.files).filter((f) =>
-      // Match the same accept= filter so e.g. .pdf drops are ignored.
-      accept.split(",").some((mime) => f.type === mime.trim()),
-    );
-    if (dropped.length === 0) return;
-    syncFilesToInput(multiple ? [...files, ...dropped] : dropped.slice(0, 1));
+    const { ok, errors: errs } = vet(Array.from(e.dataTransfer.files));
+    setErrors(errs);
+    if (ok.length === 0) return;
+    syncFilesToInput(multiple ? [...files, ...ok] : ok.slice(0, 1));
   }
 
   function handleDragOver(e: DragEvent<HTMLDivElement>) {
@@ -98,9 +132,13 @@ export function UploadDropzone({ name, accept, multiple = true }: Props) {
         // Using `hidden` is fine — required validation runs on submit
         // and reads the .files property regardless of visibility.
         hidden
-        onChange={(e) =>
-          syncFilesToInput(Array.from(e.currentTarget.files ?? []))
-        }
+        onChange={(e) => {
+          const { ok, errors: errs } = vet(
+            Array.from(e.currentTarget.files ?? []),
+          );
+          setErrors(errs);
+          syncFilesToInput(multiple ? ok : ok.slice(0, 1));
+        }}
       />
       {files.length === 0 ? (
         <>
@@ -108,7 +146,8 @@ export function UploadDropzone({ name, accept, multiple = true }: Props) {
             点击选文件，或把图片拖到这里
           </div>
           <div className="mt-1 text-xs text-neutral-500">
-            支持 JPG / PNG / WebP{multiple ? "，可多选" : ""}
+            {PROVIDER_HINT} · 单张 ≤ {maxFileMb} MB
+            {multiple ? " · 可多选" : ""}
           </div>
         </>
       ) : (
@@ -127,6 +166,16 @@ export function UploadDropzone({ name, accept, multiple = true }: Props) {
             清空
           </button>
         </>
+      )}
+      {errors.length > 0 && (
+        <div className="mt-3 w-full rounded-md bg-rose-50 px-3 py-2 text-left text-xs text-rose-700">
+          <div className="mb-1 font-medium">以下文件被跳过：</div>
+          <ul className="list-disc space-y-0.5 pl-4">
+            {errors.map((e) => (
+              <li key={e}>{e}</li>
+            ))}
+          </ul>
+        </div>
       )}
     </div>
   );
