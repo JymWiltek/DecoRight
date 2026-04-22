@@ -4,7 +4,7 @@ import {
   uploadRawImages,
   processImage,
   processAllRaw,
-} from "@/app/admin/(dashboard)/products/[id]/upload/actions";
+} from "@/app/admin/(dashboard)/products/[id]/edit/image-actions";
 import {
   approveCutout,
   rejectCutout,
@@ -14,8 +14,8 @@ import type { ImageState } from "@/lib/supabase/types";
 
 /**
  * Inline image management, lives inside the product edit workbench.
- * This is the replacement for the separate /admin/products/[id]/upload
- * page — dropzone, batch cutout, and per-image state-dependent inline
+ * This is the replacement for the old standalone upload page —
+ * dropzone, batch cutout, and per-image state-dependent inline
  * actions (cut-out, approve, reject, re-run on Remove.bg, set primary,
  * delete) all render on the product edit page, so the operator never
  * loses the product context.

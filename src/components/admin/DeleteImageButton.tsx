@@ -1,7 +1,7 @@
 "use client";
 
 import { useTransition } from "react";
-import { deleteProductImage } from "@/app/admin/(dashboard)/products/[id]/upload/actions";
+import { deleteProductImage } from "@/app/admin/(dashboard)/products/[id]/edit/image-actions";
 
 /**
  * Delete button for a single product image. Confirms client-side

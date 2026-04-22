@@ -116,7 +116,7 @@ export default async function CutoutsPage({ searchParams }: PageProps) {
         <div className="rounded-lg border border-dashed border-neutral-300 bg-white p-12 text-center text-sm text-neutral-500">
           {tab === "pending"
             ? "All clear — nothing pending review."
-            : "No cutouts yet. Upload some from a product page."}
+            : "No cutouts yet. Open a product and drop photos into its Images section to start."}
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
@@ -275,7 +275,7 @@ function ReviewCard({
       <div className="mt-2 flex items-center justify-between text-[11px] text-neutral-400">
         <StateChip state={state} />
         <Link
-          href={`/admin/products/${productId}/upload`}
+          href={`/admin/products/${productId}/edit`}
           className="hover:text-black"
         >
           Open in product →

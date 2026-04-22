@@ -13,12 +13,12 @@ import { QuotaExceededError } from "@/lib/api-usage";
 import type { RemBgProviderId } from "@/lib/rembg";
 
 /**
- * Optional `returnTo` support: image actions can be driven from
- *   - /admin/products/[id]/upload (legacy — commit 3 deletes)
- *   - /admin/products/[id]/edit   (the new workbench)
+ * Optional `returnTo` support: image actions are driven from:
+ *   - /admin/products/[id]/edit  (the product workbench — default)
+ *   - /admin/cutouts             (the review queue)
  * Whichever page the form lives on, it passes returnTo=<its path>
- * and we redirect back there instead of hard-coding /upload.
- * Only same-origin admin paths are allowed.
+ * and we redirect back there. Unset → default to the edit page.
+ * Only same-origin admin paths are allowed (open-redirect guard).
  */
 function safeReturnTo(fd: FormData): string | null {
   const v = fd.get("returnTo")?.toString();
@@ -45,7 +45,7 @@ function withQuery(path: string, key: string, value: string): string {
 export async function uploadRawImages(productId: string, fd: FormData) {
   const supabase = createServiceRoleClient();
   const returnTo =
-    safeReturnTo(fd) ?? `/admin/products/${productId}/upload`;
+    safeReturnTo(fd) ?? `/admin/products/${productId}/edit`;
   const files = fd.getAll("files").filter((f): f is File => f instanceof File && f.size > 0);
   if (files.length === 0) {
     redirect(withQuery(returnTo, "err", "no_files"));
@@ -82,7 +82,6 @@ export async function uploadRawImages(productId: string, fd: FormData) {
     }
   }
 
-  revalidatePath(`/admin/products/${productId}/upload`);
   revalidatePath(`/admin/products/${productId}/edit`);
   revalidatePath(`/admin/cutouts`);
   redirect(withQuery(returnTo, "uploaded", String(inserted.length)));
@@ -170,16 +169,17 @@ async function runRembgForImage(
 /**
  * Server-action wrapper around runRembgForImage: runs rembg on one
  * image, redirects back to the caller's page with a success or error
- * query string. Called from the per-card "Cut out" button on either
- * the upload page OR the edit workbench.
+ * query string. Called from the per-card "Cut out" button on the
+ * edit workbench, and programmatically from cutouts/rejectCutout
+ * when the operator picks "Re-run on Remove.bg".
  *
  * Callable two ways:
- *   1. Directly with (productId, imageId, providerId) — legacy path
- *      used by /upload's bound form + /cutouts rejectCutout rerun.
- *      No returnTo available here, so defaults to /upload.
+ *   1. Directly with (productId, imageId, providerId) — used by
+ *      rejectCutout's rerun path. No returnTo available there, so
+ *      redirects on error default to the edit page.
  *   2. As a <form action> with productId/imageId/providerId/returnTo
  *      in FormData — used by the inline buttons on /edit. Respects
- *      returnTo.
+ *      returnTo (e.g. back to /admin/cutouts when called from there).
  */
 export async function processImage(
   ...args:
@@ -207,14 +207,13 @@ export async function processImage(
       RemBgProviderId?,
     ];
   }
-  const base = returnTo ?? `/admin/products/${productId}/upload`;
+  const base = returnTo ?? `/admin/products/${productId}/edit`;
 
   const res = await runRembgForImage(productId, imageId, providerId);
   // Invalidate everywhere the cutout / thumbnail might render. On a
   // reject-and-rerun the cutout_image_url (which the sync trigger
   // also copies into products.thumbnail_url if this row is primary
   // and approved) changes — so /admin and / can go stale too.
-  revalidatePath(`/admin/products/${productId}/upload`);
   revalidatePath(`/admin/products/${productId}/edit`);
   revalidatePath(`/admin/cutouts`);
   revalidatePath(`/admin`);
@@ -244,9 +243,9 @@ export async function processImage(
         redirect(withQuery(withQuery(base, "err", "db"), "msg", e.msg));
     }
   }
-  // On success we return void — the caller's form sits on either
-  // /upload or /edit; revalidatePath(...) above makes that same page
-  // re-render with the updated state row. No explicit redirect.
+  // On success we return void — the caller's form sits on /edit
+  // (or /cutouts rerun path); revalidatePath(...) above makes that
+  // page re-render with the updated state row. No explicit redirect.
 }
 
 /**
@@ -261,7 +260,7 @@ export async function processAllRaw(
 ): Promise<void> {
   const supabase = createServiceRoleClient();
   const returnTo = fd ? safeReturnTo(fd) : null;
-  const base = returnTo ?? `/admin/products/${productId}/upload`;
+  const base = returnTo ?? `/admin/products/${productId}/edit`;
 
   const { data: rows, error } = await supabase
     .from("product_images")
@@ -277,7 +276,6 @@ export async function processAllRaw(
     const res = await runRembgForImage(productId, r.id);
     if (!res.ok) {
       // Revalidate what we DID process, then surface the error.
-      revalidatePath(`/admin/products/${productId}/upload`);
       revalidatePath(`/admin/products/${productId}/edit`);
       revalidatePath(`/admin/cutouts`);
       const e = res.error;
@@ -294,7 +292,6 @@ export async function processAllRaw(
     processed++;
   }
 
-  revalidatePath(`/admin/products/${productId}/upload`);
   revalidatePath(`/admin/products/${productId}/edit`);
   revalidatePath(`/admin/cutouts`);
   // Default: drop the operator into the review queue with a batch
@@ -379,7 +376,6 @@ export async function deleteProductImage(fd: FormData): Promise<void> {
       .eq("id", img.product_id);
   }
 
-  revalidatePath(`/admin/products/${img.product_id}/upload`);
   revalidatePath(`/admin/products/${img.product_id}/edit`);
   revalidatePath(`/admin/cutouts`);
   revalidatePath("/admin");

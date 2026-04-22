@@ -3,7 +3,7 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createServiceRoleClient } from "@/lib/supabase/service";
-import { processImage } from "../products/[id]/upload/actions";
+import { processImage } from "../products/[id]/edit/image-actions";
 
 /**
  * Read optional `returnTo` from the form. Used so the same action can
@@ -97,7 +97,6 @@ export async function approveCutout(fd: FormData): Promise<void> {
   revalidatePath("/admin/cutouts");
   revalidatePath("/admin");
   revalidatePath("/");
-  revalidatePath(`/admin/products/${img.product_id}/upload`);
   revalidatePath(`/admin/products/${img.product_id}/edit`);
   revalidatePath(`/product/${img.product_id}`);
   redirect(withQuery(returnTo ?? "/admin/cutouts", "approved", "1"));
@@ -167,7 +166,6 @@ export async function rejectCutout(fd: FormData): Promise<void> {
   }
 
   revalidatePath("/admin/cutouts");
-  revalidatePath(`/admin/products/${img.product_id}/upload`);
   revalidatePath(`/admin/products/${img.product_id}/edit`);
   redirect(withQuery(returnTo ?? "/admin/cutouts", "rejected", "1"));
 }
@@ -213,7 +211,6 @@ export async function setPrimary(fd: FormData): Promise<void> {
   revalidatePath("/admin/cutouts");
   revalidatePath("/admin");
   revalidatePath("/");
-  revalidatePath(`/admin/products/${img.product_id}/upload`);
   revalidatePath(`/admin/products/${img.product_id}/edit`);
   revalidatePath(`/product/${img.product_id}`);
   redirect(withQuery(returnTo ?? "/admin/cutouts", "primary", "1"));
