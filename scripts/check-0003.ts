@@ -154,19 +154,24 @@ async function main() {
       p_note: "probe — refunded immediately",
     });
     if (error) {
-      // We must distinguish "exists with the wrong signature" (which is
-      // also broken) from "exists with the right signature but raised".
-      // PostgREST says "Could not find the function ... in the schema
-      // cache" for BOTH wrong-signature and missing-function. Either way
-      // it's a failure for our purposes — the JS layer can't call it.
+      // Failure modes we accept as "function exists and works":
+      //   - quota / daily_limit raised
+      //   - emergency_stop on
+      //   - any other domain error from inside the function body
+      // Failure modes we reject as broken installs:
+      //   - "does not exist" or "could not find the function": wrong sig
+      //   - "ambiguous": output param of RETURNS TABLE shadowing a column
+      //   - "syntax error": function body itself won't parse
       const msg = error.message.toLowerCase();
       const broken =
         msg.includes("does not exist") ||
-        msg.includes("could not find the function");
+        msg.includes("could not find the function") ||
+        msg.includes("ambiguous") ||
+        msg.includes("syntax error");
       return {
         ok: !broken,
         detail: broken
-          ? `wrong signature or missing: ${error.message}`
+          ? `BROKEN: ${error.message}`
           : `function exists (returned: ${error.message})`,
       };
     }

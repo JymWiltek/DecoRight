@@ -327,11 +327,15 @@ begin
   end if;
 
   -- Count today's positive-cost rows (refund rows have cost_usd < 0).
+  -- Note: must qualify column references with the table name, because
+  -- the function's RETURNS TABLE(... cost_usd numeric) introduces
+  -- `cost_usd` as an output parameter that would otherwise shadow the
+  -- column and trip "column reference is ambiguous".
   select count(*) into v_used_today
     from public.api_usage
-   where service = p_service
-     and cost_usd > 0
-     and (created_at at time zone 'UTC')::date = (now() at time zone 'UTC')::date;
+   where api_usage.service = p_service
+     and api_usage.cost_usd > 0
+     and (api_usage.created_at at time zone 'UTC')::date = (now() at time zone 'UTC')::date;
 
   if v_used_today >= v_limit then
     raise exception 'daily_limit reached for % (% / %)', p_service, v_used_today, v_limit;
