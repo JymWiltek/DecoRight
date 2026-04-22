@@ -1,5 +1,6 @@
 import { Suspense } from "react";
-import { getTranslations } from "next-intl/server";
+import { getLocale, getTranslations } from "next-intl/server";
+import type { Locale } from "@/i18n/config";
 import SiteHeader from "@/components/SiteHeader";
 import FilterPanel from "@/components/FilterPanel";
 import ProductCard from "@/components/ProductCard";
@@ -31,9 +32,10 @@ type PageProps = { searchParams: Promise<SearchParams> };
 
 export default async function Home({ searchParams }: PageProps) {
   const sp = await searchParams;
-  const [taxonomy, t] = await Promise.all([
+  const [taxonomy, t, locale] = await Promise.all([
     loadTaxonomy(),
     getTranslations("home"),
+    getLocale() as Promise<Locale>,
   ]);
 
   const itemTypeSlugs = new Set(taxonomy.itemTypes.map((r) => r.slug));
@@ -57,8 +59,8 @@ export default async function Home({ searchParams }: PageProps) {
   };
 
   const products = await listPublishedProducts(filters);
-  const itemTypeLabels = labelMap(taxonomy.itemTypes);
-  const styleLabels = labelMap(taxonomy.styles);
+  const itemTypeLabels = labelMap(taxonomy.itemTypes, locale);
+  const styleLabels = labelMap(taxonomy.styles, locale);
   const colorHex = colorHexMap(taxonomy.colors);
 
   return (

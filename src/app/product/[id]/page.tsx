@@ -1,10 +1,11 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import { getTranslations } from "next-intl/server";
+import { getLocale, getTranslations } from "next-intl/server";
+import type { Locale } from "@/i18n/config";
 import SiteHeader from "@/components/SiteHeader";
 import ProductDetail from "@/components/ProductDetail";
 import { getPublishedProductById } from "@/lib/products";
-import { loadTaxonomy, labelMap } from "@/lib/taxonomy";
+import { labelFor, labelMap, loadTaxonomy } from "@/lib/taxonomy";
 import { BRAND } from "@config/brand";
 
 export const dynamic = "force-dynamic";
@@ -26,17 +27,18 @@ export async function generateMetadata({ params }: PageProps) {
 
 export default async function ProductPage({ params }: PageProps) {
   const { id } = await params;
-  const [product, taxonomy, tSite] = await Promise.all([
+  const [product, taxonomy, tSite, locale] = await Promise.all([
     getPublishedProductById(id),
     loadTaxonomy(),
     getTranslations("site"),
+    getLocale() as Promise<Locale>,
   ]);
   if (!product) notFound();
 
-  const itemTypeLabels = labelMap(taxonomy.itemTypes);
-  const roomLabels = labelMap(taxonomy.rooms);
-  const styleLabels = labelMap(taxonomy.styles);
-  const materialLabels = labelMap(taxonomy.materials);
+  const itemTypeLabels = labelMap(taxonomy.itemTypes, locale);
+  const roomLabels = labelMap(taxonomy.rooms, locale);
+  const styleLabels = labelMap(taxonomy.styles, locale);
+  const materialLabels = labelMap(taxonomy.materials, locale);
   const colorsBySlug = new Map(taxonomy.colors.map((c) => [c.slug, c]));
 
   const itemTypeLabel = product.item_type
@@ -58,7 +60,7 @@ export default async function ProductPage({ params }: PageProps) {
     .map((slug) => {
       const c = colorsBySlug.get(slug);
       if (!c) return null;
-      return { slug: c.slug, label: c.label_zh, hex: c.hex };
+      return { slug: c.slug, label: labelFor(c, locale), hex: c.hex };
     })
     .filter((c): c is { slug: string; label: string; hex: string } => c !== null);
 

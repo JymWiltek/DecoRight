@@ -18,7 +18,9 @@ export default async function AdminProductsPage() {
     listAllProducts(),
     loadTaxonomy(),
   ]);
-  const itemTypeLabels = labelMap(taxonomy.itemTypes);
+  // /admin is hardcoded English; pass "en" explicitly so admin pill
+  // labels stay English regardless of the operator's locale cookie.
+  const itemTypeLabels = labelMap(taxonomy.itemTypes, "en");
 
   const byStatus = products.reduce<Record<string, number>>((acc, p) => {
     acc[p.status] = (acc[p.status] ?? 0) + 1;

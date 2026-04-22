@@ -2,8 +2,9 @@
 
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useMemo, useTransition } from "react";
-import { useTranslations } from "next-intl";
-import type { Taxonomy } from "@/lib/taxonomy";
+import { useLocale, useTranslations } from "next-intl";
+import type { Locale } from "@/i18n/config";
+import { labelFor, type Taxonomy } from "@/lib/taxonomy";
 
 type SortKey = "latest" | "price_asc" | "price_desc";
 
@@ -11,6 +12,7 @@ type Props = { taxonomy: Taxonomy };
 
 export default function FilterPanel({ taxonomy }: Props) {
   const t = useTranslations("filters");
+  const locale = useLocale() as Locale;
   const router = useRouter();
   const params = useSearchParams();
   const [pending, startTransition] = useTransition();
@@ -85,7 +87,7 @@ export default function FilterPanel({ taxonomy }: Props) {
         label={t("itemType")}
         options={taxonomy.itemTypes.map((r) => ({
           slug: r.slug,
-          label: r.label_zh,
+          label: labelFor(r, locale),
         }))}
         selected={current.itemTypes}
         onToggle={(s) => {
@@ -98,7 +100,7 @@ export default function FilterPanel({ taxonomy }: Props) {
         label={t("room")}
         options={taxonomy.rooms.map((r) => ({
           slug: r.slug,
-          label: r.label_zh,
+          label: labelFor(r, locale),
         }))}
         selected={current.rooms}
         onToggle={(s) => {
@@ -111,7 +113,7 @@ export default function FilterPanel({ taxonomy }: Props) {
         label={t("style")}
         options={taxonomy.styles.map((r) => ({
           slug: r.slug,
-          label: r.label_zh,
+          label: labelFor(r, locale),
         }))}
         selected={current.styles}
         onToggle={(s) => {
@@ -127,6 +129,7 @@ export default function FilterPanel({ taxonomy }: Props) {
         <div className="flex flex-wrap gap-2">
           {taxonomy.colors.map((c) => {
             const active = current.colors.includes(c.slug);
+            const lbl = labelFor(c, locale);
             return (
               <button
                 key={c.slug}
@@ -136,7 +139,8 @@ export default function FilterPanel({ taxonomy }: Props) {
                   push({ colors: next.length ? next.join(",") : null });
                 }}
                 aria-pressed={active}
-                title={c.label_zh}
+                aria-label={lbl}
+                title={lbl}
                 className={`h-8 w-8 rounded-full border transition ${
                   active
                     ? "border-black ring-2 ring-black ring-offset-1"
@@ -153,7 +157,7 @@ export default function FilterPanel({ taxonomy }: Props) {
         label={t("material")}
         options={taxonomy.materials.map((r) => ({
           slug: r.slug,
-          label: r.label_zh,
+          label: labelFor(r, locale),
         }))}
         selected={current.materials}
         onToggle={(s) => {

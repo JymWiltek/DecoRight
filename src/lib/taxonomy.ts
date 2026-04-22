@@ -1,5 +1,6 @@
 import { unstable_cache, updateTag } from "next/cache";
 import { createClient } from "@supabase/supabase-js";
+import type { Locale } from "@/i18n/config";
 import type {
   Database,
   TaxonomyRow,
@@ -64,10 +65,27 @@ export function invalidateTaxonomyCache(): void {
   updateTag(TAG);
 }
 
+/** Minimal shape for label-bearing taxonomy rows. Accepts TaxonomyRow,
+ *  ColorRow, ItemTypeRow, ItemSubtypeRow — anything with the three
+ *  label columns. Structural typing saves us a generic parameter. */
+type Labelable = { label_zh: string; label_en: string | null; label_ms: string | null };
+
+/** Return the best label for a given locale, falling back to label_zh
+ *  when the locale column is null. `label_zh` is NOT NULL in the DB, so
+ *  this never returns undefined. */
+export function labelFor(row: Labelable, locale: Locale): string {
+  if (locale === "en") return row.label_en ?? row.label_zh;
+  if (locale === "ms") return row.label_ms ?? row.label_zh;
+  return row.label_zh;
+}
+
 /** Quick lookup helpers — map slug → label / hex. */
-export function labelMap(rows: TaxonomyRow[]): Record<string, string> {
+export function labelMap(
+  rows: (Labelable & { slug: string })[],
+  locale: Locale,
+): Record<string, string> {
   const out: Record<string, string> = {};
-  for (const r of rows) out[r.slug] = r.label_zh;
+  for (const r of rows) out[r.slug] = labelFor(r, locale);
   return out;
 }
 

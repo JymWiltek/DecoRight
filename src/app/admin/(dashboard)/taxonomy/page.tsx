@@ -1,5 +1,6 @@
 import { loadTaxonomy } from "@/lib/taxonomy";
 import { addTaxonomyItem } from "./actions";
+import AutoTranslateButton from "./AutoTranslateButton";
 import DeleteChip from "./DeleteChip";
 
 export const dynamic = "force-dynamic";
@@ -7,6 +8,7 @@ export const dynamic = "force-dynamic";
 type SearchParams = {
   added?: string;
   deleted?: string;
+  translated?: string;
   err?: string;
   kind?: string;
   msg?: string;
@@ -16,23 +18,56 @@ type SearchParams = {
 
 type PageProps = { searchParams: Promise<SearchParams> };
 
+/** Count of rows missing at least one of label_en / label_ms, across every
+ *  taxonomy kind. Drives the "Auto-translate (N)" button label. */
+function countMissing(
+  rows: { label_en: string | null; label_ms: string | null }[],
+): number {
+  let n = 0;
+  for (const r of rows) {
+    if (r.label_en == null || r.label_ms == null) n += 1;
+  }
+  return n;
+}
+
 export default async function TaxonomyPage({ searchParams }: PageProps) {
   const sp = await searchParams;
   const tx = await loadTaxonomy();
 
+  const missingCount =
+    countMissing(tx.itemTypes) +
+    countMissing(tx.rooms) +
+    countMissing(tx.styles) +
+    countMissing(tx.materials) +
+    countMissing(tx.colors);
+
   return (
     <div className="mx-auto max-w-5xl space-y-6 px-6 py-8">
-      <header>
-        <h1 className="text-2xl font-semibold">Taxonomy</h1>
-        <p className="mt-1 text-sm text-neutral-600">
-          Manage items, rooms, styles, materials, and colors here.
-          Anything added shows up in the product form immediately.
-        </p>
+      <header className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold">Taxonomy</h1>
+          <p className="mt-1 text-sm text-neutral-600">
+            Manage items, rooms, styles, materials, and colors here.
+            Anything added shows up in the product form immediately.
+          </p>
+          <p className="mt-1 text-xs text-neutral-500">
+            Chinese is the source of truth. English + Malay labels are
+            filled in by Claude Sonnet 4.5 via the button on the right.
+          </p>
+        </div>
+        <AutoTranslateButton missingCount={missingCount} />
       </header>
 
       {(sp.added || sp.deleted) && (
         <div className="rounded-md bg-emerald-50 px-4 py-2 text-sm text-emerald-700">
           {sp.added ? `Added (${sp.added})` : `Deleted (${sp.deleted})`}
+        </div>
+      )}
+      {sp.translated != null && (
+        <div className="rounded-md bg-sky-50 px-4 py-2 text-sm text-sky-700">
+          {sp.translated === "0"
+            ? "Nothing to translate — all labels already have English + Malay."
+            : `Translated ${sp.translated} row(s). Public catalog refreshed.`}
         </div>
       )}
       {sp.err && (
@@ -45,25 +80,45 @@ export default async function TaxonomyPage({ searchParams }: PageProps) {
         kind="item_types"
         title="Item types"
         hint="A product is one kind of thing · single-select"
-        rows={tx.itemTypes.map((r) => ({ slug: r.slug, label: r.label_zh }))}
+        rows={tx.itemTypes.map((r) => ({
+          slug: r.slug,
+          label: r.label_zh,
+          label_en: r.label_en,
+          label_ms: r.label_ms,
+        }))}
       />
       <Block
         kind="rooms"
         title="Rooms / usage"
         hint="A product may belong to multiple rooms"
-        rows={tx.rooms.map((r) => ({ slug: r.slug, label: r.label_zh }))}
+        rows={tx.rooms.map((r) => ({
+          slug: r.slug,
+          label: r.label_zh,
+          label_en: r.label_en,
+          label_ms: r.label_ms,
+        }))}
       />
       <Block
         kind="styles"
         title="Styles"
         hint="A product may have multiple styles"
-        rows={tx.styles.map((r) => ({ slug: r.slug, label: r.label_zh }))}
+        rows={tx.styles.map((r) => ({
+          slug: r.slug,
+          label: r.label_zh,
+          label_en: r.label_en,
+          label_ms: r.label_ms,
+        }))}
       />
       <Block
         kind="materials"
         title="Materials"
         hint="Multi-select"
-        rows={tx.materials.map((r) => ({ slug: r.slug, label: r.label_zh }))}
+        rows={tx.materials.map((r) => ({
+          slug: r.slug,
+          label: r.label_zh,
+          label_en: r.label_en,
+          label_ms: r.label_ms,
+        }))}
       />
       <Block
         kind="colors"
@@ -72,6 +127,8 @@ export default async function TaxonomyPage({ searchParams }: PageProps) {
         rows={tx.colors.map((r) => ({
           slug: r.slug,
           label: r.label_zh,
+          label_en: r.label_en,
+          label_ms: r.label_ms,
           hex: r.hex,
         }))}
       />
@@ -96,13 +153,21 @@ function errorMessage(
     case "inuse":
       return `Can't delete: ${count ?? "?"} product(s) still reference "${slug ?? ""}". Reassign those products first, then retry.`;
     case "db":
-      return `Database error (${kind}): ${msg ?? ""}`;
+      return kind === "translate"
+        ? `Translation failed: ${msg ?? "unknown error"}`
+        : `Database error (${kind}): ${msg ?? ""}`;
     default:
       return `Error: ${err}`;
   }
 }
 
-type Row = { slug: string; label: string; hex?: string };
+type Row = {
+  slug: string;
+  label: string;
+  label_en: string | null;
+  label_ms: string | null;
+  hex?: string;
+};
 
 function Block({
   kind,
@@ -135,6 +200,8 @@ function Block({
             kind={kind}
             slug={r.slug}
             label={r.label}
+            labelEn={r.label_en}
+            labelMs={r.label_ms}
             hex={r.hex}
           />
         ))}
@@ -146,13 +213,11 @@ function Block({
       >
         <input type="hidden" name="kind" value={kind} />
         <label className="flex flex-col gap-1">
-          {/* Phase 2 will introduce label_en/label_ms; for now the
-              source-of-truth label ships as label_zh. */}
           <span className="text-xs text-neutral-600">Label (zh) *</span>
           <input
             name="label_zh"
             required
-            placeholder="e.g. Gamer PC"
+            placeholder="e.g. 电脑桌"
             className="rounded-md border border-neutral-300 px-3 py-2 text-sm focus:border-black focus:outline-none"
           />
         </label>

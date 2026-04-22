@@ -121,7 +121,7 @@ export default function ProductForm({ product, taxonomy, action, saved }: Props)
           name="item_type"
           options={taxonomy.itemTypes.map((r) => ({
             slug: r.slug,
-            label: r.label_zh,
+            label: r.label_en ?? r.label_zh,
           }))}
           initial={p?.item_type ?? null}
         />
@@ -133,7 +133,7 @@ export default function ProductForm({ product, taxonomy, action, saved }: Props)
           multi
           options={taxonomy.styles.map((r) => ({
             slug: r.slug,
-            label: r.label_zh,
+            label: r.label_en ?? r.label_zh,
           }))}
           initial={p?.styles ?? []}
         />
@@ -146,7 +146,7 @@ export default function ProductForm({ product, taxonomy, action, saved }: Props)
           variant="color"
           options={taxonomy.colors.map((c) => ({
             slug: c.slug,
-            label: c.label_zh,
+            label: c.label_en ?? c.label_zh,
             hex: c.hex,
           }))}
           initial={p?.colors ?? []}
@@ -159,7 +159,7 @@ export default function ProductForm({ product, taxonomy, action, saved }: Props)
           multi
           options={taxonomy.materials.map((r) => ({
             slug: r.slug,
-            label: r.label_zh,
+            label: r.label_en ?? r.label_zh,
           }))}
           initial={p?.materials ?? []}
         />
