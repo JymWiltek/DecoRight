@@ -15,19 +15,49 @@ type Props = {
   taxonomy: Taxonomy;
   action: (fd: FormData) => void | Promise<void>;
   saved?: boolean;
+  /**
+   * Inline image management, rendered between Basics and Item type.
+   * Only meaningful on the edit workbench (we need a product id to
+   * hang images off). The new-product page passes `undefined`.
+   *
+   * Rendered as a sibling of the main product <form> — NOT inside
+   * it — because the image section contains its own server-action
+   * <form> elements (upload, approve, reject, …) and HTML forbids
+   * nested forms. All product-data fields use `form={FORM_ID}` to
+   * associate with the top-level update form regardless of where
+   * they live in the DOM tree.
+   */
+  imagesSection?: React.ReactNode;
 };
 
-export default function ProductForm({ product, taxonomy, action, saved }: Props) {
+const FORM_ID = "product-form";
+
+export default function ProductForm({
+  product,
+  taxonomy,
+  action,
+  saved,
+  imagesSection,
+}: Props) {
   const p = product;
   const isEdit = Boolean(p);
 
   return (
-    <form
-      action={action}
-      data-product-form
-      encType="multipart/form-data"
-      className="mx-auto max-w-5xl space-y-8 px-6 py-8"
-    >
+    <div className="mx-auto max-w-5xl space-y-8 px-6 py-8">
+      {/* The actual <form> sits empty here. Every field and submit
+          button below associates with it via the HTML5 `form` attr
+          so the image section can render between Basics and Item
+          type as a DOM sibling without violating nested-form rules.
+          AIInferButton finds this via data-product-form and builds
+          a FormData from form.elements — form.elements DOES include
+          elements that reference this form via form="..." attrs. */}
+      <form
+        id={FORM_ID}
+        action={action}
+        encType="multipart/form-data"
+        data-product-form
+      />
+
       <header className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-semibold">
@@ -43,14 +73,6 @@ export default function ProductForm({ product, taxonomy, action, saved }: Props)
               Saved
             </span>
           )}
-          {isEdit && (
-            <Link
-              href={`/admin/products/${p!.id}/upload`}
-              className="rounded-md border border-neutral-300 px-3 py-1.5 text-sm hover:border-black"
-            >
-              Upload images →
-            </Link>
-          )}
           <Link
             href="/admin"
             className="rounded-md border border-neutral-300 px-3 py-1.5 text-sm hover:border-black"
@@ -59,6 +81,7 @@ export default function ProductForm({ product, taxonomy, action, saved }: Props)
           </Link>
           <button
             type="submit"
+            form={FORM_ID}
             className="rounded-md bg-black px-4 py-2 text-sm font-medium text-white hover:bg-neutral-800"
           >
             {isEdit ? "Save changes" : "Create product"}
@@ -74,6 +97,7 @@ export default function ProductForm({ product, taxonomy, action, saved }: Props)
         <Grid>
           <Field label="Name *">
             <input
+              form={FORM_ID}
               name="name"
               required
               defaultValue={p?.name ?? ""}
@@ -81,7 +105,12 @@ export default function ProductForm({ product, taxonomy, action, saved }: Props)
             />
           </Field>
           <Field label="Brand">
-            <input name="brand" defaultValue={p?.brand ?? ""} className={inputCls} />
+            <input
+              form={FORM_ID}
+              name="brand"
+              defaultValue={p?.brand ?? ""}
+              className={inputCls}
+            />
           </Field>
           <Field label="Status" wide>
             <div className="flex flex-wrap gap-2">
@@ -91,6 +120,7 @@ export default function ProductForm({ product, taxonomy, action, saved }: Props)
                   className="inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-neutral-300 px-3 py-1 text-xs has-[:checked]:border-black has-[:checked]:bg-black has-[:checked]:text-white"
                 >
                   <input
+                    form={FORM_ID}
                     type="radio"
                     name="status"
                     value={s}
@@ -104,6 +134,7 @@ export default function ProductForm({ product, taxonomy, action, saved }: Props)
           </Field>
           <Field label="Description" wide>
             <textarea
+              form={FORM_ID}
               name="description"
               rows={4}
               defaultValue={p?.description ?? ""}
@@ -113,11 +144,14 @@ export default function ProductForm({ product, taxonomy, action, saved }: Props)
         </Grid>
       </Section>
 
+      {imagesSection}
+
       <Section
         title="Item type *"
         hint="Pick one — a product is one kind of thing. Room is derived from the item type (set under Taxonomy)."
       >
         <PillGrid
+          form={FORM_ID}
           name="item_type"
           options={taxonomy.itemTypes.map((r) => ({
             slug: r.slug,
@@ -129,6 +163,7 @@ export default function ProductForm({ product, taxonomy, action, saved }: Props)
 
       <Section title="Styles (multi)">
         <PillGrid
+          form={FORM_ID}
           name="styles"
           multi
           options={taxonomy.styles.map((r) => ({
@@ -141,6 +176,7 @@ export default function ProductForm({ product, taxonomy, action, saved }: Props)
 
       <Section title="Colors (multi)">
         <PillGrid
+          form={FORM_ID}
           name="colors"
           multi
           variant="color"
@@ -155,6 +191,7 @@ export default function ProductForm({ product, taxonomy, action, saved }: Props)
 
       <Section title="Materials (multi)">
         <PillGrid
+          form={FORM_ID}
           name="materials"
           multi
           options={taxonomy.materials.map((r) => ({
@@ -169,6 +206,7 @@ export default function ProductForm({ product, taxonomy, action, saved }: Props)
         <Grid>
           <Field label="Price (MYR)">
             <input
+              form={FORM_ID}
               type="number"
               step="0.01"
               name="price_myr"
@@ -192,6 +230,7 @@ export default function ProductForm({ product, taxonomy, action, saved }: Props)
           </Field>
           <Field label="Length (mm)">
             <input
+              form={FORM_ID}
               type="number"
               name="dim_length"
               defaultValue={p?.dimensions_mm?.length ?? ""}
@@ -200,6 +239,7 @@ export default function ProductForm({ product, taxonomy, action, saved }: Props)
           </Field>
           <Field label="Width (mm)">
             <input
+              form={FORM_ID}
               type="number"
               name="dim_width"
               defaultValue={p?.dimensions_mm?.width ?? ""}
@@ -208,6 +248,7 @@ export default function ProductForm({ product, taxonomy, action, saved }: Props)
           </Field>
           <Field label="Height (mm)">
             <input
+              form={FORM_ID}
               type="number"
               name="dim_height"
               defaultValue={p?.dimensions_mm?.height ?? ""}
@@ -216,6 +257,7 @@ export default function ProductForm({ product, taxonomy, action, saved }: Props)
           </Field>
           <Field label="Weight (kg)">
             <input
+              form={FORM_ID}
               type="number"
               step="0.01"
               name="weight_kg"
@@ -230,6 +272,7 @@ export default function ProductForm({ product, taxonomy, action, saved }: Props)
         <Grid>
           <Field label="Upload .glb (replace)">
             <input
+              form={FORM_ID}
               type="file"
               name="glb_file"
               accept=".glb,model/gltf-binary"
@@ -252,6 +295,7 @@ export default function ProductForm({ product, taxonomy, action, saved }: Props)
           </Field>
           <Field label="Upload thumbnail (webp/png/jpg, replace)">
             <input
+              form={FORM_ID}
               type="file"
               name="thumbnail_file"
               accept="image/webp,image/png,image/jpeg"
@@ -267,6 +311,10 @@ export default function ProductForm({ product, taxonomy, action, saved }: Props)
                 />
               </div>
             )}
+            <p className="mt-1 text-[11px] text-neutral-500">
+              Optional. If you upload an image above and approve it as primary,
+              the thumbnail is set automatically.
+            </p>
           </Field>
         </Grid>
       </Section>
@@ -275,6 +323,7 @@ export default function ProductForm({ product, taxonomy, action, saved }: Props)
         <Grid>
           <Field label="External purchase URL" wide>
             <input
+              form={FORM_ID}
               type="url"
               name="purchase_url"
               defaultValue={p?.purchase_url ?? ""}
@@ -284,6 +333,7 @@ export default function ProductForm({ product, taxonomy, action, saved }: Props)
           </Field>
           <Field label="Supplier">
             <input
+              form={FORM_ID}
               name="supplier"
               defaultValue={p?.supplier ?? ""}
               className={inputCls}
@@ -311,7 +361,13 @@ export default function ProductForm({ product, taxonomy, action, saved }: Props)
       )}
 
       {p?.ai_filled_fields?.map((f) => (
-        <input key={f} type="hidden" name="ai_filled_fields" value={f} />
+        <input
+          key={f}
+          form={FORM_ID}
+          type="hidden"
+          name="ai_filled_fields"
+          value={f}
+        />
       ))}
 
       <footer className="flex items-center justify-between border-t border-neutral-200 pt-6">
@@ -325,14 +381,41 @@ export default function ProductForm({ product, taxonomy, action, saved }: Props)
           </Link>
           <button
             type="submit"
+            form={FORM_ID}
             className="rounded-md bg-black px-4 py-2 text-sm font-medium text-white hover:bg-neutral-800"
           >
             {isEdit ? "Save changes" : "Create product"}
           </button>
         </div>
       </footer>
-    </form>
+    </div>
   );
+
+  function RadioPill({
+    name,
+    value,
+    label,
+    checked,
+  }: {
+    name: string;
+    value: string;
+    label: string;
+    checked: boolean;
+  }) {
+    return (
+      <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-neutral-300 px-3 py-1 text-xs has-[:checked]:border-black has-[:checked]:bg-black has-[:checked]:text-white">
+        <input
+          form={FORM_ID}
+          type="radio"
+          name={name}
+          value={value}
+          defaultChecked={checked}
+          className="sr-only"
+        />
+        {label}
+      </label>
+    );
+  }
 }
 
 const inputCls =
@@ -377,31 +460,6 @@ function Field({
     <label className={`flex flex-col gap-1.5 ${wide ? "md:col-span-2" : ""}`}>
       <span className="text-xs font-medium text-neutral-600">{label}</span>
       {children}
-    </label>
-  );
-}
-
-function RadioPill({
-  name,
-  value,
-  label,
-  checked,
-}: {
-  name: string;
-  value: string;
-  label: string;
-  checked: boolean;
-}) {
-  return (
-    <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-neutral-300 px-3 py-1 text-xs has-[:checked]:border-black has-[:checked]:bg-black has-[:checked]:text-white">
-      <input
-        type="radio"
-        name={name}
-        value={value}
-        defaultChecked={checked}
-        className="sr-only"
-      />
-      {label}
     </label>
   );
 }

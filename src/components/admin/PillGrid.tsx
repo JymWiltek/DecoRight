@@ -13,6 +13,14 @@ type BaseProps = {
   options: PillOption[];
   variant?: "pill" | "color";
   emptyLabel?: string; // shown when no options seeded yet
+  /**
+   * Optional id of the <form> the hidden inputs should submit with.
+   * Used by ProductForm — the main <form> is empty and every field
+   * (including these) links to it via `form={FORM_ID}` so the whole
+   * workbench can render as siblings (with the image section between
+   * Basics and Taxonomy). Omit on standalone pages.
+   */
+  form?: string;
 };
 
 type SingleProps = BaseProps & {
@@ -37,7 +45,7 @@ type Props = SingleProps | MultiProps;
  * everything available and clicks once. That's the whole point.
  */
 export default function PillGrid(props: Props) {
-  const { name, options, variant = "pill", emptyLabel } = props;
+  const { name, options, variant = "pill", emptyLabel, form } = props;
   const isMulti = props.multi === true;
 
   const initialState: string[] = isMulti
@@ -74,7 +82,7 @@ export default function PillGrid(props: Props) {
     <div className="flex flex-col gap-2">
       {/* hidden inputs that actually submit */}
       {selected.map((s) => (
-        <input key={s} type="hidden" name={name} value={s} />
+        <input key={s} form={form} type="hidden" name={name} value={s} />
       ))}
 
       <div className={variant === "color" ? "flex flex-wrap gap-x-3 gap-y-3" : "flex flex-wrap gap-2"}>

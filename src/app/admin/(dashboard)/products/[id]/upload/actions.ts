@@ -13,6 +13,26 @@ import { QuotaExceededError } from "@/lib/api-usage";
 import type { RemBgProviderId } from "@/lib/rembg";
 
 /**
+ * Optional `returnTo` support: image actions can be driven from
+ *   - /admin/products/[id]/upload (legacy — commit 3 deletes)
+ *   - /admin/products/[id]/edit   (the new workbench)
+ * Whichever page the form lives on, it passes returnTo=<its path>
+ * and we redirect back there instead of hard-coding /upload.
+ * Only same-origin admin paths are allowed.
+ */
+function safeReturnTo(fd: FormData): string | null {
+  const v = fd.get("returnTo")?.toString();
+  if (!v) return null;
+  if (!v.startsWith("/admin/")) return null;
+  return v;
+}
+
+function withQuery(path: string, key: string, value: string): string {
+  const sep = path.includes("?") ? "&" : "?";
+  return `${path}${sep}${key}=${encodeURIComponent(value)}`;
+}
+
+/**
  * Accepts 1..N image files from the upload dropzone. For each file:
  *   1. insert a product_images row (state="raw", no URLs yet) so we
  *      have an id to key the storage path on
@@ -24,9 +44,11 @@ import type { RemBgProviderId } from "@/lib/rembg";
  */
 export async function uploadRawImages(productId: string, fd: FormData) {
   const supabase = createServiceRoleClient();
+  const returnTo =
+    safeReturnTo(fd) ?? `/admin/products/${productId}/upload`;
   const files = fd.getAll("files").filter((f): f is File => f instanceof File && f.size > 0);
   if (files.length === 0) {
-    redirect(`/admin/products/${productId}/upload?err=no_files`);
+    redirect(withQuery(returnTo, "err", "no_files"));
   }
 
   const inserted: string[] = [];
@@ -40,7 +62,7 @@ export async function uploadRawImages(productId: string, fd: FormData) {
     });
     if (insErr) {
       redirect(
-        `/admin/products/${productId}/upload?err=db&msg=${encodeURIComponent(insErr.message)}`,
+        withQuery(withQuery(returnTo, "err", "db"), "msg", insErr.message),
       );
     }
     // 2) upload bytes
@@ -56,17 +78,14 @@ export async function uploadRawImages(productId: string, fd: FormData) {
       // rollback the empty row so the queue stays clean
       await supabase.from("product_images").delete().eq("id", id);
       const msg = err instanceof Error ? err.message : String(err);
-      redirect(
-        `/admin/products/${productId}/upload?err=upload&msg=${encodeURIComponent(msg)}`,
-      );
+      redirect(withQuery(withQuery(returnTo, "err", "upload"), "msg", msg));
     }
   }
 
   revalidatePath(`/admin/products/${productId}/upload`);
+  revalidatePath(`/admin/products/${productId}/edit`);
   revalidatePath(`/admin/cutouts`);
-  redirect(
-    `/admin/products/${productId}/upload?uploaded=${inserted.length}`,
-  );
+  redirect(withQuery(returnTo, "uploaded", String(inserted.length)));
 }
 
 type RembgError =
@@ -150,14 +169,46 @@ async function runRembgForImage(
 
 /**
  * Server-action wrapper around runRembgForImage: runs rembg on one
- * image, redirects back to the upload page with a success or error
- * query string. Called from the per-card "抠图" button.
+ * image, redirects back to the caller's page with a success or error
+ * query string. Called from the per-card "Cut out" button on either
+ * the upload page OR the edit workbench.
+ *
+ * Callable two ways:
+ *   1. Directly with (productId, imageId, providerId) — legacy path
+ *      used by /upload's bound form + /cutouts rejectCutout rerun.
+ *      No returnTo available here, so defaults to /upload.
+ *   2. As a <form action> with productId/imageId/providerId/returnTo
+ *      in FormData — used by the inline buttons on /edit. Respects
+ *      returnTo.
  */
 export async function processImage(
-  productId: string,
-  imageId: string,
-  providerId?: RemBgProviderId,
+  ...args:
+    | [productId: string, imageId: string, providerId?: RemBgProviderId]
+    | [fd: FormData]
 ): Promise<void> {
+  let productId: string;
+  let imageId: string;
+  let providerId: RemBgProviderId | undefined;
+  let returnTo: string | null = null;
+  if (args.length === 1 && args[0] instanceof FormData) {
+    const fd = args[0];
+    productId = fd.get("productId")?.toString() ?? "";
+    imageId = fd.get("imageId")?.toString() ?? "";
+    const p = fd.get("providerId")?.toString();
+    providerId =
+      p === "replicate_rembg" || p === "removebg"
+        ? (p as RemBgProviderId)
+        : undefined;
+    returnTo = safeReturnTo(fd);
+  } else {
+    [productId, imageId, providerId] = args as [
+      string,
+      string,
+      RemBgProviderId?,
+    ];
+  }
+  const base = returnTo ?? `/admin/products/${productId}/upload`;
+
   const res = await runRembgForImage(productId, imageId, providerId);
   // Invalidate everywhere the cutout / thumbnail might render. On a
   // reject-and-rerun the cutout_image_url (which the sync trigger
@@ -174,25 +225,28 @@ export async function processImage(
     const e = res.error;
     switch (e.kind) {
       case "missing_raw":
-        redirect(`/admin/products/${productId}/upload?err=missing_raw`);
+        redirect(withQuery(base, "err", "missing_raw"));
       case "no_provider":
         redirect(
-          `/admin/products/${productId}/upload?err=no_provider&msg=${encodeURIComponent(e.providerId ?? "")}`,
+          withQuery(
+            withQuery(base, "err", "no_provider"),
+            "msg",
+            e.providerId ?? "",
+          ),
         );
       case "quota":
         redirect(
-          `/admin/products/${productId}/upload?err=quota&msg=${encodeURIComponent(e.cause)}`,
+          withQuery(withQuery(base, "err", "quota"), "msg", e.cause),
         );
       case "rembg":
-        redirect(
-          `/admin/products/${productId}/upload?err=rembg&msg=${encodeURIComponent(e.msg)}`,
-        );
+        redirect(withQuery(withQuery(base, "err", "rembg"), "msg", e.msg));
       case "db":
-        redirect(
-          `/admin/products/${productId}/upload?err=db&msg=${encodeURIComponent(e.msg)}`,
-        );
+        redirect(withQuery(withQuery(base, "err", "db"), "msg", e.msg));
     }
   }
+  // On success we return void — the caller's form sits on either
+  // /upload or /edit; revalidatePath(...) above makes that same page
+  // re-render with the updated state row. No explicit redirect.
 }
 
 /**
@@ -201,17 +255,21 @@ export async function processImage(
  * blast would still be correct (advisory lock + server-side reserve)
  * but makes failures messier. Bails on first error.
  */
-export async function processAllRaw(productId: string): Promise<void> {
+export async function processAllRaw(
+  productId: string,
+  fd?: FormData,
+): Promise<void> {
   const supabase = createServiceRoleClient();
+  const returnTo = fd ? safeReturnTo(fd) : null;
+  const base = returnTo ?? `/admin/products/${productId}/upload`;
+
   const { data: rows, error } = await supabase
     .from("product_images")
     .select("id")
     .eq("product_id", productId)
     .eq("state", "raw");
   if (error) {
-    redirect(
-      `/admin/products/${productId}/upload?err=db&msg=${encodeURIComponent(error.message)}`,
-    );
+    redirect(withQuery(withQuery(base, "err", "db"), "msg", error.message));
   }
 
   let processed = 0;
@@ -220,6 +278,7 @@ export async function processAllRaw(productId: string): Promise<void> {
     if (!res.ok) {
       // Revalidate what we DID process, then surface the error.
       revalidatePath(`/admin/products/${productId}/upload`);
+      revalidatePath(`/admin/products/${productId}/edit`);
       revalidatePath(`/admin/cutouts`);
       const e = res.error;
       const msg =
@@ -230,14 +289,101 @@ export async function processAllRaw(productId: string): Promise<void> {
             : e.kind === "no_provider"
               ? (e.providerId ?? "")
               : "";
-      redirect(
-        `/admin/products/${productId}/upload?err=${e.kind}&msg=${encodeURIComponent(msg)}`,
-      );
+      redirect(withQuery(withQuery(base, "err", e.kind), "msg", msg));
     }
     processed++;
   }
 
   revalidatePath(`/admin/products/${productId}/upload`);
+  revalidatePath(`/admin/products/${productId}/edit`);
   revalidatePath(`/admin/cutouts`);
-  redirect(`/admin/cutouts?reran=${processed}`);
+  // Default: drop the operator into the review queue with a batch
+  // success banner. When driven from the edit workbench, returnTo
+  // keeps them on the product page so they can continue reviewing
+  // inline without a context switch.
+  redirect(
+    returnTo
+      ? withQuery(base, "processed", String(processed))
+      : `/admin/cutouts?reran=${processed}`,
+  );
+}
+
+/**
+ * Delete a single product_image row and its stored files. Admin-only
+ * — the UI button is guarded with a confirm(). We also clear the
+ * primary flag implicitly (row is gone; partial unique index no
+ * longer has a row pointing here). If the deleted row was the primary
+ * and it had already been synced into products.thumbnail_url, the
+ * thumbnail column is left pointing at a now-404 URL — we wipe it
+ * here too to keep /admin and / from rendering a broken image.
+ *
+ * Storage cleanup is best-effort: if a remove() fails (file already
+ * gone, network blip) we still delete the DB row — a stray orphan in
+ * storage is less bad than a zombie row with a dead URL.
+ */
+export async function deleteProductImage(fd: FormData): Promise<void> {
+  const imageId = fd.get("imageId")?.toString();
+  const returnTo = safeReturnTo(fd);
+
+  if (!imageId) {
+    redirect(
+      withQuery(returnTo ?? "/admin/cutouts", "err", "missing_id"),
+    );
+  }
+
+  const supabase = createServiceRoleClient();
+
+  // Read first so we know the product_id (for revalidate + storage
+  // paths) and the raw/cutout urls (for storage cleanup).
+  const { data: img, error: readErr } = await supabase
+    .from("product_images")
+    .select("id,product_id,raw_image_url,cutout_image_url,is_primary")
+    .eq("id", imageId)
+    .single();
+  if (readErr || !img) {
+    redirect(
+      withQuery(returnTo ?? "/admin/cutouts", "err", "not_found"),
+    );
+  }
+
+  const errBase =
+    returnTo ?? `/admin/products/${img.product_id}/edit`;
+
+  // Best-effort storage removal.
+  if (img.raw_image_url) {
+    await supabase.storage.from("raw-images").remove([img.raw_image_url]);
+  }
+  // cutout_image_url is a public URL with `?v=<ts>` busting — strip
+  // the query, then derive the path `<product_id>/<image_id>.png`.
+  // Using the known convention is safer than parsing the URL.
+  await supabase.storage
+    .from("cutouts")
+    .remove([`${img.product_id}/${imageId}.png`]);
+
+  // Delete the row.
+  const { error: delErr } = await supabase
+    .from("product_images")
+    .delete()
+    .eq("id", imageId);
+  if (delErr) {
+    redirect(withQuery(withQuery(errBase, "err", "db"), "msg", delErr.message));
+  }
+
+  // If the deleted row was the synced primary, clear the product's
+  // thumbnail_url so the catalog stops rendering a broken image.
+  // The sync trigger only RUNS thumbnail copies; it doesn't unset.
+  if (img.is_primary) {
+    await supabase
+      .from("products")
+      .update({ thumbnail_url: null })
+      .eq("id", img.product_id);
+  }
+
+  revalidatePath(`/admin/products/${img.product_id}/upload`);
+  revalidatePath(`/admin/products/${img.product_id}/edit`);
+  revalidatePath(`/admin/cutouts`);
+  revalidatePath("/admin");
+  revalidatePath("/");
+  revalidatePath(`/product/${img.product_id}`);
+  redirect(withQuery(errBase, "deleted", "1"));
 }

@@ -6,6 +6,31 @@ import { createServiceRoleClient } from "@/lib/supabase/service";
 import { processImage } from "../products/[id]/upload/actions";
 
 /**
+ * Read optional `returnTo` from the form. Used so the same action can
+ * be driven from EITHER the /admin/cutouts queue (default) OR inline
+ * from the product edit workbench — in which case the redirect flips
+ * back to the edit page so the operator never loses their place.
+ *
+ * Safety: only same-origin admin paths are honored. Anything else
+ * (including external URLs and paths outside /admin) falls back to
+ * the default to prevent open-redirect abuse via a crafted form post.
+ */
+function safeReturnTo(fd: FormData): string | null {
+  const v = fd.get("returnTo")?.toString();
+  if (!v) return null;
+  if (!v.startsWith("/admin/")) return null;
+  return v;
+}
+
+/**
+ * Append a query param to a path that may already have one.
+ */
+function withQuery(path: string, key: string, value: string): string {
+  const sep = path.includes("?") ? "&" : "?";
+  return `${path}${sep}${key}=${encodeURIComponent(value)}`;
+}
+
+/**
  * Mark a cutout as approved. If no product_images row for this product
  * has is_primary=true yet, we also promote this one to primary — which
  * triggers sync_primary_thumbnail() on the DB side to copy the cutout
@@ -13,7 +38,9 @@ import { processImage } from "../products/[id]/upload/actions";
  */
 export async function approveCutout(fd: FormData): Promise<void> {
   const imageId = fd.get("imageId")?.toString();
-  if (!imageId) redirect("/admin/cutouts?err=missing_id");
+  const returnTo = safeReturnTo(fd);
+  const errBase = returnTo ?? "/admin/cutouts";
+  if (!imageId) redirect(withQuery(errBase, "err", "missing_id"));
 
   const supabase = createServiceRoleClient();
 
@@ -22,9 +49,11 @@ export async function approveCutout(fd: FormData): Promise<void> {
     .select("id,product_id,is_primary,state")
     .eq("id", imageId)
     .single();
-  if (readErr || !img) redirect("/admin/cutouts?err=not_found");
+  if (readErr || !img) redirect(withQuery(errBase, "err", "not_found"));
   if (img.state !== "cutout_pending") {
-    redirect(`/admin/cutouts?err=wrong_state&msg=${img.state}`);
+    redirect(
+      withQuery(withQuery(errBase, "err", "wrong_state"), "msg", img.state),
+    );
   }
 
   // Does this product already have an approved primary? If not, we
@@ -41,7 +70,7 @@ export async function approveCutout(fd: FormData): Promise<void> {
     .maybeSingle();
   if (primaryErr) {
     redirect(
-      `/admin/cutouts?err=db&msg=${encodeURIComponent(primaryErr.message)}`,
+      withQuery(withQuery(errBase, "err", "db"), "msg", primaryErr.message),
     );
   }
 
@@ -56,7 +85,7 @@ export async function approveCutout(fd: FormData): Promise<void> {
     .eq("id", imageId);
   if (updErr) {
     redirect(
-      `/admin/cutouts?err=db&msg=${encodeURIComponent(updErr.message)}`,
+      withQuery(withQuery(errBase, "err", "db"), "msg", updErr.message),
     );
   }
 
@@ -71,7 +100,7 @@ export async function approveCutout(fd: FormData): Promise<void> {
   revalidatePath(`/admin/products/${img.product_id}/upload`);
   revalidatePath(`/admin/products/${img.product_id}/edit`);
   revalidatePath(`/product/${img.product_id}`);
-  redirect("/admin/cutouts?approved=1");
+  redirect(withQuery(returnTo ?? "/admin/cutouts", "approved", "1"));
 }
 
 /**
@@ -81,7 +110,9 @@ export async function approveCutout(fd: FormData): Promise<void> {
  */
 export async function rejectCutout(fd: FormData): Promise<void> {
   const imageId = fd.get("imageId")?.toString();
-  if (!imageId) redirect("/admin/cutouts?err=missing_id");
+  const returnTo = safeReturnTo(fd);
+  const errBase = returnTo ?? "/admin/cutouts";
+  if (!imageId) redirect(withQuery(errBase, "err", "missing_id"));
 
   const supabase = createServiceRoleClient();
   const { data: img, error: readErr } = await supabase
@@ -89,9 +120,11 @@ export async function rejectCutout(fd: FormData): Promise<void> {
     .select("id,product_id,state")
     .eq("id", imageId)
     .single();
-  if (readErr || !img) redirect("/admin/cutouts?err=not_found");
+  if (readErr || !img) redirect(withQuery(errBase, "err", "not_found"));
   if (img.state !== "cutout_pending") {
-    redirect(`/admin/cutouts?err=wrong_state&msg=${img.state}`);
+    redirect(
+      withQuery(withQuery(errBase, "err", "wrong_state"), "msg", img.state),
+    );
   }
 
   const rerun = fd.get("rerun")?.toString();
@@ -111,7 +144,7 @@ export async function rejectCutout(fd: FormData): Promise<void> {
       .eq("id", imageId);
     if (resetErr) {
       redirect(
-        `/admin/cutouts?err=db&msg=${encodeURIComponent(resetErr.message)}`,
+        withQuery(withQuery(errBase, "err", "db"), "msg", resetErr.message),
       );
     }
     await processImage(img.product_id, imageId, "removebg");
@@ -119,7 +152,8 @@ export async function rejectCutout(fd: FormData): Promise<void> {
     revalidatePath("/admin/cutouts");
     revalidatePath("/admin");
     revalidatePath("/");
-    redirect("/admin/cutouts?reran=removebg");
+    revalidatePath(`/admin/products/${img.product_id}/edit`);
+    redirect(withQuery(returnTo ?? "/admin/cutouts", "reran", "removebg"));
   }
 
   const { error: updErr } = await supabase
@@ -128,20 +162,23 @@ export async function rejectCutout(fd: FormData): Promise<void> {
     .eq("id", imageId);
   if (updErr) {
     redirect(
-      `/admin/cutouts?err=db&msg=${encodeURIComponent(updErr.message)}`,
+      withQuery(withQuery(errBase, "err", "db"), "msg", updErr.message),
     );
   }
 
   revalidatePath("/admin/cutouts");
   revalidatePath(`/admin/products/${img.product_id}/upload`);
-  redirect("/admin/cutouts?rejected=1");
+  revalidatePath(`/admin/products/${img.product_id}/edit`);
+  redirect(withQuery(returnTo ?? "/admin/cutouts", "rejected", "1"));
 }
 
 /** Promote a non-primary approved image to primary. Triggers the
  *  thumbnail sync function on the DB side. */
 export async function setPrimary(fd: FormData): Promise<void> {
   const imageId = fd.get("imageId")?.toString();
-  if (!imageId) redirect("/admin/cutouts?err=missing_id");
+  const returnTo = safeReturnTo(fd);
+  const errBase = returnTo ?? "/admin/cutouts";
+  if (!imageId) redirect(withQuery(errBase, "err", "missing_id"));
   const supabase = createServiceRoleClient();
 
   const { data: img } = await supabase
@@ -149,9 +186,11 @@ export async function setPrimary(fd: FormData): Promise<void> {
     .select("id,product_id,state")
     .eq("id", imageId)
     .single();
-  if (!img) redirect("/admin/cutouts?err=not_found");
+  if (!img) redirect(withQuery(errBase, "err", "not_found"));
   if (img.state !== "cutout_approved") {
-    redirect(`/admin/cutouts?err=wrong_state&msg=${img.state}`);
+    redirect(
+      withQuery(withQuery(errBase, "err", "wrong_state"), "msg", img.state),
+    );
   }
 
   // Partial unique index (is_primary=true) enforces one-per-product,
@@ -167,7 +206,7 @@ export async function setPrimary(fd: FormData): Promise<void> {
     .eq("id", imageId);
   if (updErr) {
     redirect(
-      `/admin/cutouts?err=db&msg=${encodeURIComponent(updErr.message)}`,
+      withQuery(withQuery(errBase, "err", "db"), "msg", updErr.message),
     );
   }
 
@@ -177,5 +216,5 @@ export async function setPrimary(fd: FormData): Promise<void> {
   revalidatePath(`/admin/products/${img.product_id}/upload`);
   revalidatePath(`/admin/products/${img.product_id}/edit`);
   revalidatePath(`/product/${img.product_id}`);
-  redirect("/admin/cutouts?primary=1");
+  redirect(withQuery(returnTo ?? "/admin/cutouts", "primary", "1"));
 }
