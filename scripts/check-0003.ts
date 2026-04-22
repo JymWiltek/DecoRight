@@ -132,11 +132,13 @@ async function main() {
   })) && allOk;
 
   allOk = (await probe("products.rooms column dropped", async () => {
-    // Try to select it; should error if dropped.
+    // Try to select it; should error if dropped. Cast through `any`
+    // because supabase-js's typed select doesn't even know rooms used
+    // to be a column, so we can't @ts-expect-error here.
     const { error } = await supabase
       .from("products")
-      // @ts-expect-error rooms is gone post-0003; this is a probe
-      .select("rooms")
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .select("rooms" as any)
       .limit(1);
     return {
       ok: Boolean(error),

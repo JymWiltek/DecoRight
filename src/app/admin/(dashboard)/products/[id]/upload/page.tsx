@@ -4,6 +4,7 @@ import { createServiceRoleClient } from "@/lib/supabase/service";
 import { getSignedRawUrl } from "@/lib/storage";
 import { providerAvailability } from "@/lib/rembg";
 import { todayUsageSummary } from "@/lib/api-usage";
+import { UploadDropzone } from "@/components/admin/UploadDropzone";
 import { uploadRawImages, processImage, processAllRaw } from "./actions";
 
 export const dynamic = "force-dynamic";
@@ -105,30 +106,16 @@ export default async function UploadPage({ params, searchParams }: PageProps) {
 
       {/* uploader */}
       <section className="rounded-lg border border-neutral-200 bg-white p-5">
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-neutral-500">
-          上传原图（可选多张）
-        </h2>
-        <form
-          action={bound}
-          encType="multipart/form-data"
-          className="flex flex-wrap items-end gap-3"
-        >
-          <input
-            type="file"
-            name="files"
-            accept="image/jpeg,image/png,image/webp"
-            multiple
-            required
-            className="text-sm"
-          />
-          <button
-            type="submit"
-            className="rounded-md bg-black px-4 py-2 text-sm font-medium text-white hover:bg-neutral-800"
-          >
-            上传
-          </button>
+        <div className="mb-3 flex items-baseline justify-between">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-neutral-500">
+            上传原图（可选多张）
+          </h2>
           {rawCount > 0 && (
-            <form action={boundProcessAll} className="ml-auto">
+            // Hoist the batch-process form OUT of the upload form. Two
+            // server-action <form>s in one row is two distinct forms;
+            // nesting them — as the previous version did — is invalid
+            // HTML and confuses React's action dispatcher.
+            <form action={boundProcessAll}>
               <button
                 type="submit"
                 className="rounded-md border border-neutral-300 px-4 py-2 text-sm hover:border-black"
@@ -138,6 +125,23 @@ export default async function UploadPage({ params, searchParams }: PageProps) {
               </button>
             </form>
           )}
+        </div>
+        <form action={bound} className="space-y-3">
+          {/* React 19 server actions auto-set encType for FormData with
+              File entries — explicit encType="multipart/form-data" is
+              ignored and warned about. The dropzone is a client
+              component that owns the hidden file input. */}
+          <UploadDropzone
+            name="files"
+            accept="image/jpeg,image/png,image/webp"
+            multiple
+          />
+          <button
+            type="submit"
+            className="rounded-md bg-black px-4 py-2 text-sm font-medium text-white hover:bg-neutral-800"
+          >
+            上传
+          </button>
         </form>
         <p className="mt-3 text-xs text-neutral-500">
           建议：白底或干净背景的产品正面照。单张最佳在 1–4 MB。
