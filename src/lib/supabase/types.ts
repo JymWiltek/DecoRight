@@ -135,10 +135,14 @@ export type ProductImageUpdate = Partial<
 
 export type TaxonomyRow = {
   slug: string;
-  label_zh: string;
-  /** Populated by the Auto-translate action (OpenAI GPT-4o-mini) or
-   *  manually in the SQL editor. Null until first translation run. */
-  label_en: string | null;
+  /** Canonical source-of-truth label. NOT NULL in the DB (migration
+   *  0008). Everything else — Chinese, Malay, future locales — is a
+   *  translation of this. Shopee / Lazada / Apple follow the same
+   *  English-canonical model for regional SaaS. */
+  label_en: string;
+  /** Translated from label_en by the Auto-translate action
+   *  (OpenAI GPT-4o-mini) or manually. Null until first run. */
+  label_zh: string | null;
   label_ms: string | null;
   sort_order: number;
   created_at: string;
@@ -154,8 +158,8 @@ export type ItemTypeRow = TaxonomyRow & {
 export type ItemSubtypeRow = {
   slug: string;
   item_type_slug: string;
-  label_zh: string;
-  label_en: string | null;
+  label_en: string;
+  label_zh: string | null;
   label_ms: string | null;
   sort_order: number;
   created_at: string;
@@ -172,8 +176,8 @@ export type AttributeSchemaField = {
 
 export type TaxonomyInsert = {
   slug: string;
-  label_zh: string;
-  label_en?: string | null;
+  label_en: string;
+  label_zh?: string | null;
   label_ms?: string | null;
   sort_order?: number;
 };
@@ -188,8 +192,8 @@ export type ItemTypeInsert = TaxonomyInsert & {
 export type ItemSubtypeInsert = {
   slug: string;
   item_type_slug: string;
-  label_zh: string;
-  label_en?: string | null;
+  label_en: string;
+  label_zh?: string | null;
   label_ms?: string | null;
   sort_order?: number;
 };

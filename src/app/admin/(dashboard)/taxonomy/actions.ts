@@ -38,7 +38,7 @@ function kindFromForm(fd: FormData): TaxonomyKind {
 
 export async function addTaxonomyItem(fd: FormData): Promise<void> {
   const kind = kindFromForm(fd);
-  const label = fd.get("label_zh")?.toString().trim() ?? "";
+  const label = fd.get("label_en")?.toString().trim() ?? "";
   const slugRaw = fd.get("slug")?.toString().trim() ?? "";
   const hex = fd.get("hex")?.toString().trim() ?? "";
 
@@ -46,9 +46,10 @@ export async function addTaxonomyItem(fd: FormData): Promise<void> {
     redirect(`/admin/taxonomy?err=label&kind=${kind}`);
   }
 
-  // Slugify whatever the user typed (or the label if they didn't type one).
-  // We only bail if, AFTER cleaning, nothing printable is left — e.g. the
-  // label was pure Chinese with no ASCII at all.
+  // Slugify whatever the user typed (or the English label if they didn't).
+  // Since label_en is ASCII, the "nothing printable left after cleaning"
+  // edge case is rare but we keep the guard for inputs like "..." or
+  // all-emoji.
   const slug = slugify(slugRaw || label);
   if (!slug) {
     redirect(`/admin/taxonomy?err=slug&kind=${kind}`);
@@ -56,13 +57,15 @@ export async function addTaxonomyItem(fd: FormData): Promise<void> {
 
   const supabase = createServiceRoleClient();
 
+  // zh + ms are left null on insert — the admin clicks "Auto-translate
+  // missing" on /admin/taxonomy to fill them via OpenAI GPT-4o-mini.
   if (kind === "colors") {
     if (!/^#[0-9A-Fa-f]{6}$/.test(hex)) {
       redirect(`/admin/taxonomy?err=hex&kind=${kind}`);
     }
     const { error } = await supabase
       .from("colors")
-      .insert({ slug, label_zh: label, hex });
+      .insert({ slug, label_en: label, hex });
     if (error) {
       redirect(
         `/admin/taxonomy?err=db&kind=${kind}&msg=${encodeURIComponent(error.message)}`,
@@ -71,7 +74,7 @@ export async function addTaxonomyItem(fd: FormData): Promise<void> {
   } else {
     const { error } = await supabase
       .from(kind)
-      .insert({ slug, label_zh: label });
+      .insert({ slug, label_en: label });
     if (error) {
       redirect(
         `/admin/taxonomy?err=db&kind=${kind}&msg=${encodeURIComponent(error.message)}`,
@@ -160,14 +163,14 @@ export async function deleteTaxonomyItem(fd: FormData): Promise<void> {
 type TranslateJob = {
   kind: TaxonomyKind;
   slug: string;
-  label_zh: string;
-  need_en: boolean;
+  label_en: string;
+  need_zh: boolean;
   need_ms: boolean;
 };
 
 type TranslatedLabel = {
   slug: string;
-  label_en: string;
+  label_zh: string;
   label_ms: string;
 };
 
@@ -184,7 +187,7 @@ function isTranslatedLabelArray(v: unknown): v is TranslatedLabel[] {
       r &&
       typeof r === "object" &&
       typeof (r as TranslatedLabel).slug === "string" &&
-      typeof (r as TranslatedLabel).label_en === "string" &&
+      typeof (r as TranslatedLabel).label_zh === "string" &&
       typeof (r as TranslatedLabel).label_ms === "string",
   );
 }
@@ -202,25 +205,25 @@ async function translateBatch(
   const openai = getOpenAI();
 
   const systemPrompt = [
-    "You translate furniture e-commerce taxonomy labels from Simplified Chinese",
-    "into English and Bahasa Melayu for a Malaysian audience (decoright.my).",
+    "You translate furniture e-commerce taxonomy labels from English into",
+    "Simplified Chinese and Bahasa Melayu for a Malaysian audience (decoright.my).",
     "",
     "RULES:",
     '- Respond with a JSON object of shape { "translations": [ ... ] }.',
-    '- Each translations element: { "slug": string, "label_en": string, "label_ms": string }',
+    '- Each translations element: { "slug": string, "label_zh": string, "label_ms": string }',
     "- Preserve every input slug exactly — same count, same order.",
-    "- English: Title Case, common retail terminology",
-    '  (e.g. 茶几 → "Coffee Table", not "Tea Table"; 电视柜 → "TV Cabinet").',
+    "- Simplified Chinese: short common retail term",
+    '  (e.g. "Coffee Table" → 茶几; "TV Cabinet" → 电视柜; "Living Room" → 客厅).',
     "- Bahasa Melayu: standard Malaysian Malay as used by furniture retailers",
-    '  (e.g. 茶几 → "Meja Kopi"; 客厅 → "Ruang Tamu"; 现代 → "Moden").',
+    '  (e.g. "Coffee Table" → "Meja Kopi"; "Living Room" → "Ruang Tamu"; "Modern" → "Moden").',
     "- Keep labels short (1–3 words typical). No trailing punctuation.",
     "- For colors: plain color name in each language",
-    '  (e.g. 米白 → "Off-white" / "Putih Krim"; 原木色 → "Natural Wood" / "Kayu Asli").',
+    '  (e.g. "Off-white" → 米白 / "Putih Krim"; "Natural Wood" → 原木色 / "Kayu Asli").',
   ].join("\n");
 
   const userPayload = jobs.map((j) => ({
     slug: j.slug,
-    label_zh: j.label_zh,
+    label_en: j.label_en,
     kind: j.kind,
   }));
 
@@ -264,10 +267,10 @@ async function translateBatch(
 }
 
 /**
- * Find every taxonomy row with label_en OR label_ms null, ask the
- * model (OpenAI GPT-4o-mini) to translate them in batches, write the
- * results back. Returns via redirect query params so the admin page
- * can show a toast.
+ * Find every taxonomy row with label_zh OR label_ms null, ask the
+ * model (OpenAI GPT-4o-mini) to translate from the canonical label_en
+ * in batches, write the results back. Returns via redirect query
+ * params so the admin page can show a toast.
  *
  * Only fills columns that are NULL — never overwrites an existing
  * translation. Admins can clear a cell in the SQL editor and re-run
@@ -276,30 +279,30 @@ async function translateBatch(
 export async function translateMissingTaxonomy(): Promise<void> {
   const supabase = createServiceRoleClient();
 
-  // Pull every row from every taxonomy table where at least one locale
-  // column is null. We do 5 parallel queries — there are only ~5-50
-  // rows per table so this is cheap.
+  // Pull every row from every taxonomy table where at least one
+  // translation column is null. We do 5 parallel queries — there are
+  // only ~5-50 rows per table so this is cheap.
   const [it, rm, st, mt, co] = await Promise.all([
     supabase
       .from("item_types")
-      .select("slug, label_zh, label_en, label_ms")
-      .or("label_en.is.null,label_ms.is.null"),
+      .select("slug, label_en, label_zh, label_ms")
+      .or("label_zh.is.null,label_ms.is.null"),
     supabase
       .from("rooms")
-      .select("slug, label_zh, label_en, label_ms")
-      .or("label_en.is.null,label_ms.is.null"),
+      .select("slug, label_en, label_zh, label_ms")
+      .or("label_zh.is.null,label_ms.is.null"),
     supabase
       .from("styles")
-      .select("slug, label_zh, label_en, label_ms")
-      .or("label_en.is.null,label_ms.is.null"),
+      .select("slug, label_en, label_zh, label_ms")
+      .or("label_zh.is.null,label_ms.is.null"),
     supabase
       .from("materials")
-      .select("slug, label_zh, label_en, label_ms")
-      .or("label_en.is.null,label_ms.is.null"),
+      .select("slug, label_en, label_zh, label_ms")
+      .or("label_zh.is.null,label_ms.is.null"),
     supabase
       .from("colors")
-      .select("slug, label_zh, label_en, label_ms")
-      .or("label_en.is.null,label_ms.is.null"),
+      .select("slug, label_en, label_zh, label_ms")
+      .or("label_zh.is.null,label_ms.is.null"),
   ]);
 
   for (const r of [it, rm, st, mt, co]) {
@@ -315,8 +318,8 @@ export async function translateMissingTaxonomy(): Promise<void> {
       (r): TranslateJob => ({
         kind: "item_types",
         slug: r.slug,
-        label_zh: r.label_zh,
-        need_en: r.label_en == null,
+        label_en: r.label_en,
+        need_zh: r.label_zh == null,
         need_ms: r.label_ms == null,
       }),
     ),
@@ -324,8 +327,8 @@ export async function translateMissingTaxonomy(): Promise<void> {
       (r): TranslateJob => ({
         kind: "rooms",
         slug: r.slug,
-        label_zh: r.label_zh,
-        need_en: r.label_en == null,
+        label_en: r.label_en,
+        need_zh: r.label_zh == null,
         need_ms: r.label_ms == null,
       }),
     ),
@@ -333,8 +336,8 @@ export async function translateMissingTaxonomy(): Promise<void> {
       (r): TranslateJob => ({
         kind: "styles",
         slug: r.slug,
-        label_zh: r.label_zh,
-        need_en: r.label_en == null,
+        label_en: r.label_en,
+        need_zh: r.label_zh == null,
         need_ms: r.label_ms == null,
       }),
     ),
@@ -342,8 +345,8 @@ export async function translateMissingTaxonomy(): Promise<void> {
       (r): TranslateJob => ({
         kind: "materials",
         slug: r.slug,
-        label_zh: r.label_zh,
-        need_en: r.label_en == null,
+        label_en: r.label_en,
+        need_zh: r.label_zh == null,
         need_ms: r.label_ms == null,
       }),
     ),
@@ -351,8 +354,8 @@ export async function translateMissingTaxonomy(): Promise<void> {
       (r): TranslateJob => ({
         kind: "colors",
         slug: r.slug,
-        label_zh: r.label_zh,
-        need_en: r.label_en == null,
+        label_en: r.label_en,
+        need_zh: r.label_zh == null,
         need_ms: r.label_ms == null,
       }),
     ),
@@ -384,8 +387,8 @@ export async function translateMissingTaxonomy(): Promise<void> {
         if (!t) continue; // Model dropped a row, skip silently — the
         // next run will pick it up because it's still null.
 
-        const patch: { label_en?: string; label_ms?: string } = {};
-        if (job.need_en) patch.label_en = t.label_en;
+        const patch: { label_zh?: string; label_ms?: string } = {};
+        if (job.need_zh) patch.label_zh = t.label_zh;
         if (job.need_ms) patch.label_ms = t.label_ms;
         if (Object.keys(patch).length === 0) continue;
 

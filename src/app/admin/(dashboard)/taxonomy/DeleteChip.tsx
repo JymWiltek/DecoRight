@@ -5,10 +5,10 @@ import { deleteTaxonomyItem } from "./actions";
 type Props = {
   kind: "item_types" | "rooms" | "styles" | "materials" | "colors";
   slug: string;
-  /** Canonical label (label_zh) — always present. */
+  /** Canonical label (label_en) — always present. */
   label: string;
-  /** English translation, null if not yet auto-translated. */
-  labelEn: string | null;
+  /** Chinese translation, null if not yet auto-translated. */
+  labelZh: string | null;
   /** Malay translation, null if not yet auto-translated. */
   labelMs: string | null;
   hex?: string;
@@ -24,9 +24,9 @@ const KIND_LABELS: Record<Props["kind"], string> = {
 
 /**
  * One taxonomy pill with a delete (×) button plus a compact i18n status
- * line showing the EN / MS translations (or a dash when null). The
- * canonical zh label is the chip's own text; translations sit below it
- * so an admin can spot what's missing at a glance.
+ * line showing the ZH / MS translations (or a dash when null). The
+ * canonical English label is the chip's own text; translations sit
+ * below it so an admin can spot what's missing at a glance.
  *
  * The × button is destructive and easy to mis-click, so we intercept the
  * form submit on the client and show a native confirm(). The server
@@ -37,12 +37,12 @@ export default function DeleteChip({
   kind,
   slug,
   label,
-  labelEn,
+  labelZh,
   labelMs,
   hex,
 }: Props) {
-  const bothMissing = labelEn == null && labelMs == null;
-  const oneMissing = !bothMissing && (labelEn == null || labelMs == null);
+  const bothMissing = labelZh == null && labelMs == null;
+  const oneMissing = !bothMissing && (labelZh == null || labelMs == null);
 
   return (
     <div
@@ -86,8 +86,8 @@ export default function DeleteChip({
         </button>
       </form>
       <div className="mt-0.5 flex gap-2 text-[10px] leading-tight text-neutral-500">
-        <span className={labelEn ? "" : "text-amber-600"}>
-          EN: {labelEn ?? "—"}
+        <span className={labelZh ? "" : "text-amber-600"}>
+          ZH: {labelZh ?? "—"}
         </span>
         <span className={labelMs ? "" : "text-amber-600"}>
           MS: {labelMs ?? "—"}

@@ -66,22 +66,32 @@ export function invalidateTaxonomyCache(): void {
 }
 
 /** Minimal shape for label-bearing taxonomy rows. Accepts TaxonomyRow,
- *  ColorRow, ItemTypeRow, ItemSubtypeRow — anything with the three
- *  label columns. Structural typing saves us a generic parameter. */
-type Labelable = { label_zh: string; label_en: string | null; label_ms: string | null };
+ *  ColorRow, ItemTypeRow, ItemSubtypeRow — anything with the four
+ *  label-ish columns. Structural typing saves us a generic parameter. */
+type Labelable = {
+  slug: string;
+  /** Canonical. NOT NULL post-migration 0008. */
+  label_en: string;
+  label_zh: string | null;
+  label_ms: string | null;
+};
 
-/** Return the best label for a given locale, falling back to label_zh
- *  when the locale column is null. `label_zh` is NOT NULL in the DB, so
- *  this never returns undefined. */
+/** Return the best label for a given locale, with a defensive fallback
+ *  chain: requested locale → label_en (always present) → slug.
+ *
+ *  The slug fallback is belt-and-suspenders: label_en is NOT NULL in
+ *  the DB so we should never hit it, but if a migration lands out of
+ *  order or a row was created via raw SQL without label_en, we'd
+ *  rather render the slug than crash. */
 export function labelFor(row: Labelable, locale: Locale): string {
-  if (locale === "en") return row.label_en ?? row.label_zh;
-  if (locale === "ms") return row.label_ms ?? row.label_zh;
-  return row.label_zh;
+  if (locale === "zh") return row.label_zh ?? row.label_en ?? row.slug;
+  if (locale === "ms") return row.label_ms ?? row.label_en ?? row.slug;
+  return row.label_en ?? row.slug;
 }
 
 /** Quick lookup helpers — map slug → label / hex. */
 export function labelMap(
-  rows: (Labelable & { slug: string })[],
+  rows: Labelable[],
   locale: Locale,
 ): Record<string, string> {
   const out: Record<string, string> = {};

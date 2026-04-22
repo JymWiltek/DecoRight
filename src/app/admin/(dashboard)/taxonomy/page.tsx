@@ -18,14 +18,14 @@ type SearchParams = {
 
 type PageProps = { searchParams: Promise<SearchParams> };
 
-/** Count of rows missing at least one of label_en / label_ms, across every
+/** Count of rows missing at least one of label_zh / label_ms, across every
  *  taxonomy kind. Drives the "Auto-translate (N)" button label. */
 function countMissing(
-  rows: { label_en: string | null; label_ms: string | null }[],
+  rows: { label_zh: string | null; label_ms: string | null }[],
 ): number {
   let n = 0;
   for (const r of rows) {
-    if (r.label_en == null || r.label_ms == null) n += 1;
+    if (r.label_zh == null || r.label_ms == null) n += 1;
   }
   return n;
 }
@@ -51,8 +51,9 @@ export default async function TaxonomyPage({ searchParams }: PageProps) {
             Anything added shows up in the product form immediately.
           </p>
           <p className="mt-1 text-xs text-neutral-500">
-            Chinese is the source of truth. English + Malay labels are
-            filled in by OpenAI GPT-4o-mini via the button on the right.
+            English is the source of truth. Chinese + Malay are
+            translations, filled by OpenAI GPT-4o-mini via the button
+            on the right.
           </p>
         </div>
         <AutoTranslateButton missingCount={missingCount} />
@@ -66,7 +67,7 @@ export default async function TaxonomyPage({ searchParams }: PageProps) {
       {sp.translated != null && (
         <div className="rounded-md bg-sky-50 px-4 py-2 text-sm text-sky-700">
           {sp.translated === "0"
-            ? "Nothing to translate — all labels already have English + Malay."
+            ? "Nothing to translate — every row already has Chinese + Malay."
             : `Translated ${sp.translated} row(s). Public catalog refreshed.`}
         </div>
       )}
@@ -82,8 +83,8 @@ export default async function TaxonomyPage({ searchParams }: PageProps) {
         hint="A product is one kind of thing · single-select"
         rows={tx.itemTypes.map((r) => ({
           slug: r.slug,
-          label: r.label_zh,
-          label_en: r.label_en,
+          label: r.label_en,
+          label_zh: r.label_zh,
           label_ms: r.label_ms,
         }))}
       />
@@ -93,8 +94,8 @@ export default async function TaxonomyPage({ searchParams }: PageProps) {
         hint="A product may belong to multiple rooms"
         rows={tx.rooms.map((r) => ({
           slug: r.slug,
-          label: r.label_zh,
-          label_en: r.label_en,
+          label: r.label_en,
+          label_zh: r.label_zh,
           label_ms: r.label_ms,
         }))}
       />
@@ -104,8 +105,8 @@ export default async function TaxonomyPage({ searchParams }: PageProps) {
         hint="A product may have multiple styles"
         rows={tx.styles.map((r) => ({
           slug: r.slug,
-          label: r.label_zh,
-          label_en: r.label_en,
+          label: r.label_en,
+          label_zh: r.label_zh,
           label_ms: r.label_ms,
         }))}
       />
@@ -115,8 +116,8 @@ export default async function TaxonomyPage({ searchParams }: PageProps) {
         hint="Multi-select"
         rows={tx.materials.map((r) => ({
           slug: r.slug,
-          label: r.label_zh,
-          label_en: r.label_en,
+          label: r.label_en,
+          label_zh: r.label_zh,
           label_ms: r.label_ms,
         }))}
       />
@@ -126,8 +127,8 @@ export default async function TaxonomyPage({ searchParams }: PageProps) {
         hint="Multi-select · with hex value"
         rows={tx.colors.map((r) => ({
           slug: r.slug,
-          label: r.label_zh,
-          label_en: r.label_en,
+          label: r.label_en,
+          label_zh: r.label_zh,
           label_ms: r.label_ms,
           hex: r.hex,
         }))}
@@ -164,7 +165,7 @@ function errorMessage(
 type Row = {
   slug: string;
   label: string;
-  label_en: string | null;
+  label_zh: string | null;
   label_ms: string | null;
   hex?: string;
 };
@@ -200,7 +201,7 @@ function Block({
             kind={kind}
             slug={r.slug}
             label={r.label}
-            labelEn={r.label_en}
+            labelZh={r.label_zh}
             labelMs={r.label_ms}
             hex={r.hex}
           />
@@ -213,11 +214,11 @@ function Block({
       >
         <input type="hidden" name="kind" value={kind} />
         <label className="flex flex-col gap-1">
-          <span className="text-xs text-neutral-600">Label (zh) *</span>
+          <span className="text-xs text-neutral-600">Label (en) *</span>
           <input
-            name="label_zh"
+            name="label_en"
             required
-            placeholder="e.g. 电脑桌"
+            placeholder="e.g. Gaming Desk"
             className="rounded-md border border-neutral-300 px-3 py-2 text-sm focus:border-black focus:outline-none"
           />
         </label>
