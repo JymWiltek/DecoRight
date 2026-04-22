@@ -10,7 +10,7 @@ type Props = {
 };
 
 /**
- * Kicks off a Claude Sonnet 4.5 batch translation run for every taxonomy
+ * Kicks off an OpenAI GPT-4o-mini batch translation run for every taxonomy
  * row where label_en or label_ms is null. The server action redirects
  * back to /admin/taxonomy with `?translated=N`, so the page re-renders
  * itself — we just show a pending spinner while we wait.

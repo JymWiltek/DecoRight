@@ -4,7 +4,9 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createServiceRoleClient } from "@/lib/supabase/service";
 import { invalidateTaxonomyCache } from "@/lib/taxonomy";
-import { getAnthropic, CLAUDE_MODEL } from "@/lib/ai/anthropic";
+import { getOpenAI, OPENAI_MODEL } from "@/lib/ai/openai";
+// Fallback (Anthropic) preserved in src/lib/ai/anthropic.ts — see that
+// file's header for the one-commit restore procedure.
 
 type TaxonomyKind = "item_types" | "rooms" | "styles" | "materials" | "colors";
 
@@ -153,7 +155,7 @@ export async function deleteTaxonomyItem(fd: FormData): Promise<void> {
   redirect(`/admin/taxonomy?deleted=${kind}`);
 }
 
-// ─── translate missing labels (Claude Sonnet 4.5) ──────────────────
+// ─── translate missing labels (OpenAI GPT-4o-mini) ─────────────────
 
 type TranslateJob = {
   kind: TaxonomyKind;
@@ -169,9 +171,9 @@ type TranslatedLabel = {
   label_ms: string;
 };
 
-/** How many rows to send per Claude call. Kept small so a malformed
+/** How many rows to send per model call. Kept small so a malformed
  *  response only wastes one batch, and so one call fits comfortably
- *  inside Claude's output-token budget. ~30 is plenty for our 6
+ *  inside GPT-4o-mini's output-token budget. ~30 is plenty for our 6
  *  taxonomy tables combined. */
 const BATCH_SIZE = 30;
 
@@ -187,20 +189,25 @@ function isTranslatedLabelArray(v: unknown): v is TranslatedLabel[] {
   );
 }
 
-/** Call Claude once to translate a batch of rows. Returns the parsed
- *  array on success, throws on network / JSON / shape errors. */
+/** Call OpenAI once to translate a batch of rows. Returns the parsed
+ *  array on success, throws on network / JSON / shape errors.
+ *
+ *  We use Chat Completions with `response_format: { type: "json_object" }`
+ *  (JSON mode) — the model is guaranteed to return parseable JSON, and
+ *  we wrap the array in `{ translations: [...] }` because JSON mode
+ *  requires an object at the top level. */
 async function translateBatch(
   jobs: TranslateJob[],
 ): Promise<TranslatedLabel[]> {
-  const anthropic = getAnthropic();
+  const openai = getOpenAI();
 
   const systemPrompt = [
     "You translate furniture e-commerce taxonomy labels from Simplified Chinese",
     "into English and Bahasa Melayu for a Malaysian audience (decoright.my).",
     "",
     "RULES:",
-    '- Respond with ONLY a JSON array. No prose, no markdown fences, no preamble.',
-    '- Each element: { "slug": string, "label_en": string, "label_ms": string }',
+    '- Respond with a JSON object of shape { "translations": [ ... ] }.',
+    '- Each translations element: { "slug": string, "label_en": string, "label_ms": string }',
     "- Preserve every input slug exactly — same count, same order.",
     "- English: Title Case, common retail terminology",
     '  (e.g. 茶几 → "Coffee Table", not "Tea Table"; 电视柜 → "TV Cabinet").',
@@ -217,49 +224,50 @@ async function translateBatch(
     kind: j.kind,
   }));
 
-  const resp = await anthropic.messages.create({
-    model: CLAUDE_MODEL,
-    max_tokens: 2048,
-    system: systemPrompt,
+  const resp = await openai.chat.completions.create({
+    model: OPENAI_MODEL,
+    // JSON mode: model guaranteed to return syntactically valid JSON.
+    // Shape validation still happens below — the guarantee is only
+    // "parseable", not "matches our schema".
+    response_format: { type: "json_object" },
     messages: [
+      { role: "system", content: systemPrompt },
       {
         role: "user",
-        content: `Translate these ${jobs.length} labels:\n${JSON.stringify(userPayload, null, 2)}`,
+        content: `Translate these ${jobs.length} labels and return them under "translations":\n${JSON.stringify(userPayload, null, 2)}`,
       },
     ],
   });
 
-  // Claude's Messages API returns content as a list of blocks. For our
-  // prompt Claude should emit a single text block whose content is the
-  // raw JSON array — we concatenate any text blocks just in case.
-  const text = resp.content
-    .map((b) => (b.type === "text" ? b.text : ""))
-    .join("")
-    .trim();
-
-  // Strip accidental ```json fences if the model ignores the "no
-  // markdown" instruction (rare but cheap to tolerate).
-  const stripped = text
-    .replace(/^```(?:json)?\s*/i, "")
-    .replace(/```\s*$/i, "")
-    .trim();
+  const text = resp.choices[0]?.message?.content?.trim() ?? "";
+  if (!text) {
+    throw new Error("OpenAI returned an empty response");
+  }
 
   let parsed: unknown;
   try {
-    parsed = JSON.parse(stripped);
+    parsed = JSON.parse(text);
   } catch {
-    throw new Error(`Claude returned non-JSON: ${stripped.slice(0, 200)}`);
+    // JSON mode should make this unreachable, but cheap to guard.
+    throw new Error(`OpenAI returned non-JSON: ${text.slice(0, 200)}`);
   }
-  if (!isTranslatedLabelArray(parsed)) {
-    throw new Error(`Claude returned wrong shape: ${stripped.slice(0, 200)}`);
+
+  const inner =
+    parsed && typeof parsed === "object" && "translations" in parsed
+      ? (parsed as { translations: unknown }).translations
+      : parsed;
+
+  if (!isTranslatedLabelArray(inner)) {
+    throw new Error(`OpenAI returned wrong shape: ${text.slice(0, 200)}`);
   }
-  return parsed;
+  return inner;
 }
 
 /**
- * Find every taxonomy row with label_en OR label_ms null, ask Claude
- * to translate them in batches, write the results back. Returns via
- * redirect query params so the admin page can show a toast.
+ * Find every taxonomy row with label_en OR label_ms null, ask the
+ * model (OpenAI GPT-4o-mini) to translate them in batches, write the
+ * results back. Returns via redirect query params so the admin page
+ * can show a toast.
  *
  * Only fills columns that are NULL — never overwrites an existing
  * translation. Admins can clear a cell in the SQL editor and re-run
@@ -373,7 +381,7 @@ export async function translateMissingTaxonomy(): Promise<void> {
       // never clobber an existing translation.
       for (const job of batch) {
         const t = bySlug.get(job.slug);
-        if (!t) continue; // Claude dropped a row, skip silently — the
+        if (!t) continue; // Model dropped a row, skip silently — the
         // next run will pick it up because it's still null.
 
         const patch: { label_en?: string; label_ms?: string } = {};

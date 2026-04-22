@@ -136,7 +136,7 @@ export type ProductImageUpdate = Partial<
 export type TaxonomyRow = {
   slug: string;
   label_zh: string;
-  /** Populated by the Auto-translate action (Claude Sonnet 4.5) or
+  /** Populated by the Auto-translate action (OpenAI GPT-4o-mini) or
    *  manually in the SQL editor. Null until first translation run. */
   label_en: string | null;
   label_ms: string | null;

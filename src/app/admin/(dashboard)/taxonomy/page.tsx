@@ -52,7 +52,7 @@ export default async function TaxonomyPage({ searchParams }: PageProps) {
           </p>
           <p className="mt-1 text-xs text-neutral-500">
             Chinese is the source of truth. English + Malay labels are
-            filled in by Claude Sonnet 4.5 via the button on the right.
+            filled in by OpenAI GPT-4o-mini via the button on the right.
           </p>
         </div>
         <AutoTranslateButton missingCount={missingCount} />
