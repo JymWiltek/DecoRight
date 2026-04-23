@@ -37,7 +37,6 @@ export default function SelectAllCheckbox() {
       'input[type="checkbox"][name="ids"]',
     );
     for (const b of boxes) b.checked = e.target.checked;
-    // Manually fire change so BulkBar's listener recounts.
     formEl.dispatchEvent(new Event("change", { bubbles: true }));
   }
 

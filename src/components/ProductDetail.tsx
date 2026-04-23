@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useTranslations } from "next-intl";
-import ModelViewer from "./ModelViewer";
+import ProductGallery from "./ProductGallery";
 import ColorSwitcher, { type ColorOption } from "./ColorSwitcher";
 import { formatMYR } from "@/lib/format";
 import type { ProductRow } from "@/lib/supabase/types";
@@ -18,6 +18,9 @@ type Props = {
    *  "Available in: …" line. Empty array = no regions = nationally
    *  available / unspecified, line is hidden. */
   regionLabels: string[];
+  /** Signed URLs for the non-primary raw photos — slot 3+ in the
+   *  gallery (scene shots after the styled thumbnail + 3D viewer). */
+  originalRawUrls: string[];
 };
 
 export default function ProductDetail({
@@ -28,47 +31,23 @@ export default function ProductDetail({
   materialLabels,
   colors,
   regionLabels,
+  originalRawUrls,
 }: Props) {
   const t = useTranslations("product");
   const [variantIndex, setVariantIndex] = useState(0);
   const active = colors[variantIndex];
   const overrideColorHex = active?.hex ?? null;
 
-  const hasAnyVisual = Boolean(product.glb_url || product.thumbnail_url);
-
   return (
     <div className="grid gap-8 md:grid-cols-[1.2fr_1fr]">
-      <div className="relative aspect-square w-full overflow-hidden rounded-lg bg-neutral-100">
-        {product.glb_url ? (
-          <ModelViewer
-            src={product.glb_url}
-            alt={product.name}
-            poster={product.thumbnail_url}
-            overrideColorHex={overrideColorHex}
-          />
-        ) : product.thumbnail_url ? (
-          // P0-1: when there's no GLB but a thumbnail exists (newly-
-          // created product after rembg), show the static photo so the
-          // page isn't visibly empty. The 3D model arrives later via
-          // Meshy and replaces this on next render.
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={product.thumbnail_url}
-            alt={product.name}
-            className="h-full w-full object-cover"
-          />
-        ) : (
-          <div className="flex h-full w-full flex-col items-center justify-center gap-2 text-center text-neutral-400">
-            <span className="text-3xl">📷</span>
-            <span className="px-6 text-sm">
-              {t("noImages")}
-            </span>
-            <span className="text-xs text-neutral-300">{t("noModel")}</span>
-          </div>
-        )}
-        {/* (hasAnyVisual unused but kept for future no-visual diagnostics) */}
-        {!hasAnyVisual && null}
-      </div>
+      <ProductGallery
+        productName={product.name}
+        primaryCutoutUrl={product.thumbnail_url}
+        glbUrl={product.glb_url}
+        originalRawUrls={originalRawUrls}
+        overrideColorHex={overrideColorHex}
+        emptyLabel={t("noImages")}
+      />
 
       <div className="flex flex-col gap-5">
         <div>

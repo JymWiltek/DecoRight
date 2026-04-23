@@ -45,19 +45,29 @@ export default function SubtypePicker({
 
   // Watch the sibling item_type input. We poll because PillGrid is a
   // separate component that renders <input type="hidden" name="item_type">
-  // inside the same logical form — and there's no DOM event when the
-  // user clicks a pill (PillGrid doesn't emit a custom event). 100ms
-  // is imperceptible to humans and still cheap.
+  // associated with the same logical form — and there's no DOM event
+  // when the user clicks a pill (PillGrid doesn't emit a custom event).
+  // 100ms is imperceptible to humans and still cheap.
+  //
+  // IMPORTANT: the hidden inputs live OUTSIDE the <form> tag and
+  // associate via the HTML5 `form="..."` attribute, so a descendant
+  // query (`formEl.querySelectorAll(...)`) returns nothing. Use
+  // `formEl.elements`, which is the form's controls collection and
+  // DOES include form-associated external inputs. Learned the hard
+  // way when switching ProductForm to the "empty <form> + external
+  // inputs" layout so the image section could live between Basics and
+  // Item type.
   useEffect(() => {
     const formEl = document.getElementById(form) as HTMLFormElement | null;
     if (!formEl) return;
     const tick = () => {
-      const inputs = formEl.querySelectorAll<HTMLInputElement>(
-        'input[name="item_type"]',
+      const matches = [...formEl.elements].filter(
+        (el): el is HTMLInputElement =>
+          el instanceof HTMLInputElement && el.name === "item_type",
       );
       // PillGrid emits 0 or 1 hidden input (single-select). Read its
       // value — null when nothing picked.
-      const next = inputs.length > 0 ? inputs[0].value : null;
+      const next = matches.length > 0 ? matches[0].value : null;
       setItemType((prev) => (prev === next ? prev : next));
     };
     tick();

@@ -181,9 +181,10 @@ export default async function AdminProductsPage({
       </div>
 
       {/* The bulk form wraps the table so per-row checkboxes belong
-          to it. Action is dispatched at button-click time via
-          formAction= override, so the form's own action= is unused
-          (set to a no-op redirect-to-self via empty action). */}
+          to it. BulkBar's submit buttons use formAction= to pick the
+          right server action. StatusCell / PriceCell / ItemTypeCell
+          DO NOT render their own <form> — they call the server action
+          directly via onClick to avoid invalid nested <form> HTML. */}
       <form id="bulk-form" action="">
         <div className="overflow-hidden rounded-lg border border-neutral-200 bg-white">
           <table className="w-full text-left text-sm">

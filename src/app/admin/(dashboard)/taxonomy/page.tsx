@@ -348,7 +348,7 @@ function RegionsBlock({ regions }: { regions: RegionRow[] }) {
     <section className="rounded-lg border border-neutral-200 bg-white p-5">
       <div className="mb-3 flex items-baseline justify-between">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-neutral-500">
-          Regions
+          Store locations · 供应商门店所在地
         </h2>
         <span className="text-xs text-neutral-400">
           Read-only · seeded by migration 0011 (13 states + 3 FT)

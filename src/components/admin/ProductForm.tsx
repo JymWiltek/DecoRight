@@ -206,8 +206,8 @@ export default function ProductForm({
       </Section>
 
       <Section
-        title="Available in (regions)"
-        hint="Where Wiltek stocks this. Empty = nationally available."
+        title="Store locations · 供应商门店所在地"
+        hint="Which Wiltek showrooms physically stock this. Display-only — does NOT restrict who can buy it."
       >
         <RegionsPicker
           form={FORM_ID}
@@ -322,35 +322,21 @@ export default function ProductForm({
         </Grid>
       </Section>
 
-      <Section title="3D model & thumbnail">
-        <Grid>
-          <Field label=".glb model (60 MB max)">
-            <FileDropzone
-              form={FORM_ID}
-              name="glb_file"
-              accept=".glb,model/gltf-binary"
-              maxFileMb={60}
-              currentUrl={p?.glb_url ?? null}
-              currentMeta={p?.glb_size_kb != null ? `${p.glb_size_kb} KB` : null}
-              hint="Drop .glb here, or click to pick"
-            />
-          </Field>
-          <Field label="Thumbnail (4 MB max)">
-            <FileDropzone
-              form={FORM_ID}
-              name="thumbnail_file"
-              accept="image/webp,image/png,image/jpeg"
-              maxFileMb={4}
-              currentUrl={p?.thumbnail_url ?? null}
-              currentIsImage
-              hint="Drop image here, or click to pick"
-            />
-            <p className="mt-1 text-[11px] text-neutral-500">
-              Optional. If you upload an image above and approve it as
-              primary, the thumbnail is set automatically.
-            </p>
-          </Field>
-        </Grid>
+      <Section
+        title="3D model"
+        hint="Optional. The product thumbnail is generated automatically from the primary image (cutout on a styled grey background) — no separate thumbnail upload."
+      >
+        <Field label=".glb model (60 MB max)">
+          <FileDropzone
+            form={FORM_ID}
+            name="glb_file"
+            accept=".glb,model/gltf-binary"
+            maxFileMb={60}
+            currentUrl={p?.glb_url ?? null}
+            currentMeta={p?.glb_size_kb != null ? `${p.glb_size_kb} KB` : null}
+            hint="Drop .glb here, or click to pick"
+          />
+        </Field>
       </Section>
 
       <Section title="Purchase link & source">

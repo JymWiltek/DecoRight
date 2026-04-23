@@ -5,6 +5,8 @@ import SiteHeader from "@/components/SiteHeader";
 import ProductDetail from "@/components/ProductDetail";
 import Breadcrumb, { type BreadcrumbItem } from "@/components/Breadcrumb";
 import { getPublishedProductById } from "@/lib/products";
+import { createServiceRoleClient } from "@/lib/supabase/service";
+import { getSignedRawUrl } from "@/lib/storage";
 import {
   deriveRoomSlug,
   labelFor,
@@ -32,13 +34,43 @@ export async function generateMetadata({ params }: PageProps) {
 
 export default async function ProductPage({ params }: PageProps) {
   const { id } = await params;
-  const [product, taxonomy, tSite, locale] = await Promise.all([
+  // Fetch product + taxonomy + i18n + the gallery's scene-photo
+  // companions in parallel. The non-primary cutout_approved photos'
+  // raw_image_url paths are private-bucket; we sign them here so the
+  // gallery can render the originals as scene shots (SPEC 2 slide 3+).
+  const supabase = createServiceRoleClient();
+  const [product, taxonomy, tSite, locale, galleryResp] = await Promise.all([
     getPublishedProductById(id),
     loadTaxonomy(),
     getTranslations("site"),
     getLocale() as Promise<Locale>,
+    supabase
+      .from("product_images")
+      .select("id,is_primary,raw_image_url,state")
+      .eq("product_id", id)
+      .eq("state", "cutout_approved")
+      .order("is_primary", { ascending: false })
+      .order("created_at", { ascending: true }),
   ]);
   if (!product) notFound();
+
+  // Original scene photos = every approved image EXCEPT the primary
+  // (the primary's cutout is already shown as slide 1's styled
+  // thumbnail; showing its raw too would be redundant).
+  const originalCandidates = (galleryResp.data ?? []).filter(
+    (img) => !img.is_primary && img.raw_image_url,
+  );
+  const originalRawUrls = (
+    await Promise.all(
+      originalCandidates.map(async (img) => {
+        try {
+          return await getSignedRawUrl(img.raw_image_url!);
+        } catch {
+          return null;
+        }
+      }),
+    )
+  ).filter((u): u is string => u !== null);
 
   const itemTypeLabels = labelMap(taxonomy.itemTypes, locale);
   const roomLabels = labelMap(taxonomy.rooms, locale);
@@ -113,6 +145,7 @@ export default async function ProductPage({ params }: PageProps) {
           materialLabels={materialLabelList}
           colors={colorOptions}
           regionLabels={regionLabelList}
+          originalRawUrls={originalRawUrls}
         />
       </main>
     </>
