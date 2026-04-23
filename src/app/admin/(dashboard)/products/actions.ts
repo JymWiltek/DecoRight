@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { createServiceRoleClient } from "@/lib/supabase/service";
 import { uploadGlb, uploadThumbnail } from "@/lib/storage";
 import { inferProductFields } from "@/lib/ai/infer";
+import { invalidatePublishedCountsCache } from "@/lib/products";
 import {
   PRICE_TIERS,
   PRODUCT_STATUSES,
@@ -147,6 +148,7 @@ export async function createProduct(fd: FormData): Promise<void> {
 
   revalidatePath("/admin");
   revalidatePath("/");
+  invalidatePublishedCountsCache();
   redirect(`/admin/products/${id}/edit?saved=1`);
 }
 
@@ -172,6 +174,7 @@ export async function updateProduct(id: string, fd: FormData): Promise<void> {
   revalidatePath("/admin");
   revalidatePath("/");
   revalidatePath(`/product/${id}`);
+  invalidatePublishedCountsCache();
   redirect(`/admin/products/${id}/edit?saved=1`);
 }
 
@@ -181,6 +184,7 @@ export async function deleteProduct(id: string): Promise<void> {
   if (error) throw error;
   revalidatePath("/admin");
   revalidatePath("/");
+  invalidatePublishedCountsCache();
   redirect("/admin");
 }
 

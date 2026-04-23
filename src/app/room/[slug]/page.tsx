@@ -8,7 +8,12 @@ import { loadTaxonomy, labelFor } from "@/lib/taxonomy";
 import { publishedCountsByItemType } from "@/lib/products";
 import { BRAND } from "@config/brand";
 
-export const dynamic = "force-dynamic";
+// Intentionally NOT `force-dynamic`. `loadTaxonomy` and
+// `publishedCountsByItemType` are tag-cached on cookieless anon
+// clients (5-min revalidate). Next-intl still makes the page
+// dynamic (cookie read for locale), but that emits a bf-cache-
+// eligible cache-control header rather than the `no-store` that
+// `force-dynamic` forces. Net: back-button is instant again.
 
 type PageProps = { params: Promise<{ slug: string }> };
 

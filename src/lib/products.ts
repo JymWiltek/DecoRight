@@ -1,5 +1,7 @@
+import { unstable_cache, updateTag } from "next/cache";
+import { createClient as createAnonSbClient } from "@supabase/supabase-js";
 import { createClient } from "./supabase/server";
-import type { ProductRow } from "./supabase/types";
+import type { Database, ProductRow } from "./supabase/types";
 
 export type ProductFilters = {
   itemTypes?: string[];
@@ -121,23 +123,54 @@ export async function getPublishedProductById(id: string): Promise<ProductRow | 
  * Single query for the whole catalog — cheaper than N queries even
  * at 100+ item_types, and we need all counts at once on the landing
  * and room pages.
+ *
+ * Cached for 5 minutes on a cookieless anon client. The cookie-aware
+ * server client would opt the calling page into dynamic rendering
+ * (any read of `cookies()` does), which disabled bf-cache on `/` and
+ * `/room/*`. Published-product counts are public data — no session
+ * required — so a plain anon client is correct. Tag matches
+ * `loadTaxonomy` so any write that invalidates taxonomy also
+ * invalidates counts (new products publish → item_type counts shift).
  */
+const PRODUCT_COUNTS_TAG = "published-counts";
+
 export async function publishedCountsByItemType(): Promise<
   Record<string, number>
 > {
-  const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("products")
-    .select("item_type")
-    .eq("status", "published");
-  if (error) throw error;
-  const out: Record<string, number> = {};
-  for (const row of data ?? []) {
-    const slug = row.item_type;
-    if (!slug) continue;
-    out[slug] = (out[slug] ?? 0) + 1;
-  }
-  return out;
+  return unstable_cache(
+    async () => {
+      const url = process.env.NEXT_PUBLIC_APP_SUPABASE_URL;
+      const anonKey = process.env.NEXT_PUBLIC_APP_SUPABASE_ANON_KEY;
+      if (!url || !anonKey) {
+        throw new Error(
+          "Missing NEXT_PUBLIC_APP_SUPABASE_URL or NEXT_PUBLIC_APP_SUPABASE_ANON_KEY",
+        );
+      }
+      const supabase = createAnonSbClient<Database>(url, anonKey, {
+        auth: { persistSession: false, autoRefreshToken: false },
+      });
+      const { data, error } = await supabase
+        .from("products")
+        .select("item_type")
+        .eq("status", "published");
+      if (error) throw error;
+      const out: Record<string, number> = {};
+      for (const row of data ?? []) {
+        const slug = row.item_type;
+        if (!slug) continue;
+        out[slug] = (out[slug] ?? 0) + 1;
+      }
+      return out;
+    },
+    ["published-counts-v1"],
+    { tags: [PRODUCT_COUNTS_TAG], revalidate: 300 },
+  )();
+}
+
+/** Invalidate after publish/unpublish/insert so the home + room
+ *  pages reflect the new count on next request. */
+export function invalidatePublishedCountsCache(): void {
+  updateTag(PRODUCT_COUNTS_TAG);
 }
 
 export async function getRelatedProducts(

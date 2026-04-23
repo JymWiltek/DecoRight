@@ -10,7 +10,10 @@ import { listPublishedProducts, type ProductFilters } from "@/lib/products";
 import { loadTaxonomy, labelFor, labelMap, colorHexMap } from "@/lib/taxonomy";
 import { BRAND } from "@config/brand";
 
-export const dynamic = "force-dynamic";
+// `searchParams` + cookie-aware product query already make this page
+// dynamic. Explicit `force-dynamic` only adds `cache-control: no-store`
+// on the response, which disables browser bf-cache. Dropping it lets
+// the back button restore the filtered grid instantly.
 
 type SearchParams = Record<string, string | string[] | undefined>;
 type PageProps = {
@@ -143,10 +146,16 @@ export default async function ItemTypePage({ params, searchParams }: PageProps) 
               </div>
             ) : (
               <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
-                {products.map((p) => (
+                {products.map((p, i) => (
+                  // First 4 cards are above-the-fold on desktop (lg:4-col)
+                  // and partially above the fold on mobile (2-col × ~2 rows).
+                  // Marking them priority lets the preload scanner surface
+                  // the LCP image before JS hydration — fixes the
+                  // lcp-discovery-insight warning on /item/<slug>.
                   <ProductCard
                     key={p.id}
                     product={p}
+                    priority={i < 4}
                     itemTypeLabels={itemTypeLabels}
                     styleLabels={styleLabels}
                     colorHex={colorHex}

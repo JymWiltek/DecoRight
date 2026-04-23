@@ -5,7 +5,13 @@ import CategoryTile from "@/components/CategoryTile";
 import { loadTaxonomy, labelFor } from "@/lib/taxonomy";
 import { publishedCountsByItemType } from "@/lib/products";
 
-export const dynamic = "force-dynamic";
+// Intentionally NOT `force-dynamic`. Both `loadTaxonomy` and
+// `publishedCountsByItemType` are tag-cached (tags: "taxonomy",
+// "published-counts"; revalidate 5 min) on cookieless anon clients,
+// so this page can render statically with per-request ISR. Dropping
+// force-dynamic re-enables browser bf-cache (was disabled by the
+// `cache-control: no-store` force-dynamic emits), which removes
+// ~2s off back-button navigations.
 
 /**
  * Layer 1 of the three-layer catalog: choose a room.

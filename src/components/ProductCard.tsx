@@ -7,6 +7,19 @@ type Props = {
   itemTypeLabels: Record<string, string>;
   styleLabels: Record<string, string>;
   colorHex: Record<string, string>;
+  /**
+   * Above-the-fold cards should render their thumbnail eagerly with
+   * `fetchpriority=high` so the browser can discover and fetch the
+   * LCP candidate before hydration. Pass `true` for the first row of
+   * the grid (typically 4 on desktop, 2 on mobile; passing 4 is a
+   * good compromise — the redundant `high` on the 3rd/4th cards is
+   * harmless on mobile because only 2 are actually above the fold).
+   *
+   * Before this prop existed every card was `loading="lazy"`, which
+   * made the LCP image on `/item/<slug>` invisible to the preload
+   * scanner (Lighthouse lcp-lazy-loaded / lcp-discovery warnings).
+   */
+  priority?: boolean;
 };
 
 export default function ProductCard({
@@ -14,6 +27,7 @@ export default function ProductCard({
   itemTypeLabels,
   styleLabels,
   colorHex,
+  priority = false,
 }: Props) {
   const typeLabel = product.item_type ? itemTypeLabels[product.item_type] : null;
   const styleLabel = product.styles[0] ? styleLabels[product.styles[0]] : null;
@@ -29,7 +43,8 @@ export default function ProductCard({
           <img
             src={product.thumbnail_url}
             alt={product.name}
-            loading="lazy"
+            loading={priority ? "eager" : "lazy"}
+            fetchPriority={priority ? "high" : "auto"}
             className="h-full w-full object-cover transition group-hover:scale-[1.02]"
           />
         ) : (
