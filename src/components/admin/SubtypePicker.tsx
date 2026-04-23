@@ -15,6 +15,9 @@
  * (item_type, subtype_slug) belong together is enforced server-side
  * (parsePayload + DB trigger products_subtype_consistent), so the UI
  * only needs to make the right choice easy — not bulletproof.
+ *
+ * Migration 0013: subtype describes shape/style only (pull-out,
+ * sensor, L-shape). Room is orthogonal now — see RoomsPicker.
  */
 
 import { useEffect, useState } from "react";
@@ -105,12 +108,13 @@ export default function SubtypePicker({
   if (options.length === 0) {
     return (
       <div className="rounded-md border border-dashed border-neutral-300 px-3 py-3 text-xs text-neutral-500">
-        No subtypes for this item type. The room comes from the item
-        type itself. Add subtypes on the{" "}
+        No subtypes defined for this item type — leave empty and move on.
+        Add subtypes on the{" "}
         <a href="/admin/taxonomy" className="text-sky-600 hover:underline">
           Taxonomy
         </a>{" "}
-        page if needed.
+        page if you need shape/style variants (e.g. Faucet →
+        Pull-out / Sensor / Traditional).
       </div>
     );
   }
@@ -134,18 +138,14 @@ export default function SubtypePicker({
                   ? "border-black bg-black text-white"
                   : "border-neutral-300 bg-white text-neutral-700 hover:border-neutral-500"
               }`}
-              title={`Room: ${opt.room_slug}`}
             >
               {opt.label_en}
-              <span className="ml-1.5 text-[10px] opacity-60">
-                → {opt.room_slug}
-              </span>
             </button>
           );
         })}
       </div>
       <p className="text-[11px] text-neutral-500">
-        Room is derived from the picked subtype. Click again to clear.
+        Optional. Describes shape/style only — click again to clear.
       </p>
     </div>
   );

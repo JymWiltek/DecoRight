@@ -1,9 +1,12 @@
 "use client";
 
-import { deleteTaxonomyItem } from "./actions";
+import { useState } from "react";
+import { deleteTaxonomyItem, updateTaxonomyLabels } from "./actions";
+
+type Kind = "item_types" | "rooms" | "styles" | "materials" | "colors";
 
 type Props = {
-  kind: "item_types" | "rooms" | "styles" | "materials" | "colors";
+  kind: Kind;
   slug: string;
   /** Canonical label (label_en) — always present. */
   label: string;
@@ -14,7 +17,7 @@ type Props = {
   hex?: string;
 };
 
-const KIND_LABELS: Record<Props["kind"], string> = {
+const KIND_LABELS: Record<Kind, string> = {
   item_types: "item type",
   rooms: "room",
   styles: "style",
@@ -23,15 +26,25 @@ const KIND_LABELS: Record<Props["kind"], string> = {
 };
 
 /**
- * One taxonomy pill with a delete (×) button plus a compact i18n status
- * line showing the ZH / MS translations (or a dash when null). The
- * canonical English label is the chip's own text; translations sit
- * below it so an admin can spot what's missing at a glance.
+ * One taxonomy pill with three controls:
+ *   - edit (pencil)  → expand into a tri-lingual inline form (F3).
+ *   - delete (×)     → native confirm(), then server-side guard.
+ *   - ZH/MS status line below the label so missing translations
+ *     pop out at a glance (amber when both missing).
  *
- * The × button is destructive and easy to mis-click, so we intercept the
- * form submit on the client and show a native confirm(). The server
- * action ALSO checks product references before actually deleting — two
- * layers of protection.
+ * Why inline edit lives on every chip, not just on rooms:
+ *   The original ask was F3 (rooms can't be edited — Balcony shipped
+ *   with no ZH/MS and there was no admin path to fix it). Making it
+ *   rooms-only would create a weird capability gap — same data shape,
+ *   different UI. Uniform is simpler and cheap: every label-bearing
+ *   row gets the same editor.
+ *
+ * Why a native form and not a Dialog / modal:
+ *   Server actions work best with `<form action={…}>` posts — no
+ *   client state plumbing, no useTransition, no race against
+ *   revalidatePath. The chip just toggles between view mode and a
+ *   3-input form. Save triggers a full server round-trip, the row
+ *   re-renders with the new labels. Cancel just collapses.
  */
 export default function DeleteChip({
   kind,
@@ -41,17 +54,69 @@ export default function DeleteChip({
   labelMs,
   hex,
 }: Props) {
+  const [editing, setEditing] = useState(false);
   const bothMissing = labelZh == null && labelMs == null;
-  const oneMissing = !bothMissing && (labelZh == null || labelMs == null);
+
+  if (editing) {
+    return (
+      <form
+        action={updateTaxonomyLabels}
+        className="inline-flex flex-col gap-1 rounded-md border border-sky-400 bg-sky-50 px-2.5 py-2 text-xs"
+      >
+        <input type="hidden" name="kind" value={kind} />
+        <input type="hidden" name="slug" value={slug} />
+        <label className="flex items-center gap-1">
+          <span className="w-5 text-[10px] text-neutral-500">EN</span>
+          <input
+            name="label_en"
+            defaultValue={label}
+            required
+            className="w-36 rounded border border-neutral-300 bg-white px-1.5 py-0.5 text-xs focus:border-black focus:outline-none"
+          />
+        </label>
+        <label className="flex items-center gap-1">
+          <span className="w-5 text-[10px] text-neutral-500">ZH</span>
+          <input
+            name="label_zh"
+            defaultValue={labelZh ?? ""}
+            placeholder="中文"
+            className="w-36 rounded border border-neutral-300 bg-white px-1.5 py-0.5 text-xs focus:border-black focus:outline-none"
+          />
+        </label>
+        <label className="flex items-center gap-1">
+          <span className="w-5 text-[10px] text-neutral-500">MS</span>
+          <input
+            name="label_ms"
+            defaultValue={labelMs ?? ""}
+            placeholder="Bahasa Melayu"
+            className="w-36 rounded border border-neutral-300 bg-white px-1.5 py-0.5 text-xs focus:border-black focus:outline-none"
+          />
+        </label>
+        <div className="mt-1 flex items-center justify-end gap-1">
+          <button
+            type="button"
+            onClick={() => setEditing(false)}
+            className="rounded border border-neutral-300 bg-white px-2 py-0.5 text-[11px] text-neutral-700 hover:border-neutral-500"
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            className="rounded bg-black px-2 py-0.5 text-[11px] font-medium text-white hover:bg-neutral-800"
+          >
+            Save
+          </button>
+        </div>
+      </form>
+    );
+  }
 
   return (
     <div
       className={`inline-flex flex-col rounded-md border px-2.5 py-1.5 text-xs ${
         bothMissing
           ? "border-amber-300 bg-amber-50"
-          : oneMissing
-            ? "border-neutral-300 bg-white"
-            : "border-neutral-300 bg-white"
+          : "border-neutral-300 bg-white"
       }`}
     >
       <form
@@ -77,8 +142,17 @@ export default function DeleteChip({
         <span className="font-medium">{label}</span>
         <span className="text-neutral-400">· {slug}</span>
         <button
+          type="button"
+          onClick={() => setEditing(true)}
+          className="ml-1 text-neutral-400 hover:text-sky-600"
+          title="Edit labels"
+          aria-label={`Edit ${label}`}
+        >
+          ✎
+        </button>
+        <button
           type="submit"
-          className="ml-1 text-neutral-400 hover:text-rose-600"
+          className="text-neutral-400 hover:text-rose-600"
           title="Delete"
           aria-label={`Delete ${label}`}
         >

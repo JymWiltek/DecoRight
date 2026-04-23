@@ -7,20 +7,20 @@ export type Dimensions = {
 };
 
 // ─── products ───────────────────────────────────────────────
-// Migration 0003: three-layer taxonomy.
-//   - rooms (L1)          → scenes / locations
-//   - item_types (L2)     → what the thing IS; each row has a
-//                           room_slug that anchors it to exactly
-//                           one room, plus an optional
-//                           attribute_schema describing extra
-//                           fields operators will fill in
-//   - item_subtypes (L3)  → optional variant of an item_type
-//                           (e.g. tv_cabinet → floating / standing).
+// Migration 0013: three-DIMENSION taxonomy.
+//   - rooms          → scenes / locations
+//   - item_types     → what the thing IS (shape-agnostic)
+//   - item_subtypes  → optional shape/style variant of an item_type
+//                      (Faucet → pull-out/sensor/traditional/…)
 //
-// The old products.rooms[] column is gone. A product's room is
-// inferred from item_types.room_slug, so we never store rooms on
-// the product row directly. Filters join via item_type when the
-// user picks a room.
+// Room, Item Type, Subtype are orthogonal — a faucet can live in
+// Kitchen, Bathroom, AND Balcony simultaneously, and its subtype
+// (pull-out, sensor, …) describes shape not scope. The old
+// pipeline (item_type.room_slug → derive room) is gone; each
+// product picks its own rooms via products.room_slugs[], and
+// item_types ↔ rooms is a separate M2M (item_type_rooms) that
+// only hints "faucets are usually installed in these rooms" so
+// the admin form can recommend.
 
 export type ProductRow = {
   id: string;
@@ -28,6 +28,10 @@ export type ProductRow = {
   brand: string | null;
   item_type: string | null;
   subtype_slug: string | null;
+  /** Migration 0013: multi-room. A product can belong to any
+   *  number of rooms; published products must have at least one
+   *  (enforced by trigger products_rooms_required). */
+  room_slugs: string[];
   styles: string[];
   colors: string[];
   materials: string[];
@@ -62,6 +66,7 @@ export type ProductInsert = {
   brand?: string | null;
   item_type?: string | null;
   subtype_slug?: string | null;
+  room_slugs?: string[];
   styles?: string[];
   colors?: string[];
   materials?: string[];
@@ -173,19 +178,30 @@ export type TaxonomyRow = {
 export type ColorRow = TaxonomyRow & { hex: string };
 
 export type ItemTypeRow = TaxonomyRow & {
-  room_slug: string | null;
   attribute_schema: AttributeSchemaField[];
+};
+
+/** Migration 0013 — M2M between item_types and rooms. A single
+ *  item_type can be associated with multiple rooms (faucet →
+ *  kitchen / bathroom / balcony). Used by the admin form to
+ *  recommend rooms when the operator picks an item type, and by
+ *  /room/[slug] to surface "which item types are commonly found
+ *  here". NOT a constraint on products — a product picks rooms
+ *  directly via products.room_slugs[]. */
+export type ItemTypeRoomRow = {
+  item_type_slug: string;
+  room_slug: string;
+  sort_order: number;
+  created_at: string;
 };
 
 export type ItemSubtypeRow = {
   slug: string;
   item_type_slug: string;
-  /** Migration 0011: subtype-owned room. NOT NULL — every subtype
-   *  must anchor itself to exactly one room so the storefront's
-   *  three-layer funnel can resolve "/room/X → which products" with
-   *  one query regardless of which level of the taxonomy carries
-   *  the room. */
-  room_slug: string;
+  /** Shape/style variant of an item_type — e.g. Faucet →
+   *  pull-out / sensor / traditional / wall-mounted. Migration
+   *  0013 removed the old room_slug field: subtypes describe
+   *  shape only; room is orthogonal and lives on the product. */
   label_en: string;
   label_zh: string | null;
   label_ms: string | null;
@@ -238,14 +254,18 @@ export type TaxonomyInsert = {
 export type ColorInsert = TaxonomyInsert & { hex: string };
 
 export type ItemTypeInsert = TaxonomyInsert & {
-  room_slug?: string | null;
   attribute_schema?: AttributeSchemaField[];
+};
+
+export type ItemTypeRoomInsert = {
+  item_type_slug: string;
+  room_slug: string;
+  sort_order?: number;
 };
 
 export type ItemSubtypeInsert = {
   slug: string;
   item_type_slug: string;
-  room_slug: string;
   label_en: string;
   label_zh?: string | null;
   label_ms?: string | null;
@@ -320,6 +340,12 @@ export type Database = {
         Row: ItemSubtypeRow;
         Insert: ItemSubtypeInsert;
         Update: Partial<ItemSubtypeRow>;
+        Relationships: [];
+      };
+      item_type_rooms: {
+        Row: ItemTypeRoomRow;
+        Insert: ItemTypeRoomInsert;
+        Update: Partial<ItemTypeRoomRow>;
         Relationships: [];
       };
       rooms: {

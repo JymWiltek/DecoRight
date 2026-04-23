@@ -7,12 +7,7 @@ import Breadcrumb, { type BreadcrumbItem } from "@/components/Breadcrumb";
 import { getPublishedProductById } from "@/lib/products";
 import { createServiceRoleClient } from "@/lib/supabase/service";
 import { getSignedRawUrl } from "@/lib/storage";
-import {
-  deriveRoomSlug,
-  labelFor,
-  labelMap,
-  loadTaxonomy,
-} from "@/lib/taxonomy";
+import { labelFor, labelMap, loadTaxonomy } from "@/lib/taxonomy";
 import { BRAND } from "@config/brand";
 
 export const dynamic = "force-dynamic";
@@ -82,19 +77,14 @@ export default async function ProductPage({ params }: PageProps) {
   const itemTypeLabel = product.item_type
     ? (itemTypeLabels[product.item_type] ?? product.item_type)
     : null;
-  // Migration 0011: subtype-aware. If a subtype was picked AND it
-  // owns its own room_slug, that wins; otherwise fall back to
-  // item_type.room_slug. Mirrors public.product_room_slug() in DB.
-  const derivedRoomSlug = deriveRoomSlug(
-    { item_type: product.item_type, subtype_slug: product.subtype_slug },
-    taxonomy,
-  );
+  // Migration 0013: rooms are a product column (products.room_slugs[])
+  // — the product is the source of truth, no derivation. The product
+  // detail page shows every room it belongs to.
+  const productRoomSlugs = product.room_slugs ?? [];
   const itemTypeRow = product.item_type
     ? taxonomy.itemTypes.find((t) => t.slug === product.item_type)
     : null;
-  const roomLabelList = derivedRoomSlug
-    ? [roomLabels[derivedRoomSlug] ?? derivedRoomSlug]
-    : [];
+  const roomLabelList = productRoomSlugs.map((s) => roomLabels[s] ?? s);
   const styleLabelList = product.styles.map((s) => styleLabels[s] ?? s);
   const materialLabelList = product.materials.map((s) => materialLabels[s] ?? s);
   const regionLabelList = product.store_locations.map(
@@ -114,20 +104,26 @@ export default async function ProductPage({ params }: PageProps) {
   // still climb back up the three-layer funnel. Skip any segment
   // whose data is missing — e.g. legacy products without an
   // item_type get "Home › Product" with no mid-layer rubble.
-  // Room slug here uses the derived (subtype-aware) value so
-  // floating-TV-cabinets correctly link to /room/living_room even
-  // though the item_type itself might be in a different room.
+  //
+  // A product can belong to multiple rooms (Migration 0013). The
+  // breadcrumb picks the FIRST room_slug for the mid-crumb — it's
+  // a navigation affordance, not a classification, and we carry
+  // `?room=<slug>` through to /item/* so that page knows which
+  // room to scope and crumb.
+  const primaryRoomSlug = productRoomSlugs[0] ?? null;
   const breadcrumb: BreadcrumbItem[] = [{ label: tSite("home"), href: "/" }];
-  if (derivedRoomSlug) {
+  if (primaryRoomSlug) {
     breadcrumb.push({
-      label: roomLabels[derivedRoomSlug] ?? derivedRoomSlug,
-      href: `/room/${derivedRoomSlug}`,
+      label: roomLabels[primaryRoomSlug] ?? primaryRoomSlug,
+      href: `/room/${primaryRoomSlug}`,
     });
   }
   if (itemTypeRow && itemTypeLabel) {
     breadcrumb.push({
       label: itemTypeLabel,
-      href: `/item/${itemTypeRow.slug}`,
+      href: primaryRoomSlug
+        ? `/item/${itemTypeRow.slug}?room=${primaryRoomSlug}`
+        : `/item/${itemTypeRow.slug}`,
     });
   }
   breadcrumb.push({ label: product.name });

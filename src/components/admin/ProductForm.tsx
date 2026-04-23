@@ -6,9 +6,9 @@ import {
 } from "@/lib/constants/enum-labels";
 import type { ProductRow } from "@/lib/supabase/types";
 import type { Taxonomy } from "@/lib/taxonomy";
-import { deriveRoomSlug } from "@/lib/taxonomy";
 import PillGrid from "./PillGrid";
 import SubtypePicker from "./SubtypePicker";
+import RoomsPicker from "./RoomsPicker";
 import RegionsPicker from "./RegionsPicker";
 import FileDropzone from "./FileDropzone";
 import AIInferButton from "./AIInferButton";
@@ -47,12 +47,12 @@ export default function ProductForm({
 }: Props) {
   const p = product;
   const isEdit = Boolean(p);
-  const derivedRoom = p
-    ? deriveRoomSlug(
-        { item_type: p.item_type, subtype_slug: p.subtype_slug },
-        taxonomy,
-      )
-    : null;
+  // Item Type pills are alpha-sorted by label_en per F4 — the
+  // existing sort_order was an artificial curation that made the
+  // form hard to scan once we passed 30+ types.
+  const itemTypeOptions = [...taxonomy.itemTypes]
+    .sort((a, b) => a.label_en.localeCompare(b.label_en))
+    .map((r) => ({ slug: r.slug, label: r.label_en }));
 
   return (
     <div className="mx-auto max-w-5xl space-y-8 px-6 py-8">
@@ -173,23 +173,37 @@ export default function ProductForm({
       {imagesSection}
 
       <Section
+        title="3D model"
+        hint="Optional. .glb file (60 MB max). Sits right below the image uploads for quick batch upload."
+      >
+        <Field label=".glb model">
+          <FileDropzone
+            form={FORM_ID}
+            name="glb_file"
+            accept=".glb,model/gltf-binary"
+            maxFileMb={60}
+            currentUrl={p?.glb_url ?? null}
+            currentMeta={p?.glb_size_kb != null ? `${p.glb_size_kb} KB` : null}
+            hint="Drop .glb here, or click to pick"
+          />
+        </Field>
+      </Section>
+
+      <Section
         title="Item type *"
-        hint="Pick one — a product is one kind of thing. Room is derived (item type → subtype if one is picked)."
+        hint="Pick one — what kind of thing this is. Alpha-sorted."
       >
         <PillGrid
           form={FORM_ID}
           name="item_type"
-          options={taxonomy.itemTypes.map((r) => ({
-            slug: r.slug,
-            label: r.label_en,
-          }))}
+          options={itemTypeOptions}
           initial={p?.item_type ?? null}
         />
       </Section>
 
       <Section
         title="Subtype"
-        hint="Optional — if the picked item type defines subtypes, you can drill in. Subtype's room wins over item type's."
+        hint="Optional shape/style variant of the picked item type (e.g. Faucet → Pull-out / Sensor)."
       >
         <SubtypePicker
           form={FORM_ID}
@@ -197,12 +211,19 @@ export default function ProductForm({
           initial={p?.subtype_slug ?? null}
           initialItemType={p?.item_type ?? null}
         />
-        {derivedRoom && (
-          <p className="mt-2 text-xs text-neutral-500">
-            Currently derives to room:{" "}
-            <span className="font-mono text-neutral-800">{derivedRoom}</span>
-          </p>
-        )}
+      </Section>
+
+      <Section
+        title="Rooms *"
+        hint="Which room(s) this product belongs in. Multi-select — a faucet can live in Kitchen AND Bathroom."
+      >
+        <RoomsPicker
+          form={FORM_ID}
+          rooms={taxonomy.rooms}
+          itemTypeRooms={taxonomy.itemTypeRooms}
+          initial={p?.room_slugs ?? []}
+          initialItemType={p?.item_type ?? null}
+        />
       </Section>
 
       <Section
@@ -320,23 +341,6 @@ export default function ProductForm({
             />
           </Field>
         </Grid>
-      </Section>
-
-      <Section
-        title="3D model"
-        hint="Optional. The product thumbnail is generated automatically from the primary image (cutout on a styled grey background) — no separate thumbnail upload."
-      >
-        <Field label=".glb model (60 MB max)">
-          <FileDropzone
-            form={FORM_ID}
-            name="glb_file"
-            accept=".glb,model/gltf-binary"
-            maxFileMb={60}
-            currentUrl={p?.glb_url ?? null}
-            currentMeta={p?.glb_size_kb != null ? `${p.glb_size_kb} KB` : null}
-            hint="Drop .glb here, or click to pick"
-          />
-        </Field>
       </Section>
 
       <Section title="Purchase link & source">

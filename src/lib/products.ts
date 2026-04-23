@@ -6,10 +6,9 @@ import type { Database, ProductRow } from "./supabase/types";
 export type ProductFilters = {
   itemTypes?: string[];
   /**
-   * Post-migration 0003: "rooms" is no longer a product column. A
-   * product's room is inferred from its item_type (each item_type
-   * has a room_slug). When the user picks room(s), we pre-resolve
-   * the matching item_types and AND with any itemTypes picks.
+   * Migration 0013: room is now a product column (products.room_slugs
+   * text[]). A product matches room X if any entry in its room_slugs
+   * equals X — one .overlaps() call, no pre-resolution needed.
    */
   rooms?: string[];
   styles?: string[];
@@ -21,43 +20,6 @@ export type ProductFilters = {
   sort?: "latest" | "price_asc" | "price_desc";
 };
 
-/**
- * Resolve a list of room slugs → both the item_type slugs whose
- * room_slug matches AND the (item_type, subtype) pairs of subtypes
- * whose room_slug matches. Migration 0011 made room derivation
- * subtype-aware, so we mirror that here: a "bedroom" pick should
- * surface a floating-TV-cabinet (item_type=tv_cabinet/room=living_room
- * but subtype=floating/room=bedroom) AND a regular bed_frame.
- */
-async function itemTypesAndSubtypesInRooms(
-  roomSlugs: string[],
-): Promise<{
-  /** item_types whose own room_slug matches — a product with NO
-   *  subtype that picks one of these item_types belongs to the room. */
-  itemTypeSlugs: string[];
-  /** Subtype-owned matches: a product whose (item_type, subtype) pair
-   *  is in this list ALSO belongs to the room. */
-  subtypePairs: { itemType: string; subtype: string }[];
-}> {
-  const supabase = await createClient();
-  const [itResp, subResp] = await Promise.all([
-    supabase.from("item_types").select("slug").in("room_slug", roomSlugs),
-    supabase
-      .from("item_subtypes")
-      .select("slug,item_type_slug")
-      .in("room_slug", roomSlugs),
-  ]);
-  if (itResp.error) throw itResp.error;
-  if (subResp.error) throw subResp.error;
-  return {
-    itemTypeSlugs: (itResp.data ?? []).map((r) => r.slug),
-    subtypePairs: (subResp.data ?? []).map((r) => ({
-      itemType: r.item_type_slug,
-      subtype: r.slug,
-    })),
-  };
-}
-
 export async function listPublishedProducts(
   filters: ProductFilters = {},
   limit = 60,
@@ -65,52 +27,13 @@ export async function listPublishedProducts(
   const supabase = await createClient();
   let query = supabase.from("products").select("*").eq("status", "published");
 
-  // ── Room filter (subtype-aware) ─────────────────────────────
-  // A product belongs to the picked room(s) if EITHER:
-  //   (a) it picked an item_type whose room_slug matches AND it has
-  //       no subtype, OR
-  //   (b) it picked a (item_type, subtype) pair where the subtype's
-  //       room_slug matches.
-  // We translate this to a PostgREST `or(...)` of two `and(...)`
-  // groups. If the user also picked specific item_types we intersect
-  // with those.
+  // Room filter — products.room_slugs overlaps the user's picks.
+  // "Kitchen OR Balcony" = match any product whose room_slugs array
+  // contains either. That's `overlaps` (PostgREST `ov`).
   if (filters.rooms?.length) {
-    const { itemTypeSlugs, subtypePairs } =
-      await itemTypesAndSubtypesInRooms(filters.rooms);
-
-    let allowedItemTypes = itemTypeSlugs;
-    let allowedSubtypePairs = subtypePairs;
-    if (filters.itemTypes?.length) {
-      const picked = new Set(filters.itemTypes);
-      allowedItemTypes = allowedItemTypes.filter((t) => picked.has(t));
-      allowedSubtypePairs = allowedSubtypePairs.filter((p) =>
-        picked.has(p.itemType),
-      );
-    }
-
-    if (allowedItemTypes.length === 0 && allowedSubtypePairs.length === 0) {
-      return [];
-    }
-
-    const orParts: string[] = [];
-    if (allowedItemTypes.length > 0) {
-      // (subtype_slug is null AND item_type IN (...))
-      orParts.push(
-        `and(subtype_slug.is.null,item_type.in.(${allowedItemTypes
-          .map((s) => s.replace(/[(),]/g, ""))
-          .join(",")}))`,
-      );
-    }
-    for (const p of allowedSubtypePairs) {
-      // PostgREST disallows commas/parens in identifiers within or(),
-      // and our slugs are [a-z0-9_] so no escaping needed in practice.
-      orParts.push(
-        `and(item_type.eq.${p.itemType},subtype_slug.eq.${p.subtype})`,
-      );
-    }
-    query = query.or(orParts.join(","));
-  } else if (filters.itemTypes?.length) {
-    // No room filter — straight item_type IN (...)
+    query = query.overlaps("room_slugs", filters.rooms);
+  }
+  if (filters.itemTypes?.length) {
     query = query.in("item_type", filters.itemTypes);
   }
 
@@ -217,6 +140,93 @@ export async function publishedCountsByItemType(): Promise<
  *  pages reflect the new count on next request. */
 export function invalidatePublishedCountsCache(): void {
   updateTag(PRODUCT_COUNTS_TAG);
+}
+
+/**
+ * Count published products by item_type within a specific room.
+ * Used by /room/[slug] to show "kitchen has 4 faucets, 2 sinks"
+ * rather than global item_type counts (which would mislead —
+ * /room/kitchen and /room/bathroom shouldn't show the same number
+ * for "faucet" when most faucets are kitchen-only).
+ *
+ * One query per room-page visit, filtered server-side with
+ * `overlaps` on room_slugs. Cached per-room for 5 min on the tag.
+ */
+export async function publishedCountsByItemTypeInRoom(
+  roomSlug: string,
+): Promise<Record<string, number>> {
+  return unstable_cache(
+    async () => {
+      const url = process.env.NEXT_PUBLIC_APP_SUPABASE_URL;
+      const anonKey = process.env.NEXT_PUBLIC_APP_SUPABASE_ANON_KEY;
+      if (!url || !anonKey) {
+        throw new Error(
+          "Missing NEXT_PUBLIC_APP_SUPABASE_URL or NEXT_PUBLIC_APP_SUPABASE_ANON_KEY",
+        );
+      }
+      const supabase = createAnonSbClient<Database>(url, anonKey, {
+        auth: { persistSession: false, autoRefreshToken: false },
+      });
+      const { data, error } = await supabase
+        .from("products")
+        .select("item_type")
+        .eq("status", "published")
+        .overlaps("room_slugs", [roomSlug]);
+      if (error) throw error;
+      const out: Record<string, number> = {};
+      for (const row of data ?? []) {
+        const slug = row.item_type;
+        if (!slug) continue;
+        out[slug] = (out[slug] ?? 0) + 1;
+      }
+      return out;
+    },
+    ["published-counts-by-item-type-in-room-v1", roomSlug],
+    { tags: [PRODUCT_COUNTS_TAG], revalidate: 300 },
+  )();
+}
+
+/**
+ * Count published products grouped by room_slug. A product in
+ * ["kitchen", "bathroom"] counts once in each — so these numbers
+ * add up to MORE than the total product count (intentional: each
+ * room tile shows "things that go here", not an exclusive partition).
+ *
+ * Uses the same cache tag + anon client as `publishedCountsByItemType`
+ * so a single invalidation after publish refreshes both at once.
+ */
+export async function publishedCountsByRoom(): Promise<
+  Record<string, number>
+> {
+  return unstable_cache(
+    async () => {
+      const url = process.env.NEXT_PUBLIC_APP_SUPABASE_URL;
+      const anonKey = process.env.NEXT_PUBLIC_APP_SUPABASE_ANON_KEY;
+      if (!url || !anonKey) {
+        throw new Error(
+          "Missing NEXT_PUBLIC_APP_SUPABASE_URL or NEXT_PUBLIC_APP_SUPABASE_ANON_KEY",
+        );
+      }
+      const supabase = createAnonSbClient<Database>(url, anonKey, {
+        auth: { persistSession: false, autoRefreshToken: false },
+      });
+      const { data, error } = await supabase
+        .from("products")
+        .select("room_slugs")
+        .eq("status", "published");
+      if (error) throw error;
+      const out: Record<string, number> = {};
+      for (const row of data ?? []) {
+        for (const slug of row.room_slugs ?? []) {
+          if (!slug) continue;
+          out[slug] = (out[slug] ?? 0) + 1;
+        }
+      }
+      return out;
+    },
+    ["published-counts-by-room-v1"],
+    { tags: [PRODUCT_COUNTS_TAG], revalidate: 300 },
+  )();
 }
 
 export async function getRelatedProducts(

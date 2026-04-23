@@ -165,18 +165,17 @@ export async function deleteTaxonomyItem(fd: FormData): Promise<void> {
 
 // ─── subtypes (item_subtypes) ──────────────────────────────────────
 //
-// Subtypes are NOT in the standard taxonomy CRUD because they have
-// two extra required fields: item_type_slug (which item_type they
-// belong to) AND room_slug (which room the subtype owns — overrides
-// item_type's room when picked, see migration 0011).
+// Migration 0013: subtypes describe shape/style ONLY (pull-out,
+// sensor, L-shape). The old room_slug field is gone — room lives
+// on products.room_slugs[] directly. Subtype's only required extra
+// is its parent item_type_slug (FK → item_types).
 
 export async function addSubtype(fd: FormData): Promise<void> {
   const itemType = fd.get("item_type_slug")?.toString().trim() ?? "";
-  const room = fd.get("room_slug")?.toString().trim() ?? "";
   const label = fd.get("label_en")?.toString().trim() ?? "";
   const slugRaw = fd.get("slug")?.toString().trim() ?? "";
 
-  if (!itemType || !room || !label) {
+  if (!itemType || !label) {
     redirect(`/admin/taxonomy?err=label&kind=item_subtypes`);
   }
   const slug = slugify(slugRaw || label);
@@ -188,7 +187,6 @@ export async function addSubtype(fd: FormData): Promise<void> {
   const { error } = await supabase.from("item_subtypes").insert({
     slug,
     item_type_slug: itemType,
-    room_slug: room,
     label_en: label,
   });
   if (error) {
@@ -244,6 +242,133 @@ export async function deleteSubtype(fd: FormData): Promise<void> {
   revalidatePath("/admin/products/new");
   revalidatePath("/");
   redirect(`/admin/taxonomy?deleted=item_subtypes`);
+}
+
+// ─── item_type ↔ rooms (M2M) ───────────────────────────────────────
+//
+// Migration 0013: item_types no longer carry a single room_slug.
+// They're associated with rooms via the item_type_rooms join
+// table — "faucet is typical in kitchen / bathroom / balcony".
+// This action replaces the full set of rooms for one item type
+// (no diffing — delete-all-then-insert is atomic enough for the
+// handful of rows involved, and simpler to reason about than a
+// merge).
+
+export async function setItemTypeRooms(fd: FormData): Promise<void> {
+  const itemTypeSlug = fd.get("item_type_slug")?.toString().trim() ?? "";
+  if (!itemTypeSlug) {
+    redirect(`/admin/taxonomy?err=label&kind=item_type_rooms`);
+  }
+  // Operators submit zero or more room_slugs via a checkbox group
+  // named "room_slugs". Empty selection is legal — the item type
+  // just loses all its room associations (the form still works,
+  // but the RoomsPicker on /admin/products/*/edit will flag no
+  // recommendations for it).
+  const rooms = fd
+    .getAll("room_slugs")
+    .map((v) => v.toString().trim())
+    .filter((v): v is string => v.length > 0);
+
+  const supabase = createServiceRoleClient();
+  const { error: delErr } = await supabase
+    .from("item_type_rooms")
+    .delete()
+    .eq("item_type_slug", itemTypeSlug);
+  if (delErr) {
+    redirect(
+      `/admin/taxonomy?err=db&kind=item_type_rooms&msg=${encodeURIComponent(delErr.message)}`,
+    );
+  }
+  if (rooms.length > 0) {
+    const { error: insErr } = await supabase
+      .from("item_type_rooms")
+      .insert(rooms.map((room_slug) => ({ item_type_slug: itemTypeSlug, room_slug })));
+    if (insErr) {
+      redirect(
+        `/admin/taxonomy?err=db&kind=item_type_rooms&msg=${encodeURIComponent(insErr.message)}`,
+      );
+    }
+  }
+
+  invalidateTaxonomyCache();
+  revalidatePath("/admin/taxonomy");
+  revalidatePath("/admin/products/new");
+  revalidatePath("/");
+  redirect(`/admin/taxonomy?added=item_type_rooms`);
+}
+
+// ─── tri-lingual label edit ────────────────────────────────────────
+//
+// F3 wants every room editable in all three languages — the
+// Balcony row landed tri-lingually Null and there was no admin
+// path to fix it without opening the SQL editor. This action
+// updates label_zh and label_ms on ANY label-bearing row (rooms /
+// item_types / styles / materials / colors). Subtypes + regions
+// use the Auto-translate path instead.
+
+type LabelKind = "item_types" | "rooms" | "styles" | "materials" | "colors";
+const LABEL_KINDS: LabelKind[] = [
+  "item_types",
+  "rooms",
+  "styles",
+  "materials",
+  "colors",
+];
+
+export async function updateTaxonomyLabels(fd: FormData): Promise<void> {
+  const kind = fd.get("kind")?.toString() ?? "";
+  const slug = fd.get("slug")?.toString() ?? "";
+  if (!(LABEL_KINDS as string[]).includes(kind) || !slug) {
+    redirect(`/admin/taxonomy?err=label&kind=${kind || "unknown"}`);
+  }
+  // Build a narrowly-typed patch so the union of row shapes
+  // (ItemTypeRow | TaxonomyRow | ColorRow) accepts it — a plain
+  // Record<string, string|null> trips TS's "excess property"
+  // rejection on `update()`. label_en, label_zh, label_ms are
+  // shared across all label-bearing tables, so one shape suffices.
+  const patch: {
+    label_en?: string;
+    label_zh?: string | null;
+    label_ms?: string | null;
+  } = {};
+  const raw_en = fd.get("label_en");
+  if (raw_en != null) {
+    const v = raw_en.toString().trim();
+    if (!v) {
+      // label_en is NOT NULL — refuse an empty value for it.
+      redirect(`/admin/taxonomy?err=label&kind=${kind}`);
+    }
+    patch.label_en = v;
+  }
+  const raw_zh = fd.get("label_zh");
+  if (raw_zh != null) {
+    const v = raw_zh.toString().trim();
+    patch.label_zh = v ? v : null;
+  }
+  const raw_ms = fd.get("label_ms");
+  if (raw_ms != null) {
+    const v = raw_ms.toString().trim();
+    patch.label_ms = v ? v : null;
+  }
+  if (Object.keys(patch).length === 0) {
+    redirect(`/admin/taxonomy`);
+  }
+
+  const supabase = createServiceRoleClient();
+  const { error } = await supabase
+    .from(kind as LabelKind)
+    .update(patch)
+    .eq("slug", slug);
+  if (error) {
+    redirect(
+      `/admin/taxonomy?err=db&kind=${kind}&msg=${encodeURIComponent(error.message)}`,
+    );
+  }
+
+  invalidateTaxonomyCache();
+  revalidatePath("/admin/taxonomy");
+  revalidatePath("/");
+  redirect(`/admin/taxonomy?added=${kind}`);
 }
 
 // ─── translate missing labels (OpenAI GPT-4o-mini) ─────────────────

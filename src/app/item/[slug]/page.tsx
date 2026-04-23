@@ -76,8 +76,17 @@ export default async function ItemTypePage({ params, searchParams }: PageProps) 
   const itemType = taxonomy.itemTypes.find((r) => r.slug === slug);
   if (!itemType) notFound();
 
-  const room = itemType.room_slug
-    ? taxonomy.rooms.find((r) => r.slug === itemType.room_slug)
+  // Migration 0013: item_type no longer owns a single room. The
+  // breadcrumb "Kitchen / Faucet" only makes sense if the visitor
+  // came from a specific room page — we look at `?room=<slug>`
+  // which /room/[slug] now appends to its outgoing links. Missing
+  // or unknown ?room = no middle crumb (just "Home / Faucet").
+  const roomSlugParam = pickOne(
+    sp.room,
+    taxonomy.rooms.map((r) => r.slug),
+  );
+  const room = roomSlugParam
+    ? taxonomy.rooms.find((r) => r.slug === roomSlugParam) ?? null
     : null;
 
   const styleSlugs = new Set(taxonomy.styles.map((r) => r.slug));
@@ -86,10 +95,13 @@ export default async function ItemTypePage({ params, searchParams }: PageProps) 
 
   // item_type is fixed by route — ignore any stray ?item_types= in
   // the querystring to prevent the URL from disagreeing with the
-  // page title.
+  // page title. If we came in via /room/X, scope products to that
+  // room too (so visiting /item/faucet?room=kitchen hides bathroom
+  // faucets without the user picking a room filter explicitly).
   const filters: ProductFilters = {
     q: typeof sp.q === "string" ? sp.q : undefined,
     itemTypes: [itemType.slug],
+    rooms: room ? [room.slug] : undefined,
     styles: pickMany(sp.styles, styleSlugs),
     colors: pickMany(sp.colors, colorSlugs),
     materials: pickMany(sp.materials, materialSlugs),

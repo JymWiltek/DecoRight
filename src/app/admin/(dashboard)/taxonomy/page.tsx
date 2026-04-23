@@ -1,5 +1,5 @@
 import { loadTaxonomy } from "@/lib/taxonomy";
-import { addTaxonomyItem, addSubtype } from "./actions";
+import { addTaxonomyItem, addSubtype, setItemTypeRooms } from "./actions";
 import AutoTranslateButton from "./AutoTranslateButton";
 import DeleteChip from "./DeleteChip";
 import SubtypeChip from "./SubtypeChip";
@@ -44,6 +44,15 @@ export default async function TaxonomyPage({ searchParams }: PageProps) {
     countMissing(tx.colors) +
     countMissing(tx.regions);
 
+  // Pre-index the item_type_rooms M2M so each item_type block can
+  // render its checkbox group without another pass over the array.
+  const roomsByItemType = new Map<string, Set<string>>();
+  for (const r of tx.itemTypeRooms) {
+    const set = roomsByItemType.get(r.item_type_slug) ?? new Set<string>();
+    set.add(r.room_slug);
+    roomsByItemType.set(r.item_type_slug, set);
+  }
+
   return (
     <div className="mx-auto max-w-5xl space-y-6 px-6 py-8">
       <header className="flex items-start justify-between gap-4">
@@ -54,9 +63,10 @@ export default async function TaxonomyPage({ searchParams }: PageProps) {
             Anything added shows up in the product form immediately.
           </p>
           <p className="mt-1 text-xs text-neutral-500">
-            English is the source of truth. Chinese + Malay are
-            translations, filled by OpenAI GPT-4o-mini via the button
-            on the right.
+            English is the source of truth. Chinese + Malay fill in via
+            the Auto-translate button on the right, or click the ✎ on
+            any chip to edit all three by hand. Migration 0013: Room ×
+            Item Type × Subtype are three independent dimensions now.
           </p>
         </div>
         <AutoTranslateButton missingCount={missingCount} />
@@ -64,7 +74,7 @@ export default async function TaxonomyPage({ searchParams }: PageProps) {
 
       {(sp.added || sp.deleted) && (
         <div className="rounded-md bg-emerald-50 px-4 py-2 text-sm text-emerald-700">
-          {sp.added ? `Added (${sp.added})` : `Deleted (${sp.deleted})`}
+          {sp.added ? `Saved (${sp.added})` : `Deleted (${sp.deleted})`}
         </div>
       )}
       {sp.translated != null && (
@@ -80,21 +90,23 @@ export default async function TaxonomyPage({ searchParams }: PageProps) {
         </div>
       )}
 
-      <Block
-        kind="item_types"
-        title="Item types"
-        hint="A product is one kind of thing · single-select"
-        rows={tx.itemTypes.map((r) => ({
+      {/* F1: Item types — tri-lingual chip + M2M rooms editor per row. */}
+      <ItemTypesBlock
+        itemTypes={tx.itemTypes.map((r) => ({
           slug: r.slug,
           label: r.label_en,
           label_zh: r.label_zh,
           label_ms: r.label_ms,
         }))}
+        rooms={tx.rooms.map((r) => ({ slug: r.slug, label: r.label_en }))}
+        roomsByItemType={roomsByItemType}
       />
+
+      {/* F3: Rooms — tri-lingual editable (via chip ✎). */}
       <Block
         kind="rooms"
-        title="Rooms / usage"
-        hint="A product may belong to multiple rooms"
+        title="Rooms"
+        hint="A product may belong to multiple rooms · click ✎ to edit labels"
         rows={tx.rooms.map((r) => ({
           slug: r.slug,
           label: r.label_en,
@@ -137,13 +149,12 @@ export default async function TaxonomyPage({ searchParams }: PageProps) {
         }))}
       />
 
+      {/* F2: Subtypes — shape/style only, no room field (Migration 0013). */}
       <SubtypesBlock
         itemTypes={tx.itemTypes.map((r) => ({ slug: r.slug, label: r.label_en }))}
-        rooms={tx.rooms.map((r) => ({ slug: r.slug, label: r.label_en }))}
         subtypes={tx.itemSubtypes.map((s) => ({
           slug: s.slug,
           item_type_slug: s.item_type_slug,
-          room_slug: s.room_slug,
           label_en: s.label_en,
           label_zh: s.label_zh,
           label_ms: s.label_ms,
@@ -163,18 +174,172 @@ export default async function TaxonomyPage({ searchParams }: PageProps) {
   );
 }
 
-// ─── Subtypes ──────────────────────────────────────────────────────
+// ─── Item types (F1) ───────────────────────────────────────────────
 //
-// Subtypes have an extra dimension over the other taxonomy tables
-// — they belong to an item_type AND own a room. Render them grouped
-// by item_type so the operator can see "what does TV cabinet have
-// today" at a glance, with an inline add-form that prefills the
-// item_type for that group.
+// The item_type row itself is the usual tri-lingual chip (editable
+// via the ✎ inside DeleteChip). Under each chip, we render an
+// inline checkbox form for the item_type_rooms M2M — one form per
+// item_type, each with its own Save button. Delete-all-then-insert
+// on the server (see setItemTypeRooms) means unchecked rooms drop
+// cleanly without diffing.
+//
+// We also keep an "add item type" form at the bottom — just the
+// generic addTaxonomyItem with kind="item_types".
+
+function ItemTypesBlock({
+  itemTypes,
+  rooms,
+  roomsByItemType,
+}: {
+  itemTypes: {
+    slug: string;
+    label: string;
+    label_zh: string | null;
+    label_ms: string | null;
+  }[];
+  rooms: { slug: string; label: string }[];
+  roomsByItemType: Map<string, Set<string>>;
+}) {
+  return (
+    <section className="rounded-lg border border-neutral-200 bg-white p-5">
+      <div className="mb-3 flex items-baseline justify-between">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-neutral-500">
+          Item types
+        </h2>
+        <span className="text-xs text-neutral-400">
+          Single-select on a product · rooms below are recommendation hints
+        </span>
+      </div>
+
+      {itemTypes.length === 0 ? (
+        <div className="mb-4 text-xs text-neutral-400">
+          (none yet — add one below)
+        </div>
+      ) : (
+        <div className="mb-4 flex flex-col gap-3">
+          {itemTypes.map((it) => {
+            const selected = roomsByItemType.get(it.slug) ?? new Set<string>();
+            return (
+              <div
+                key={it.slug}
+                className="flex flex-col gap-2 rounded-md border border-neutral-200 bg-neutral-50 p-3"
+              >
+                <div className="flex flex-wrap items-start gap-2">
+                  <DeleteChip
+                    kind="item_types"
+                    slug={it.slug}
+                    label={it.label}
+                    labelZh={it.label_zh}
+                    labelMs={it.label_ms}
+                  />
+                </div>
+                <form
+                  action={setItemTypeRooms}
+                  className="flex flex-col gap-2"
+                >
+                  <input
+                    type="hidden"
+                    name="item_type_slug"
+                    value={it.slug}
+                  />
+                  <div className="text-[11px] text-neutral-500">
+                    Recommended rooms (M2M) — shown with ★ in the
+                    Product edit page&rsquo;s Rooms picker. Any room is
+                    still selectable for a product; this is a hint, not
+                    a constraint.
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {rooms.length === 0 ? (
+                      <span className="text-xs text-neutral-400">
+                        (no rooms defined yet)
+                      </span>
+                    ) : (
+                      rooms.map((r) => {
+                        const isChecked = selected.has(r.slug);
+                        return (
+                          <label
+                            key={r.slug}
+                            className={`inline-flex cursor-pointer items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs transition ${
+                              isChecked
+                                ? "border-sky-400 bg-sky-50 text-sky-800"
+                                : "border-neutral-300 bg-white text-neutral-700 hover:border-neutral-500"
+                            }`}
+                          >
+                            <input
+                              type="checkbox"
+                              name="room_slugs"
+                              value={r.slug}
+                              defaultChecked={isChecked}
+                              className="h-3 w-3"
+                            />
+                            <span>{r.label}</span>
+                          </label>
+                        );
+                      })
+                    )}
+                  </div>
+                  <div className="flex justify-end">
+                    <button
+                      type="submit"
+                      className="rounded-md bg-black px-3 py-1 text-xs font-medium text-white hover:bg-neutral-800"
+                    >
+                      Save rooms for {it.label}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      <form
+        action={addTaxonomyItem}
+        className="grid grid-cols-1 items-end gap-2 md:grid-cols-[1fr_1fr_auto]"
+      >
+        <input type="hidden" name="kind" value="item_types" />
+        <label className="flex flex-col gap-1">
+          <span className="text-xs text-neutral-600">Label (en) *</span>
+          <input
+            name="label_en"
+            required
+            placeholder="e.g. Gaming Desk"
+            className="rounded-md border border-neutral-300 px-3 py-2 text-sm focus:border-black focus:outline-none"
+          />
+        </label>
+        <label className="flex flex-col gap-1">
+          <span className="text-xs text-neutral-600">
+            slug (optional, auto-generated)
+          </span>
+          <input
+            name="slug"
+            placeholder="a-z 0-9 _"
+            pattern="[a-z0-9_]+"
+            className="rounded-md border border-neutral-300 px-3 py-2 text-sm focus:border-black focus:outline-none"
+          />
+        </label>
+        <button
+          type="submit"
+          className="rounded-md bg-black px-4 py-2 text-sm font-medium text-white hover:bg-neutral-800"
+        >
+          Add item type
+        </button>
+      </form>
+    </section>
+  );
+}
+
+// ─── Subtypes (F2) ─────────────────────────────────────────────────
+//
+// Migration 0013: subtypes describe shape / style only. The old
+// room_slug column is gone — there's no room dropdown in the
+// add-form, and no "→ kitchen" badge on the chip. Subtypes still
+// group by item_type so the operator can spot gaps ("does faucet
+// have pull-out / sensor yet?").
 
 type SubtypeRow = {
   slug: string;
   item_type_slug: string;
-  room_slug: string;
   label_en: string;
   label_zh: string | null;
   label_ms: string | null;
@@ -182,11 +347,9 @@ type SubtypeRow = {
 
 function SubtypesBlock({
   itemTypes,
-  rooms,
   subtypes,
 }: {
   itemTypes: { slug: string; label: string }[];
-  rooms: { slug: string; label: string }[];
   subtypes: SubtypeRow[];
 }) {
   const byItemType = new Map<string, SubtypeRow[]>();
@@ -203,7 +366,7 @@ function SubtypesBlock({
           Item subtypes
         </h2>
         <span className="text-xs text-neutral-400">
-          Optional drill-down on an item type · subtype owns its own room
+          Shape / style variants of an item type (e.g. Faucet → Pull-out / Sensor)
         </span>
       </div>
 
@@ -228,7 +391,7 @@ function SubtypesBlock({
                 <div className="mb-2 flex flex-wrap gap-2">
                   {subs.length === 0 && (
                     <span className="text-xs text-neutral-400">
-                      (none — products will use the item type&rsquo;s room)
+                      (none — this item type has no shape/style variants)
                     </span>
                   )}
                   {subs.map((s) => (
@@ -237,7 +400,6 @@ function SubtypesBlock({
                       itemTypeSlug={s.item_type_slug}
                       slug={s.slug}
                       label={s.label_en}
-                      roomSlug={s.room_slug}
                       labelZh={s.label_zh}
                       labelMs={s.label_ms}
                     />
@@ -245,7 +407,7 @@ function SubtypesBlock({
                 </div>
                 <form
                   action={addSubtype}
-                  className="grid grid-cols-1 items-end gap-2 md:grid-cols-[1fr_1fr_180px_auto]"
+                  className="grid grid-cols-1 items-end gap-2 md:grid-cols-[1fr_1fr_auto]"
                 >
                   <input
                     type="hidden"
@@ -259,7 +421,7 @@ function SubtypesBlock({
                     <input
                       name="label_en"
                       required
-                      placeholder="e.g. Floating"
+                      placeholder="e.g. Pull-out"
                       className="rounded-md border border-neutral-300 px-3 py-1.5 text-sm focus:border-black focus:outline-none"
                     />
                   </label>
@@ -274,28 +436,11 @@ function SubtypesBlock({
                       className="rounded-md border border-neutral-300 px-3 py-1.5 text-sm focus:border-black focus:outline-none"
                     />
                   </label>
-                  <label className="flex flex-col gap-1">
-                    <span className="text-[11px] text-neutral-600">
-                      Room (subtype-owned) *
-                    </span>
-                    <select
-                      name="room_slug"
-                      required
-                      defaultValue={rooms[0]?.slug ?? ""}
-                      className="rounded-md border border-neutral-300 px-3 py-1.5 text-sm focus:border-black focus:outline-none"
-                    >
-                      {rooms.map((r) => (
-                        <option key={r.slug} value={r.slug}>
-                          {r.label} ({r.slug})
-                        </option>
-                      ))}
-                    </select>
-                  </label>
                   <button
                     type="submit"
                     className="rounded-md bg-black px-3 py-1.5 text-sm font-medium text-white hover:bg-neutral-800"
                   >
-                    Add
+                    Add subtype
                   </button>
                 </form>
               </div>
@@ -446,7 +591,7 @@ function Block({
   hint,
   rows,
 }: {
-  kind: "item_types" | "rooms" | "styles" | "materials" | "colors";
+  kind: "rooms" | "styles" | "materials" | "colors";
   title: string;
   hint: string;
   rows: Row[];
@@ -488,7 +633,7 @@ function Block({
           <input
             name="label_en"
             required
-            placeholder="e.g. Gaming Desk"
+            placeholder="e.g. Balcony"
             className="rounded-md border border-neutral-300 px-3 py-2 text-sm focus:border-black focus:outline-none"
           />
         </label>

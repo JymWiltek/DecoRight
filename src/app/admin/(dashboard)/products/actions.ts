@@ -27,15 +27,17 @@ async function loadValidSlugs(): Promise<{
    *  subtype) must match together; this map lets us validate the
    *  pair in one lookup. */
   subtypesByItemType: Map<string, Set<string>>;
+  rooms: Set<string>;
   styles: Set<string>;
   materials: Set<string>;
   colors: Set<string>;
   regions: Set<string>;
 }> {
   const supabase = createServiceRoleClient();
-  const [it, sub, st, mt, co, rg] = await Promise.all([
+  const [it, sub, rm, st, mt, co, rg] = await Promise.all([
     supabase.from("item_types").select("slug"),
     supabase.from("item_subtypes").select("slug,item_type_slug"),
+    supabase.from("rooms").select("slug"),
     supabase.from("styles").select("slug"),
     supabase.from("materials").select("slug"),
     supabase.from("colors").select("slug"),
@@ -50,6 +52,7 @@ async function loadValidSlugs(): Promise<{
   return {
     itemTypes: new Set((it.data ?? []).map((r) => r.slug)),
     subtypesByItemType,
+    rooms: new Set((rm.data ?? []).map((r) => r.slug)),
     styles: new Set((st.data ?? []).map((r) => r.slug)),
     materials: new Set((mt.data ?? []).map((r) => r.slug)),
     colors: new Set((co.data ?? []).map((r) => r.slug)),
@@ -128,6 +131,7 @@ async function parsePayload(fd: FormData): Promise<Omit<ProductInsert, "id">> {
     brand: str(fd, "brand"),
     item_type: itemType,
     subtype_slug: subtype,
+    room_slugs: pickManyFromSet(fd, "room_slugs", valid.rooms),
     styles: pickManyFromSet(fd, "styles", valid.styles),
     colors: pickManyFromSet(fd, "colors", valid.colors),
     materials: pickManyFromSet(fd, "materials", valid.materials),

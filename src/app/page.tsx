@@ -3,7 +3,7 @@ import type { Locale } from "@/i18n/config";
 import SiteHeader from "@/components/SiteHeader";
 import CategoryTile from "@/components/CategoryTile";
 import { loadTaxonomy, labelFor } from "@/lib/taxonomy";
-import { publishedCountsByItemType } from "@/lib/products";
+import { publishedCountsByRoom } from "@/lib/products";
 
 // Intentionally NOT `force-dynamic`. Both `loadTaxonomy` and
 // `publishedCountsByItemType` are tag-cached (tags: "taxonomy",
@@ -28,20 +28,15 @@ import { publishedCountsByItemType } from "@/lib/products";
  * section but we still render it (the catalog is growing).
  */
 export default async function Home() {
-  const [taxonomy, counts, tHome, locale] = await Promise.all([
+  const [taxonomy, roomCounts, tHome, locale] = await Promise.all([
     loadTaxonomy(),
-    publishedCountsByItemType(),
+    // Migration 0013: room lives on products.room_slugs[] directly —
+    // sum per-room counts server-side from that column (a single
+    // product in ["kitchen","bathroom"] counts once in each).
+    publishedCountsByRoom(),
     getTranslations("home"),
     getLocale() as Promise<Locale>,
   ]);
-
-  // Sum product counts per room via item_types.room_slug.
-  const roomCounts: Record<string, number> = {};
-  for (const it of taxonomy.itemTypes) {
-    if (!it.room_slug) continue;
-    roomCounts[it.room_slug] =
-      (roomCounts[it.room_slug] ?? 0) + (counts[it.slug] ?? 0);
-  }
 
   return (
     <>

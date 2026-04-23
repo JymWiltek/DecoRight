@@ -2,11 +2,14 @@
 
 import { deleteSubtype } from "./actions";
 
+/**
+ * Migration 0013: subtype no longer owns a room. The chip is now
+ * item_type + label + ZH/MS status only.
+ */
 type Props = {
   itemTypeSlug: string;
   slug: string;
   label: string;
-  roomSlug: string;
   labelZh: string | null;
   labelMs: string | null;
 };
@@ -15,7 +18,6 @@ export default function SubtypeChip({
   itemTypeSlug,
   slug,
   label,
-  roomSlug,
   labelZh,
   labelMs,
 }: Props) {
@@ -43,9 +45,6 @@ export default function SubtypeChip({
         <input type="hidden" name="slug" value={slug} />
         <span className="font-medium">{label}</span>
         <span className="text-neutral-400">· {slug}</span>
-        <span className="ml-1 rounded bg-sky-50 px-1.5 py-0.5 text-[10px] text-sky-700">
-          → {roomSlug}
-        </span>
         <button
           type="submit"
           className="ml-1 text-neutral-400 hover:text-rose-600"

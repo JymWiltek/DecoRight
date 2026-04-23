@@ -5,11 +5,11 @@ import SiteHeader from "@/components/SiteHeader";
 import CategoryTile from "@/components/CategoryTile";
 import Breadcrumb from "@/components/Breadcrumb";
 import { loadTaxonomy, labelFor } from "@/lib/taxonomy";
-import { publishedCountsByItemType } from "@/lib/products";
+import { publishedCountsByItemTypeInRoom } from "@/lib/products";
 import { BRAND } from "@config/brand";
 
-// Intentionally NOT `force-dynamic`. `loadTaxonomy` and
-// `publishedCountsByItemType` are tag-cached on cookieless anon
+// Intentionally NOT `force-dynamic`. `loadTaxonomy` and the
+// room-scoped count query are tag-cached on cookieless anon
 // clients (5-min revalidate). Next-intl still makes the page
 // dynamic (cookie read for locale), but that emits a bf-cache-
 // eligible cache-control header rather than the `no-store` that
@@ -30,20 +30,28 @@ export async function generateMetadata({ params }: PageProps) {
 }
 
 /**
- * Layer 2: pick an item category within a room. Renders only the
- * item_types whose `room_slug` matches — so /room/kitchen shows sink,
- * faucet, range hood, etc.; /room/bedroom shows bed_frame, mattress,
- * wardrobe.
+ * Layer 2: pick an item category within a room. Migration 0013
+ * made Room × Item Type × Subtype three independent dimensions —
+ * the authoritative "what item_types belong in this room" answer
+ * is "which item_types have at least one published product whose
+ * room_slugs contains this room". Any item_type with zero
+ * published products in this room is hidden, even if the
+ * item_type_rooms M2M recommends it (M2M is a hint for the
+ * Product edit page, not the storefront).
  *
- * 404 if the slug isn't a known room (defends against stale bookmarks
- * or hand-typed URLs). Rooms with zero item_types show an empty state
- * rather than an error — the room exists, we just haven't seeded it.
+ * 404 if the slug isn't a known room (defends against stale
+ * bookmarks or hand-typed URLs). Rooms with zero item_types
+ * show an empty state rather than an error — the room exists,
+ * we just haven't seeded any products in it yet.
  */
 export default async function RoomPage({ params }: PageProps) {
   const { slug } = await params;
   const [taxonomy, counts, tHome, tRoom, tSite, locale] = await Promise.all([
     loadTaxonomy(),
-    publishedCountsByItemType(),
+    // Product-count map scoped to THIS room, keyed by item_type.
+    // Drives both the item_type filter (zero count → hide) and
+    // the count badge on each tile.
+    publishedCountsByItemTypeInRoom(slug),
     getTranslations("home"),
     getTranslations("room"),
     getTranslations("site"),
@@ -53,21 +61,11 @@ export default async function RoomPage({ params }: PageProps) {
   const room = taxonomy.rooms.find((r) => r.slug === slug);
   if (!room) notFound();
 
-  // Migration 0011: an item_type belongs to room X if EITHER
-  //   (a) item_type.room_slug === X (the original 0003 rule), OR
-  //   (b) the item_type has at least one subtype whose room_slug === X.
-  // Otherwise floating-TV-cabinets (subtype owns the bedroom anchor)
-  // would never appear under /room/bedroom even though products
-  // genuinely live there.
-  const itemTypeSlugsInRoomViaSubtype = new Set(
-    taxonomy.itemSubtypes
-      .filter((s) => s.room_slug === slug)
-      .map((s) => s.item_type_slug),
-  );
-  const items = taxonomy.itemTypes.filter(
-    (it) =>
-      it.room_slug === slug || itemTypeSlugsInRoomViaSubtype.has(it.slug),
-  );
+  // Show every item_type that has at least one published product
+  // in this room. Sort by the taxonomy's existing sort_order so
+  // the order stays stable across visits (the counts can fluctuate,
+  // but the visual shelf doesn't reshuffle on each publish).
+  const items = taxonomy.itemTypes.filter((it) => (counts[it.slug] ?? 0) > 0);
   const roomLabel = labelFor(room, locale);
 
   return (
@@ -100,7 +98,7 @@ export default async function RoomPage({ params }: PageProps) {
               return (
                 <CategoryTile
                   key={it.slug}
-                  href={`/item/${it.slug}`}
+                  href={`/item/${it.slug}?room=${room.slug}`}
                   label={labelFor(it, locale)}
                   count={count}
                   countLabel={tHome("itemCount", { count })}
