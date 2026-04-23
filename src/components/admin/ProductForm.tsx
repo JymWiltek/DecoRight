@@ -113,24 +113,25 @@ export default function ProductForm({
             />
           </Field>
           <Field label="Status" wide>
-            <div className="flex flex-wrap gap-2">
-              {PRODUCT_STATUSES.map((s) => (
-                <label
-                  key={s}
-                  className="inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-neutral-300 px-3 py-1 text-xs has-[:checked]:border-black has-[:checked]:bg-black has-[:checked]:text-white"
-                >
-                  <input
-                    form={FORM_ID}
-                    type="radio"
-                    name="status"
-                    value={s}
-                    defaultChecked={(p?.status ?? "draft") === s}
-                    className="sr-only"
-                  />
-                  {PRODUCT_STATUS_LABELS[s]}
-                </label>
-              ))}
-            </div>
+            {/* PillGrid (button-driven hidden input) instead of native
+                radios. Form-attribute-associated radios with
+                defaultChecked don't reliably persist their post-click
+                state through React 19's restoreStateOfTarget pass —
+                clicking "Published" submitted as "draft" because the
+                radio-group restore loop re-applies stale defaultChecked
+                to every other radio in the document. PillGrid drives
+                the value purely from React state, so what you see is
+                what gets submitted. Same fix is applied to price_tier
+                below. */}
+            <PillGrid
+              form={FORM_ID}
+              name="status"
+              options={PRODUCT_STATUSES.map((s) => ({
+                slug: s,
+                label: PRODUCT_STATUS_LABELS[s],
+              }))}
+              initial={p?.status ?? "draft"}
+            />
           </Field>
           <Field label="Description" wide>
             <textarea
@@ -215,18 +216,17 @@ export default function ProductForm({
             />
           </Field>
           <Field label="Price tier">
-            <div className="flex flex-wrap gap-2">
-              <RadioPill name="price_tier" value="" label="—" checked={!p?.price_tier} />
-              {PRICE_TIERS.map((t) => (
-                <RadioPill
-                  key={t}
-                  name="price_tier"
-                  value={t}
-                  label={PRICE_TIER_LABELS[t]}
-                  checked={p?.price_tier === t}
-                />
-              ))}
-            </div>
+            {/* See note on Status above — same radio quirk reason.
+                Click the selected pill again to clear back to no tier. */}
+            <PillGrid
+              form={FORM_ID}
+              name="price_tier"
+              options={PRICE_TIERS.map((t) => ({
+                slug: t,
+                label: PRICE_TIER_LABELS[t],
+              }))}
+              initial={p?.price_tier ?? null}
+            />
           </Field>
           <Field label="Length (mm)">
             <input
@@ -390,32 +390,6 @@ export default function ProductForm({
       </footer>
     </div>
   );
-
-  function RadioPill({
-    name,
-    value,
-    label,
-    checked,
-  }: {
-    name: string;
-    value: string;
-    label: string;
-    checked: boolean;
-  }) {
-    return (
-      <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-neutral-300 px-3 py-1 text-xs has-[:checked]:border-black has-[:checked]:bg-black has-[:checked]:text-white">
-        <input
-          form={FORM_ID}
-          type="radio"
-          name={name}
-          value={value}
-          defaultChecked={checked}
-          className="sr-only"
-        />
-        {label}
-      </label>
-    );
-  }
 }
 
 const inputCls =
