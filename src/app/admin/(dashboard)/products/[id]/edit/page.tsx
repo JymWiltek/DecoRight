@@ -74,6 +74,7 @@ export default async function EditProductPage({
           productId={id}
           images={imagesWithPreviews}
           canRerunRemoveBg={avail.removebg}
+          hasAnyProvider={avail.replicate_rembg || avail.removebg}
           uploadedCount={sp.uploaded ? Number(sp.uploaded) : undefined}
           approvedCount={sp.approved ? Number(sp.approved) : undefined}
           failedCount={sp.failed ? Number(sp.failed) : undefined}

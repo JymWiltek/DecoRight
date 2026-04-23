@@ -58,6 +58,10 @@ type Props = {
   productId: string;
   images: ImageWithPreview[];
   canRerunRemoveBg: boolean;
+  /** Replicate OR Remove.bg env var present. When false the dropzone
+   *  shows a sticky warning instead of letting the operator burn an
+   *  upload that's guaranteed to land at cutout_failed. */
+  hasAnyProvider: boolean;
   uploadedCount?: number;
   approvedCount?: number;
   failedCount?: number;
@@ -72,6 +76,7 @@ export default function ProductImagesSection({
   productId,
   images,
   canRerunRemoveBg,
+  hasAnyProvider,
   uploadedCount,
   approvedCount,
   failedCount,
@@ -122,6 +127,20 @@ export default function ProductImagesSection({
           )}
         </div>
       </div>
+
+      {/* Sticky warning when no rembg provider is configured. Sits
+          ABOVE the action banners because it's a precondition the
+          operator has to fix before uploads are useful — uploading
+          without a provider lands every row at cutout_failed. */}
+      {!hasAnyProvider && (
+        <Banner tone="amber">
+          <strong>No background-removal provider configured.</strong>{" "}
+          Set <code>REPLICATE_API_TOKEN</code> (cheap, default) or{" "}
+          <code>REMOVE_BG_API_KEY</code> in <code>.env.local</code> and
+          restart the dev server. Without a provider every upload will
+          land at <em>cutout_failed</em> and you&rsquo;ll have to retry.
+        </Banner>
+      )}
 
       {/* Banners — surface what just happened in plain language. The
           err banner is rose-tinted and includes both code + message
