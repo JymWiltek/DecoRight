@@ -286,6 +286,9 @@ function ReviewCard({
 }
 
 function StateChip({ state }: { state: string }) {
+  // Includes the post-0010 states (cutout_failed, user_rejected) so
+  // legacy rows from the queue's "All" tab still chip correctly even
+  // though the auto-pipeline normally bypasses this page.
   const map: Record<string, { label: string; cls: string }> = {
     cutout_pending: { label: "Pending", cls: "bg-amber-100 text-amber-800" },
     cutout_approved: {
@@ -293,6 +296,11 @@ function StateChip({ state }: { state: string }) {
       cls: "bg-emerald-100 text-emerald-800",
     },
     cutout_rejected: { label: "Rejected", cls: "bg-rose-100 text-rose-700" },
+    cutout_failed: { label: "Failed", cls: "bg-rose-100 text-rose-700" },
+    user_rejected: {
+      label: "Unsatisfied",
+      cls: "bg-neutral-200 text-neutral-700",
+    },
     raw: { label: "Raw", cls: "bg-neutral-100 text-neutral-600" },
   };
   const m = map[state] ?? { label: state, cls: "bg-neutral-100 text-neutral-600" };

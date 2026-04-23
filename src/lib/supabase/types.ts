@@ -85,19 +85,36 @@ export type ProductInsert = {
 export type ProductUpdate = Partial<Omit<ProductRow, "id" | "created_at">>;
 
 // ─── product_images ─────────────────────────────────────────
-// 1:N from products. One row per uploaded photo. Flow:
-//   1. uploadRawImage  → row created with raw_image_url, state=raw
-//   2. processImage    → ReplicateProvider writes cutout_image_url,
-//                        state=cutout_pending
-//   3. approve         → state=cutout_approved, primary→thumbnail
-//   4. reject          → state=cutout_rejected (optionally rerun
-//                        with RemoveBgProvider → new raw→cutout row)
+// 1:N from products. One row per uploaded photo.
+//
+// Primary (post-0010) flow is fully automatic:
+//   1. uploadRawImages → row inserted (state=raw), raw_image_url set
+//   2. runRembgForImage fires in the same server action
+//      → on success  : state=cutout_approved, is_primary=true if this
+//                      is the product's first approved image (sync
+//                      trigger then copies cutout_image_url into
+//                      products.thumbnail_url)
+//      → on failure  : state=cutout_failed, no primary change — the
+//                      UI surfaces Retry buttons (Replicate / Remove.bg)
+//                      that reuse raw_image_url without re-upload
+//   3. markImageUnsatisfied (× button on approved thumbnails) →
+//                      state=user_rejected, clears is_primary, and
+//                      auto-promotes the next approved row to primary
+//                      (or clears products.thumbnail_url if none left)
+//
+// Legacy states retained for backward-compat with the /admin/cutouts
+// review queue and RemoveBg manual rerun path:
+//   cutout_pending   — human-review path (rembg succeeded but op
+//                      must approve). New uploads skip this.
+//   cutout_rejected  — human rejected the cutout in the legacy queue.
 
 export const IMAGE_STATES = [
   "raw",
   "cutout_pending",
   "cutout_approved",
   "cutout_rejected",
+  "cutout_failed",
+  "user_rejected",
 ] as const;
 export type ImageState = (typeof IMAGE_STATES)[number];
 

@@ -15,11 +15,14 @@ type PageProps = {
   searchParams: Promise<{
     saved?: string;
     uploaded?: string;
-    deleted?: string;
     approved?: string;
+    failed?: string;
+    deleted?: string;
     rejected?: string;
     primary?: string;
     reran?: string;
+    retried?: string;
+    unsatisfied?: string;
     processed?: string;
     err?: string;
     msg?: string;
@@ -72,7 +75,13 @@ export default async function EditProductPage({
           images={imagesWithPreviews}
           canRerunRemoveBg={avail.removebg}
           uploadedCount={sp.uploaded ? Number(sp.uploaded) : undefined}
+          approvedCount={sp.approved ? Number(sp.approved) : undefined}
+          failedCount={sp.failed ? Number(sp.failed) : undefined}
           deletedCount={sp.deleted ? Number(sp.deleted) : undefined}
+          unsatisfied={sp.unsatisfied === "1"}
+          retried={sp.retried === "1"}
+          errCode={sp.err}
+          errMsg={sp.msg}
         />
       }
     />

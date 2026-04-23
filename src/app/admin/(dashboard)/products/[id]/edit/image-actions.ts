@@ -13,6 +13,42 @@ import { QuotaExceededError } from "@/lib/api-usage";
 import type { RemBgProviderId } from "@/lib/rembg";
 
 /**
+ * Image pipeline (post-migration 0010 auto-cutout):
+ *
+ *   uploadRawImages   : dropzone hits this. Per file we insert a row
+ *                       (state=raw), upload to raw-images bucket, then
+ *                       synchronously call runRembgForImage in AUTO
+ *                       mode → on success the row lands at
+ *                       cutout_approved (+ is_primary=true if this is
+ *                       the product's first approved image, which
+ *                       triggers the DB-side thumbnail sync). On
+ *                       failure the row lands at cutout_failed with
+ *                       raw_image_url intact so Retry works.
+ *
+ *   retryFailedImage  : Retry button on a cutout_failed row. Reruns
+ *                       rembg on the same raw_image_url through the
+ *                       provider the operator picks (Replicate by
+ *                       default, or Remove.bg). Goes through the same
+ *                       AUTO mode as the initial upload.
+ *
+ *   markImageUnsatisfied : × button on a cutout_approved thumbnail.
+ *                       Moves the row to user_rejected, clears
+ *                       is_primary, and auto-promotes the next
+ *                       cutout_approved row to primary (or clears
+ *                       products.thumbnail_url if there are no more
+ *                       approved images).
+ *
+ *   deleteProductImage : hard-delete a row + its storage objects.
+ *
+ *   processImage / processAllRaw / runRembgForImage (review mode) :
+ *                       the legacy /admin/cutouts review-queue flow is
+ *                       still supported because rejectCutout's
+ *                       "Re-run on Remove.bg" path calls processImage
+ *                       directly. Review-mode runs land at
+ *                       cutout_pending so a human can approve manually.
+ */
+
+/**
  * Optional `returnTo` support: image actions are driven from:
  *   - /admin/products/[id]/edit  (the product workbench — default)
  *   - /admin/cutouts             (the review queue)
@@ -32,28 +68,49 @@ function withQuery(path: string, key: string, value: string): string {
   return `${path}${sep}${key}=${encodeURIComponent(value)}`;
 }
 
+function parseProviderId(v: string | null | undefined): RemBgProviderId | undefined {
+  return v === "replicate_rembg" || v === "removebg"
+    ? (v as RemBgProviderId)
+    : undefined;
+}
+
 /**
- * Accepts 1..N image files from the upload dropzone. For each file:
- *   1. insert a product_images row (state="raw", no URLs yet) so we
- *      have an id to key the storage path on
- *   2. upload to raw-images bucket at <product>/<image_id>.<ext>
- *   3. patch the row with raw_image_url + state=raw (ready for rembg)
+ * Dropzone entry-point. Accepts 1..N image files, and for each one:
+ *   1. inserts a product_images row (state=raw)
+ *   2. uploads bytes to the raw-images bucket
+ *   3. runs rembg in AUTO mode (success → cutout_approved + first-one
+ *      promoted to primary; failure → cutout_failed for Retry)
  *
- * Background removal is kicked off in a follow-up step (processImage)
- * so the user sees upload progress without waiting for Replicate.
+ * Everything is synchronous inside the server action so the redirect
+ * URL reflects the final truth — `?uploaded=3&failed=1` means 3 are
+ * already approved with thumbnails synced, 1 needs a retry. No
+ * intermediate review step, no polling.
+ *
+ * We process files sequentially (not parallel) because rembg is
+ * quota-metered via an advisory lock inside reserve_api_slot(), and
+ * sequential calls give us cleaner audit rows in api_usage. 5–10s per
+ * image is acceptable for a small batch; larger batches should use
+ * the legacy processAllRaw button.
  */
 export async function uploadRawImages(productId: string, fd: FormData) {
   const supabase = createServiceRoleClient();
-  const returnTo =
-    safeReturnTo(fd) ?? `/admin/products/${productId}/edit`;
-  const files = fd.getAll("files").filter((f): f is File => f instanceof File && f.size > 0);
+  const returnTo = safeReturnTo(fd) ?? `/admin/products/${productId}/edit`;
+  const files = fd
+    .getAll("files")
+    .filter((f): f is File => f instanceof File && f.size > 0);
   if (files.length === 0) {
     redirect(withQuery(returnTo, "err", "no_files"));
   }
 
-  const inserted: string[] = [];
+  let uploaded = 0;
+  let approved = 0;
+  let failed = 0;
+  let lastErrorKind: string | null = null;
+  let lastErrorMsg: string | null = null;
+
   for (const file of files) {
     const id = crypto.randomUUID();
+
     // 1) pre-insert to reserve an id
     const { error: insErr } = await supabase.from("product_images").insert({
       id,
@@ -61,10 +118,12 @@ export async function uploadRawImages(productId: string, fd: FormData) {
       state: "raw",
     });
     if (insErr) {
-      redirect(
-        withQuery(withQuery(returnTo, "err", "db"), "msg", insErr.message),
-      );
+      lastErrorKind = "db";
+      lastErrorMsg = insErr.message;
+      failed++;
+      continue;
     }
+
     // 2) upload bytes
     try {
       const path = await uploadRawImage(productId, id, file);
@@ -73,18 +132,55 @@ export async function uploadRawImages(productId: string, fd: FormData) {
         .update({ raw_image_url: path })
         .eq("id", id);
       if (updErr) throw updErr;
-      inserted.push(id);
+      uploaded++;
     } catch (err) {
-      // rollback the empty row so the queue stays clean
+      // Rollback the empty row so the queue stays clean.
       await supabase.from("product_images").delete().eq("id", id);
-      const msg = err instanceof Error ? err.message : String(err);
-      redirect(withQuery(withQuery(returnTo, "err", "upload"), "msg", msg));
+      lastErrorKind = "upload";
+      lastErrorMsg = err instanceof Error ? err.message : String(err);
+      failed++;
+      continue;
+    }
+
+    // 3) auto-pipeline: rembg → approve → primary-if-first
+    const res = await autoProcessImage(productId, id);
+    if (res.ok) {
+      approved++;
+    } else {
+      lastErrorKind = res.error.kind;
+      lastErrorMsg =
+        res.error.kind === "rembg" || res.error.kind === "db"
+          ? res.error.msg
+          : res.error.kind === "quota"
+            ? res.error.cause
+            : res.error.kind === "no_provider"
+              ? (res.error.providerId ?? "no default provider configured")
+              : "";
+      failed++;
     }
   }
 
+  // Fan out revalidation — auto-approve already copied cutout URLs
+  // into products.thumbnail_url via the sync trigger, so public pages
+  // need to drop their caches too.
   revalidatePath(`/admin/products/${productId}/edit`);
   revalidatePath(`/admin/cutouts`);
-  redirect(withQuery(returnTo, "uploaded", String(inserted.length)));
+  revalidatePath(`/admin`);
+  revalidatePath(`/`);
+  revalidatePath(`/product/${productId}`);
+
+  let target = withQuery(returnTo, "uploaded", String(uploaded));
+  target = withQuery(target, "approved", String(approved));
+  if (failed > 0) {
+    target = withQuery(target, "failed", String(failed));
+    if (lastErrorKind) {
+      target = withQuery(target, "err", lastErrorKind);
+    }
+    if (lastErrorMsg) {
+      target = withQuery(target, "msg", lastErrorMsg);
+    }
+  }
+  redirect(target);
 }
 
 type RembgError =
@@ -94,17 +190,30 @@ type RembgError =
   | { kind: "rembg"; msg: string }
   | { kind: "db"; msg: string };
 
+type RembgMode = "review" | "auto";
+
 /**
- * Core rembg worker, extracted so both the single-image form
- * submission AND the batch `processAllRaw` loop can call it without
- * tripping over each other's `redirect()`. Returns a discriminated
- * error on failure instead of throwing, so the caller decides
- * whether to bail or continue.
+ * Core rembg worker. Does the expensive paid call, uploads the cutout,
+ * and writes the new state into product_images in ONE update so the
+ * DB sync trigger fires at most once.
+ *
+ * mode="review" (legacy queue) : state → cutout_pending, is_primary
+ *                                untouched. A human approves later.
+ *
+ * mode="auto"   (dropzone)     : state → cutout_approved, and
+ *                                is_primary=true iff this product has
+ *                                no other primary yet. The trigger
+ *                                then copies cutout_image_url into
+ *                                products.thumbnail_url.
+ *
+ * Returns a discriminated result instead of throwing; the caller
+ * decides whether to redirect with ?err= or silently continue.
  */
 async function runRembgForImage(
   productId: string,
   imageId: string,
-  providerId?: RemBgProviderId,
+  providerId: RemBgProviderId | undefined,
+  mode: RembgMode,
 ): Promise<{ ok: true } | { ok: false; error: RembgError }> {
   const supabase = createServiceRoleClient();
   const { data: row, error: readErr } = await supabase
@@ -138,14 +247,52 @@ async function runRembgForImage(
       productImageId: imageId,
     });
     const cutoutUrl = await uploadCutout(productId, imageId, result.bytes);
+
+    if (mode === "review") {
+      const { error: updErr } = await supabase
+        .from("product_images")
+        .update({
+          cutout_image_url: cutoutUrl,
+          state: "cutout_pending",
+          rembg_provider: result.provider,
+          rembg_cost_usd: result.costUsd,
+        })
+        .eq("id", imageId);
+      if (updErr) {
+        return { ok: false, error: { kind: "db", msg: updErr.message } };
+      }
+      return { ok: true };
+    }
+
+    // AUTO mode — do we already have a primary for this product? If
+    // not, this one becomes primary in the same UPDATE. Checking
+    // existence via a separate query instead of trusting the partial
+    // unique index to "just promote" because the index only rejects
+    // duplicates; it won't auto-pick one when two uploads race.
+    const { data: existingPrimary } = await supabase
+      .from("product_images")
+      .select("id")
+      .eq("product_id", productId)
+      .eq("is_primary", true)
+      .maybeSingle();
+
+    const patch: {
+      cutout_image_url: string;
+      state: "cutout_approved";
+      rembg_provider: string;
+      rembg_cost_usd: number | null;
+      is_primary?: boolean;
+    } = {
+      cutout_image_url: cutoutUrl,
+      state: "cutout_approved",
+      rembg_provider: result.provider,
+      rembg_cost_usd: result.costUsd,
+    };
+    if (!existingPrimary) patch.is_primary = true;
+
     const { error: updErr } = await supabase
       .from("product_images")
-      .update({
-        cutout_image_url: cutoutUrl,
-        state: "cutout_pending",
-        rembg_provider: result.provider,
-        rembg_cost_usd: result.costUsd,
-      })
+      .update(patch)
       .eq("id", imageId);
     if (updErr) {
       return { ok: false, error: { kind: "db", msg: updErr.message } };
@@ -153,33 +300,209 @@ async function runRembgForImage(
     return { ok: true };
   } catch (err) {
     if (err instanceof QuotaExceededError) {
+      // Park the row at cutout_failed so the UI surfaces Retry —
+      // quota resets daily and a retry tomorrow will go through.
+      if (mode === "auto") {
+        await supabase
+          .from("product_images")
+          .update({ state: "cutout_failed" })
+          .eq("id", imageId);
+      }
       return { ok: false, error: { kind: "quota", cause: err.cause } };
     }
     if (err instanceof RemBgProviderUnavailableError) {
+      if (mode === "auto") {
+        await supabase
+          .from("product_images")
+          .update({ state: "cutout_failed" })
+          .eq("id", imageId);
+      }
       return {
         ok: false,
         error: { kind: "no_provider", providerId: err.providerId },
       };
     }
     const msg = err instanceof Error ? err.message : String(err);
+    if (mode === "auto") {
+      await supabase
+        .from("product_images")
+        .update({ state: "cutout_failed" })
+        .eq("id", imageId);
+    }
     return { ok: false, error: { kind: "rembg", msg } };
   }
 }
 
+/** Thin alias used inline by uploadRawImages — runs rembg in AUTO mode. */
+async function autoProcessImage(
+  productId: string,
+  imageId: string,
+  providerId?: RemBgProviderId,
+): Promise<{ ok: true } | { ok: false; error: RembgError }> {
+  return runRembgForImage(productId, imageId, providerId, "auto");
+}
+
 /**
- * Server-action wrapper around runRembgForImage: runs rembg on one
- * image, redirects back to the caller's page with a success or error
- * query string. Called from the per-card "Cut out" button on the
- * edit workbench, and programmatically from cutouts/rejectCutout
- * when the operator picks "Re-run on Remove.bg".
+ * Retry button on a cutout_failed row. Reuses raw_image_url; no
+ * re-upload. Resets state=raw momentarily so runRembgForImage's
+ * read doesn't get confused, then runs in AUTO mode.
+ */
+export async function retryFailedImage(fd: FormData): Promise<void> {
+  const imageId = fd.get("imageId")?.toString();
+  const productId = fd.get("productId")?.toString();
+  const providerId = parseProviderId(fd.get("providerId")?.toString());
+  const returnTo = safeReturnTo(fd);
+  const base = returnTo ?? (productId ? `/admin/products/${productId}/edit` : "/admin");
+
+  if (!imageId || !productId) {
+    redirect(withQuery(base, "err", "missing_id"));
+  }
+
+  const supabase = createServiceRoleClient();
+  // Reset to raw so the row is clean for a fresh rembg pass. We do
+  // NOT clear cutout_image_url — if Retry also fails, the previous
+  // (failed) cutout is gone anyway; the row was cutout_failed, so
+  // cutout_image_url was already null.
+  const { error: resetErr } = await supabase
+    .from("product_images")
+    .update({
+      state: "raw",
+      cutout_image_url: null,
+      rembg_provider: null,
+      rembg_cost_usd: null,
+    })
+    .eq("id", imageId)
+    .eq("product_id", productId);
+  if (resetErr) {
+    redirect(withQuery(withQuery(base, "err", "db"), "msg", resetErr.message));
+  }
+
+  const res = await autoProcessImage(productId, imageId, providerId);
+  revalidatePath(`/admin/products/${productId}/edit`);
+  revalidatePath(`/admin/cutouts`);
+  revalidatePath(`/admin`);
+  revalidatePath(`/`);
+  revalidatePath(`/product/${productId}`);
+
+  if (!res.ok) {
+    const e = res.error;
+    const msg =
+      e.kind === "rembg" || e.kind === "db"
+        ? e.msg
+        : e.kind === "quota"
+          ? e.cause
+          : e.kind === "no_provider"
+            ? (e.providerId ?? "")
+            : "";
+    redirect(withQuery(withQuery(base, "err", e.kind), "msg", msg));
+  }
+  redirect(withQuery(base, "retried", "1"));
+}
+
+/**
+ * × button on an approved thumbnail. Operator is saying "the rembg
+ * result is fine, but I don't want this photo to represent the
+ * product." Different from cutout_rejected (which meant "rembg
+ * produced crap") — user_rejected is terminal for that raw image.
+ *
+ * If the rejected row was the primary, we auto-promote the next
+ * cutout_approved row (oldest first — "first approved" convention
+ * matches what auto-pipeline does for initial primaries). If none
+ * exists, clear products.thumbnail_url so the catalog falls back to
+ * a placeholder instead of rendering a broken image.
+ */
+export async function markImageUnsatisfied(fd: FormData): Promise<void> {
+  const imageId = fd.get("imageId")?.toString();
+  const returnTo = safeReturnTo(fd);
+
+  if (!imageId) {
+    redirect(
+      withQuery(returnTo ?? "/admin", "err", "missing_id"),
+    );
+  }
+
+  const supabase = createServiceRoleClient();
+  const { data: img, error: readErr } = await supabase
+    .from("product_images")
+    .select("id,product_id,is_primary,state")
+    .eq("id", imageId)
+    .single();
+  if (readErr || !img) {
+    redirect(withQuery(returnTo ?? "/admin", "err", "not_found"));
+  }
+
+  const base = returnTo ?? `/admin/products/${img.product_id}/edit`;
+
+  if (img.state !== "cutout_approved") {
+    redirect(
+      withQuery(withQuery(base, "err", "wrong_state"), "msg", img.state),
+    );
+  }
+
+  const wasPrimary = img.is_primary;
+
+  // Flip to user_rejected + drop the primary flag in one UPDATE.
+  const { error: updErr } = await supabase
+    .from("product_images")
+    .update({ state: "user_rejected", is_primary: false })
+    .eq("id", imageId);
+  if (updErr) {
+    redirect(withQuery(withQuery(base, "err", "db"), "msg", updErr.message));
+  }
+
+  if (wasPrimary) {
+    // Promote the next approved (oldest first — first-approved wins,
+    // matching the auto-pipeline's own initial-primary rule).
+    const { data: candidate } = await supabase
+      .from("product_images")
+      .select("id")
+      .eq("product_id", img.product_id)
+      .eq("state", "cutout_approved")
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+
+    if (candidate) {
+      // Setting is_primary=true fires the sync trigger which copies
+      // the candidate's cutout_image_url into products.thumbnail_url.
+      const { error: promoteErr } = await supabase
+        .from("product_images")
+        .update({ is_primary: true })
+        .eq("id", candidate.id);
+      if (promoteErr) {
+        redirect(
+          withQuery(withQuery(base, "err", "db"), "msg", promoteErr.message),
+        );
+      }
+    } else {
+      // No approved images left — clear the thumbnail so the catalog
+      // doesn't render a 404. (The trigger only propagates NEW
+      // primary URLs; it does not unset on primary removal.)
+      await supabase
+        .from("products")
+        .update({ thumbnail_url: null })
+        .eq("id", img.product_id);
+    }
+  }
+
+  revalidatePath(`/admin/products/${img.product_id}/edit`);
+  revalidatePath(`/admin/cutouts`);
+  revalidatePath(`/admin`);
+  revalidatePath(`/`);
+  revalidatePath(`/product/${img.product_id}`);
+  redirect(withQuery(base, "unsatisfied", "1"));
+}
+
+/**
+ * Server-action wrapper around runRembgForImage in REVIEW mode.
+ * Only reachable from the legacy /admin/cutouts flow (rejectCutout's
+ * "Re-run on Remove.bg" path calls this directly). New dropzone
+ * uploads go through uploadRawImages → autoProcessImage instead.
  *
  * Callable two ways:
- *   1. Directly with (productId, imageId, providerId) — used by
- *      rejectCutout's rerun path. No returnTo available there, so
- *      redirects on error default to the edit page.
- *   2. As a <form action> with productId/imageId/providerId/returnTo
- *      in FormData — used by the inline buttons on /edit. Respects
- *      returnTo (e.g. back to /admin/cutouts when called from there).
+ *   1. Directly with (productId, imageId, providerId) — from
+ *      rejectCutout(rerun="removebg"). No returnTo available.
+ *   2. As a <form action> with productId/imageId/providerId/returnTo.
  */
 export async function processImage(
   ...args:
@@ -194,11 +517,7 @@ export async function processImage(
     const fd = args[0];
     productId = fd.get("productId")?.toString() ?? "";
     imageId = fd.get("imageId")?.toString() ?? "";
-    const p = fd.get("providerId")?.toString();
-    providerId =
-      p === "replicate_rembg" || p === "removebg"
-        ? (p as RemBgProviderId)
-        : undefined;
+    providerId = parseProviderId(fd.get("providerId")?.toString());
     returnTo = safeReturnTo(fd);
   } else {
     [productId, imageId, providerId] = args as [
@@ -209,11 +528,7 @@ export async function processImage(
   }
   const base = returnTo ?? `/admin/products/${productId}/edit`;
 
-  const res = await runRembgForImage(productId, imageId, providerId);
-  // Invalidate everywhere the cutout / thumbnail might render. On a
-  // reject-and-rerun the cutout_image_url (which the sync trigger
-  // also copies into products.thumbnail_url if this row is primary
-  // and approved) changes — so /admin and / can go stale too.
+  const res = await runRembgForImage(productId, imageId, providerId, "review");
   revalidatePath(`/admin/products/${productId}/edit`);
   revalidatePath(`/admin/cutouts`);
   revalidatePath(`/admin`);
@@ -243,16 +558,13 @@ export async function processImage(
         redirect(withQuery(withQuery(base, "err", "db"), "msg", e.msg));
     }
   }
-  // On success we return void — the caller's form sits on /edit
-  // (or /cutouts rerun path); revalidatePath(...) above makes that
-  // page re-render with the updated state row. No explicit redirect.
 }
 
 /**
- * "Process all raw images for this product" button. Sequential so
- * the daily-quota math matches the audit table row-by-row; a parallel
- * blast would still be correct (advisory lock + server-side reserve)
- * but makes failures messier. Bails on first error.
+ * Legacy "Process all raw images for this product" entry-point. Kept
+ * working for the /admin/cutouts flow; new uploads don't leave rows
+ * in `raw` state long enough for this to be useful on the workbench.
+ * REVIEW mode (rows land at cutout_pending).
  */
 export async function processAllRaw(
   productId: string,
@@ -273,9 +585,8 @@ export async function processAllRaw(
 
   let processed = 0;
   for (const r of rows ?? []) {
-    const res = await runRembgForImage(productId, r.id);
+    const res = await runRembgForImage(productId, r.id, undefined, "review");
     if (!res.ok) {
-      // Revalidate what we DID process, then surface the error.
       revalidatePath(`/admin/products/${productId}/edit`);
       revalidatePath(`/admin/cutouts`);
       const e = res.error;
@@ -294,10 +605,6 @@ export async function processAllRaw(
 
   revalidatePath(`/admin/products/${productId}/edit`);
   revalidatePath(`/admin/cutouts`);
-  // Default: drop the operator into the review queue with a batch
-  // success banner. When driven from the edit workbench, returnTo
-  // keeps them on the product page so they can continue reviewing
-  // inline without a context switch.
   redirect(
     returnTo
       ? withQuery(base, "processed", String(processed))
@@ -312,7 +619,8 @@ export async function processAllRaw(
  * longer has a row pointing here). If the deleted row was the primary
  * and it had already been synced into products.thumbnail_url, the
  * thumbnail column is left pointing at a now-404 URL — we wipe it
- * here too to keep /admin and / from rendering a broken image.
+ * here too (or auto-promote another approved image) to keep /admin
+ * and / from rendering a broken image.
  *
  * Storage cleanup is best-effort: if a remove() fails (file already
  * gone, network blip) we still delete the DB row — a stray orphan in
@@ -366,14 +674,31 @@ export async function deleteProductImage(fd: FormData): Promise<void> {
     redirect(withQuery(withQuery(errBase, "err", "db"), "msg", delErr.message));
   }
 
-  // If the deleted row was the synced primary, clear the product's
-  // thumbnail_url so the catalog stops rendering a broken image.
-  // The sync trigger only RUNS thumbnail copies; it doesn't unset.
+  // If the deleted row was the synced primary, auto-promote the next
+  // approved image (same convention as markImageUnsatisfied) so the
+  // product doesn't suddenly go thumbnail-less when any one photo is
+  // pruned. If no approved candidate exists, clear thumbnail_url.
   if (img.is_primary) {
-    await supabase
-      .from("products")
-      .update({ thumbnail_url: null })
-      .eq("id", img.product_id);
+    const { data: candidate } = await supabase
+      .from("product_images")
+      .select("id")
+      .eq("product_id", img.product_id)
+      .eq("state", "cutout_approved")
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+
+    if (candidate) {
+      await supabase
+        .from("product_images")
+        .update({ is_primary: true })
+        .eq("id", candidate.id);
+    } else {
+      await supabase
+        .from("products")
+        .update({ thumbnail_url: null })
+        .eq("id", img.product_id);
+    }
   }
 
   revalidatePath(`/admin/products/${img.product_id}/edit`);
