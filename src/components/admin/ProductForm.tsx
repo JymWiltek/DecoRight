@@ -79,7 +79,7 @@ export default function ProductForm({
             <div className="mt-1 text-xs text-neutral-500">ID: {p!.id}</div>
           )}
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
           {saved && (
             <span className="rounded-md bg-emerald-50 px-3 py-1 text-xs text-emerald-700">
               Saved
@@ -91,13 +91,13 @@ export default function ProductForm({
           >
             Back
           </Link>
-          <button
-            type="submit"
-            form={FORM_ID}
-            className="rounded-md bg-black px-4 py-2 text-sm font-medium text-white hover:bg-neutral-800"
-          >
-            {isEdit ? "Save changes" : "Create product"}
-          </button>
+          {/* F6: three submit buttons, distinguished by `intent`.
+              Each <button name="intent" value="…"> posts the form;
+              the browser includes the CLICKED button's name+value
+              in FormData. parsePayload reads `intent` and overrides
+              status accordingly. Plain "Save" posts with intent=save
+              so it respects whatever status the PillGrid shows. */}
+          <SubmitButtons isEdit={isEdit} />
         </div>
       </header>
 
@@ -108,7 +108,9 @@ export default function ProductForm({
               ? "Upload failed"
               : errCode === "db"
                 ? "Database rejected the save"
-                : `Error (${errCode})`}
+                : errCode === "publish_needs_rooms"
+                  ? "Can't publish without rooms"
+                  : `Error (${errCode})`}
           </div>
           {errMsg && <div className="mt-1 text-xs">{errMsg}</div>}
         </div>
@@ -396,20 +398,14 @@ export default function ProductForm({
 
       <footer className="flex items-center justify-between border-t border-neutral-200 pt-6">
         <div>{isEdit && <DeleteButton id={p!.id} name={p!.name} />}</div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
           <Link
             href="/admin"
             className="rounded-md border border-neutral-300 px-4 py-2 text-sm hover:border-black"
           >
             Cancel
           </Link>
-          <button
-            type="submit"
-            form={FORM_ID}
-            className="rounded-md bg-black px-4 py-2 text-sm font-medium text-white hover:bg-neutral-800"
-          >
-            {isEdit ? "Save changes" : "Create product"}
-          </button>
+          <SubmitButtons isEdit={isEdit} />
         </div>
       </footer>
 
@@ -417,6 +413,76 @@ export default function ProductForm({
         <SavedToast show={Boolean(freshlyCreated)} productId={p!.id} />
       )}
     </div>
+  );
+}
+
+/**
+ * F6 submit triad: one row of three buttons in both header and
+ * footer, each distinguished by the `intent` FormData key
+ * (browsers include the CLICKED button's name+value on submit).
+ *
+ *   - Save            → intent=save      → respect the Status pill
+ *   - Save as Draft   → intent=draft     → force status=draft
+ *   - Publish         → intent=publish   → force status=published
+ *
+ * parsePayload in products/actions.ts reads `intent` and overrides
+ * the status accordingly. If the operator picks Publish but the
+ * product has no rooms, the action redirects back with a friendly
+ * error instead of letting the DB trigger throw a raw Postgres
+ * message. Publish is emerald, Draft is amber, Save is neutral —
+ * so the destructive "goes live" action stands out.
+ *
+ * On /products/new (isEdit=false) we collapse to just "Create
+ * product" because a new row is always created as draft (no images
+ * yet, no rooms to confirm publish-readiness against).
+ */
+function SubmitButtons({ isEdit }: { isEdit: boolean }) {
+  if (!isEdit) {
+    return (
+      <button
+        type="submit"
+        form={FORM_ID}
+        name="intent"
+        value="draft"
+        className="rounded-md bg-black px-4 py-2 text-sm font-medium text-white hover:bg-neutral-800"
+      >
+        Create product
+      </button>
+    );
+  }
+  return (
+    <>
+      <button
+        type="submit"
+        form={FORM_ID}
+        name="intent"
+        value="draft"
+        className="rounded-md border border-amber-300 bg-amber-50 px-3 py-1.5 text-sm font-medium text-amber-800 hover:bg-amber-100"
+        title="Save and mark as draft (hidden from storefront)"
+      >
+        Save as Draft
+      </button>
+      <button
+        type="submit"
+        form={FORM_ID}
+        name="intent"
+        value="save"
+        className="rounded-md border border-neutral-300 bg-white px-3 py-1.5 text-sm font-medium text-neutral-800 hover:border-black"
+        title="Save with the status currently selected above"
+      >
+        Save
+      </button>
+      <button
+        type="submit"
+        form={FORM_ID}
+        name="intent"
+        value="publish"
+        className="rounded-md bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700"
+        title="Save and publish — becomes visible on the storefront"
+      >
+        Publish
+      </button>
+    </>
   );
 }
 

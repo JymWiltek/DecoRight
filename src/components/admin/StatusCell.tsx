@@ -2,21 +2,22 @@
 
 /**
  * Inline status badge that opens a popover of the four status pills
- * on click. Picking a pill calls setProductStatusAction directly
- * (single-column update, doesn't touch any other field).
+ * on click. Picking a pill is only a *pending* choice — nothing
+ * writes until the operator hits Save. Cancel (or Escape, or
+ * clicking outside) discards the pending choice.
  *
- * Why no nested <form>: the /admin table is already wrapped in
- * <form id="bulk-form"> for bulk ops; nesting another <form> inside
- * is invalid HTML and silently drops the inner submit. Instead we
- * invoke the server action directly with a manually constructed
- * FormData — works because in React 19 server actions are plain
- * async functions.
+ * Why explicit Save/Cancel:
+ *   Auto-saving on pill-click is too dangerous — one mis-click
+ *   silently publishes or archives a product. Every inline edit
+ *   on this page now commits only on explicit Save. The cell's
+ *   resting appearance is unchanged, but the popover footer has
+ *   two buttons.
  *
- * Why a popover and not a <select>: a 4-state badge needs to read
- * "draft / published / archived / link_broken" instantly; a native
- * select hides the options behind a chevron. The popover also lets
- * us keep the colored chips (emerald/amber/red) so the operator
- * sees the same visual at-rest as in the table.
+ * Why no nested <form>: the /admin table is wrapped in
+ * <form id="bulk-form"> for bulk ops; nesting forms is invalid
+ * HTML and the inner submit is dropped. We call the server action
+ * directly with a manually-built FormData — works because React
+ * 19 server actions are plain async functions.
  */
 
 import { useEffect, useRef, useState, useTransition } from "react";
@@ -42,10 +43,15 @@ type Props = {
 export default function StatusCell({ productId, current }: Props) {
   const [open, setOpen] = useState(false);
   const [pending, startTransition] = useTransition();
+  // Pending = the pill the user clicked but hasn't saved yet.
+  // Starts at `current` every time the popover opens, so Cancel
+  // returns to the row's actual DB state.
+  const [draft, setDraft] = useState<ProductStatus>(current);
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!open) return;
+    setDraft(current); // reset whenever opening so Cancel works.
     function onClick(e: MouseEvent) {
       if (!ref.current?.contains(e.target as Node)) setOpen(false);
     }
@@ -58,13 +64,17 @@ export default function StatusCell({ productId, current }: Props) {
       document.removeEventListener("mousedown", onClick);
       document.removeEventListener("keydown", onKey);
     };
-  }, [open]);
+  }, [open, current]);
 
-  function pick(next: ProductStatus) {
+  function save() {
+    if (draft === current) {
+      setOpen(false);
+      return;
+    }
     setOpen(false);
     const fd = new FormData();
     fd.set("id", productId);
-    fd.set("status", next);
+    fd.set("status", draft);
     startTransition(async () => {
       await setProductStatusAction(fd);
     });
@@ -84,21 +94,44 @@ export default function StatusCell({ productId, current }: Props) {
         {PRODUCT_STATUS_LABELS[current]}
       </button>
       {open && (
-        <div className="absolute left-0 top-full z-20 mt-1 flex flex-col gap-1 rounded-md border border-neutral-200 bg-white p-2 shadow-lg">
-          {PRODUCT_STATUSES.map((s) => (
+        <div className="absolute left-0 top-full z-20 mt-1 flex flex-col gap-2 rounded-md border border-neutral-200 bg-white p-2 shadow-lg">
+          <div className="flex flex-col gap-1">
+            {PRODUCT_STATUSES.map((s) => (
+              <button
+                key={s}
+                type="button"
+                onClick={() => setDraft(s)}
+                className={`whitespace-nowrap rounded-full px-3 py-1 text-left text-xs transition ${
+                  s === draft
+                    ? `${STATUS_STYLES[s]} font-semibold ring-1 ring-black`
+                    : `${STATUS_STYLES[s]} hover:opacity-80`
+                }`}
+              >
+                {PRODUCT_STATUS_LABELS[s]}
+              </button>
+            ))}
+          </div>
+          <div className="flex items-center justify-end gap-1 border-t border-neutral-200 pt-2">
             <button
-              key={s}
               type="button"
-              onClick={() => pick(s)}
-              className={`whitespace-nowrap rounded-full px-3 py-1 text-left text-xs transition ${
-                s === current
-                  ? `${STATUS_STYLES[s]} font-semibold ring-1 ring-black`
-                  : `${STATUS_STYLES[s]} hover:opacity-80`
+              onClick={() => setOpen(false)}
+              className="rounded border border-neutral-300 bg-white px-2 py-0.5 text-[11px] text-neutral-700 hover:border-neutral-500"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={save}
+              disabled={draft === current}
+              className={`rounded px-2 py-0.5 text-[11px] font-medium text-white ${
+                draft === current
+                  ? "bg-neutral-300"
+                  : "bg-black hover:bg-neutral-800"
               }`}
             >
-              {PRODUCT_STATUS_LABELS[s]}
+              Save
             </button>
-          ))}
+          </div>
         </div>
       )}
     </div>

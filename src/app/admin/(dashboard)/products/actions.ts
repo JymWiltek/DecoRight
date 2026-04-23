@@ -126,6 +126,24 @@ async function parsePayload(fd: FormData): Promise<Omit<ProductInsert, "id">> {
     if (allowed?.has(subtypeRaw)) subtype = subtypeRaw;
   }
 
+  // F6: three submit buttons on the product form, each carrying a
+  // different `intent` via <button name="intent" value="…">:
+  //   - intent="draft"    → force status=draft (Save as Draft)
+  //   - intent="publish"  → force status=published (Publish)
+  //   - intent="save" or missing → respect whatever the Status
+  //     PillGrid selected (plain Save)
+  // Doing the override here means every call-site (create + update)
+  // gets it for free and can't forget.
+  const intent = str(fd, "intent");
+  const pickedStatus =
+    (pickOne(str(fd, "status"), PRODUCT_STATUSES) as ProductStatus) ?? "draft";
+  const status: ProductStatus =
+    intent === "draft"
+      ? "draft"
+      : intent === "publish"
+        ? "published"
+        : pickedStatus;
+
   return {
     name,
     brand: str(fd, "brand"),
@@ -143,8 +161,7 @@ async function parsePayload(fd: FormData): Promise<Omit<ProductInsert, "id">> {
     purchase_url: str(fd, "purchase_url"),
     supplier: str(fd, "supplier"),
     description: str(fd, "description"),
-    status:
-      (pickOne(str(fd, "status"), PRODUCT_STATUSES) as ProductStatus) ?? "draft",
+    status,
     ai_filled_fields: fd.getAll("ai_filled_fields").map((x) => x.toString()),
   };
 }
@@ -196,6 +213,18 @@ export async function createProduct(fd: FormData): Promise<void> {
     );
   }
 
+  // Same Migration 0013 trigger check as updateProduct — but
+  // /products/new doesn't currently surface a room picker, so
+  // new products always come in as draft. Still guard explicitly
+  // in case a future form grows rooms before the guard moves.
+  if (payload.status === "published" && (payload.room_slugs?.length ?? 0) === 0) {
+    redirect(
+      `/admin/products/new?err=publish_needs_rooms&msg=${encodeURIComponent(
+        "Pick at least one room before publishing.",
+      )}`,
+    );
+  }
+
   const { error } = await supabase
     .from("products")
     .insert({ id, ...payload, glb_url, glb_size_kb, thumbnail_url });
@@ -214,6 +243,21 @@ export async function createProduct(fd: FormData): Promise<void> {
 export async function updateProduct(id: string, fd: FormData): Promise<void> {
   const payload = await parsePayload(fd);
   const supabase = createServiceRoleClient();
+
+  // Friendly guard for Migration 0013's products_check_rooms_required
+  // trigger: "published ⇒ room_slugs non-empty". Without this pre-check
+  // the operator just gets a raw Postgres error string. Applies to
+  // status transitions to `published` — draft is always allowed.
+  // Repro path for caf09f7d: its item_type had no room_slug pre-0013,
+  // the backfill left room_slugs empty, and hitting Save with status
+  // still "published" bounced off the trigger.
+  if (payload.status === "published" && (payload.room_slugs?.length ?? 0) === 0) {
+    redirect(
+      `/admin/products/${id}/edit?err=publish_needs_rooms&msg=${encodeURIComponent(
+        "Pick at least one room before publishing. Draft is still fine with no rooms.",
+      )}`,
+    );
+  }
 
   const updates: ProductUpdate = { ...payload };
 
