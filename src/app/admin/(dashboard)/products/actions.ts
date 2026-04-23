@@ -20,25 +20,40 @@ import type {
 
 // Taxonomy slugs are validated against the live DB tables — not a
 // hard-coded list — so operators can add new item types / rooms /
-// styles / colors / materials without a code change.
+// styles / colors / regions without a code change.
 async function loadValidSlugs(): Promise<{
   itemTypes: Set<string>;
+  /** item_type slug → set of allowed subtype slugs. (item_type,
+   *  subtype) must match together; this map lets us validate the
+   *  pair in one lookup. */
+  subtypesByItemType: Map<string, Set<string>>;
   styles: Set<string>;
   materials: Set<string>;
   colors: Set<string>;
+  regions: Set<string>;
 }> {
   const supabase = createServiceRoleClient();
-  const [it, st, mt, co] = await Promise.all([
+  const [it, sub, st, mt, co, rg] = await Promise.all([
     supabase.from("item_types").select("slug"),
+    supabase.from("item_subtypes").select("slug,item_type_slug"),
     supabase.from("styles").select("slug"),
     supabase.from("materials").select("slug"),
     supabase.from("colors").select("slug"),
+    supabase.from("regions").select("slug"),
   ]);
+  const subtypesByItemType = new Map<string, Set<string>>();
+  for (const row of sub.data ?? []) {
+    const set = subtypesByItemType.get(row.item_type_slug) ?? new Set<string>();
+    set.add(row.slug);
+    subtypesByItemType.set(row.item_type_slug, set);
+  }
   return {
     itemTypes: new Set((it.data ?? []).map((r) => r.slug)),
+    subtypesByItemType,
     styles: new Set((st.data ?? []).map((r) => r.slug)),
     materials: new Set((mt.data ?? []).map((r) => r.slug)),
     colors: new Set((co.data ?? []).map((r) => r.slug)),
+    regions: new Set((rg.data ?? []).map((r) => r.slug)),
   };
 }
 
@@ -96,13 +111,27 @@ async function parsePayload(fd: FormData): Promise<Omit<ProductInsert, "id">> {
   const name = str(fd, "name");
   if (!name) throw new Error("name required");
 
+  const itemType = pickOneFromSet(str(fd, "item_type"), valid.itemTypes);
+  // Subtype must belong to the picked item_type. If item_type is null
+  // OR the subtype string isn't in that item_type's subtypes, drop it
+  // silently (rather than error) — the trigger in migration 0011 also
+  // enforces this so the DB is the final word.
+  let subtype: string | null = null;
+  const subtypeRaw = str(fd, "subtype_slug");
+  if (subtypeRaw && itemType) {
+    const allowed = valid.subtypesByItemType.get(itemType);
+    if (allowed?.has(subtypeRaw)) subtype = subtypeRaw;
+  }
+
   return {
     name,
     brand: str(fd, "brand"),
-    item_type: pickOneFromSet(str(fd, "item_type"), valid.itemTypes),
+    item_type: itemType,
+    subtype_slug: subtype,
     styles: pickManyFromSet(fd, "styles", valid.styles),
     colors: pickManyFromSet(fd, "colors", valid.colors),
     materials: pickManyFromSet(fd, "materials", valid.materials),
+    store_locations: pickManyFromSet(fd, "store_locations", valid.regions),
     dimensions_mm: parseDimensions(fd),
     weight_kg: num(fd, "weight_kg"),
     price_myr: num(fd, "price_myr"),
@@ -122,34 +151,60 @@ function fileOrNull(fd: FormData, key: string): File | null {
   return null;
 }
 
+/**
+ * Encode a Supabase storage / generic upload error into a redirect
+ * query so the form can show a real message instead of a 500 page.
+ * Rethrows non-error throwables as a fallback.
+ */
+function uploadErrMsg(err: unknown, defaultLabel: string): string {
+  if (err instanceof Error) return err.message;
+  return defaultLabel;
+}
+
 export async function createProduct(fd: FormData): Promise<void> {
+  // /admin/products/new only ships the `name` input. parsePayload
+  // returns sane defaults (empty arrays, draft status) for everything
+  // else so the form-shape doesn't matter here.
   const payload = await parsePayload(fd);
   const id = crypto.randomUUID();
   const supabase = createServiceRoleClient();
 
+  // GLB and thumbnail can be uploaded from /products/new too if the
+  // form ever grows to include them — keep them optional so a name-
+  // only submit still works.
   let glb_url: string | null = null;
   let glb_size_kb: number | null = null;
   let thumbnail_url: string | null = null;
 
-  const glb = fileOrNull(fd, "glb_file");
-  if (glb) {
-    glb_url = await uploadGlb(id, glb);
-    glb_size_kb = Math.round(glb.size / 1024);
-  }
-  const thumb = fileOrNull(fd, "thumbnail_file");
-  if (thumb) {
-    thumbnail_url = await uploadThumbnail(id, thumb);
+  try {
+    const glb = fileOrNull(fd, "glb_file");
+    if (glb) {
+      glb_url = await uploadGlb(id, glb);
+      glb_size_kb = Math.round(glb.size / 1024);
+    }
+    const thumb = fileOrNull(fd, "thumbnail_file");
+    if (thumb) {
+      thumbnail_url = await uploadThumbnail(id, thumb);
+    }
+  } catch (err) {
+    redirect(
+      `/admin/products/new?err=upload&msg=${encodeURIComponent(uploadErrMsg(err, "upload failed"))}`,
+    );
   }
 
   const { error } = await supabase
     .from("products")
     .insert({ id, ...payload, glb_url, glb_size_kb, thumbnail_url });
-  if (error) throw error;
+  if (error) {
+    redirect(
+      `/admin/products/new?err=db&msg=${encodeURIComponent(error.message)}`,
+    );
+  }
 
   revalidatePath("/admin");
   revalidatePath("/");
   invalidatePublishedCountsCache();
-  redirect(`/admin/products/${id}/edit?saved=1`);
+  redirect(`/admin/products/${id}/edit?saved=1&fresh=1`);
 }
 
 export async function updateProduct(id: string, fd: FormData): Promise<void> {
@@ -158,18 +213,28 @@ export async function updateProduct(id: string, fd: FormData): Promise<void> {
 
   const updates: ProductUpdate = { ...payload };
 
-  const glb = fileOrNull(fd, "glb_file");
-  if (glb) {
-    updates.glb_url = await uploadGlb(id, glb);
-    updates.glb_size_kb = Math.round(glb.size / 1024);
-  }
-  const thumb = fileOrNull(fd, "thumbnail_file");
-  if (thumb) {
-    updates.thumbnail_url = await uploadThumbnail(id, thumb);
+  try {
+    const glb = fileOrNull(fd, "glb_file");
+    if (glb) {
+      updates.glb_url = await uploadGlb(id, glb);
+      updates.glb_size_kb = Math.round(glb.size / 1024);
+    }
+    const thumb = fileOrNull(fd, "thumbnail_file");
+    if (thumb) {
+      updates.thumbnail_url = await uploadThumbnail(id, thumb);
+    }
+  } catch (err) {
+    redirect(
+      `/admin/products/${id}/edit?err=upload&msg=${encodeURIComponent(uploadErrMsg(err, "upload failed"))}`,
+    );
   }
 
   const { error } = await supabase.from("products").update(updates).eq("id", id);
-  if (error) throw error;
+  if (error) {
+    redirect(
+      `/admin/products/${id}/edit?err=db&msg=${encodeURIComponent(error.message)}`,
+    );
+  }
 
   revalidatePath("/admin");
   revalidatePath("/");
@@ -185,7 +250,122 @@ export async function deleteProduct(id: string): Promise<void> {
   revalidatePath("/admin");
   revalidatePath("/");
   invalidatePublishedCountsCache();
+  redirect("/admin?deleted=1");
+}
+
+// ─── Inline-edit actions used by the /admin table ──────────────
+//
+// Each takes (id, value) and writes a single column. We don't reuse
+// `updateProduct` because it parses the entire payload — these are
+// invoked from per-cell forms that only carry one value, and parsing
+// "missing" fields as null would clobber unrelated columns.
+
+export async function setProductStatusAction(fd: FormData): Promise<void> {
+  const id = str(fd, "id");
+  const next = pickOne(str(fd, "status"), PRODUCT_STATUSES) as
+    | ProductStatus
+    | null;
+  if (!id || !next) return;
+  const supabase = createServiceRoleClient();
+  const { error } = await supabase
+    .from("products")
+    .update({ status: next })
+    .eq("id", id);
+  if (error) {
+    redirect(
+      `/admin?err=status&msg=${encodeURIComponent(error.message)}`,
+    );
+  }
+  revalidatePath("/admin");
+  revalidatePath("/");
+  revalidatePath(`/product/${id}`);
+  invalidatePublishedCountsCache();
   redirect("/admin");
+}
+
+export async function setProductPriceAction(fd: FormData): Promise<void> {
+  const id = str(fd, "id");
+  if (!id) return;
+  const raw = str(fd, "price_myr");
+  // Empty input ⇒ clear the price. Number input is browser-validated
+  // but we re-parse here defensively.
+  const price = raw == null ? null : Number(raw);
+  if (raw != null && !Number.isFinite(price)) {
+    redirect(`/admin?err=price&msg=invalid+number`);
+  }
+  const supabase = createServiceRoleClient();
+  const { error } = await supabase
+    .from("products")
+    .update({ price_myr: price as number | null })
+    .eq("id", id);
+  if (error) {
+    redirect(`/admin?err=price&msg=${encodeURIComponent(error.message)}`);
+  }
+  revalidatePath("/admin");
+  revalidatePath(`/product/${id}`);
+  redirect("/admin");
+}
+
+export async function setProductItemTypeAction(fd: FormData): Promise<void> {
+  const id = str(fd, "id");
+  const slug = str(fd, "item_type");
+  if (!id) return;
+  const valid = await loadValidSlugs();
+  const itemType = slug && valid.itemTypes.has(slug) ? slug : null;
+  const supabase = createServiceRoleClient();
+  // Changing item_type clears subtype — old subtype almost certainly
+  // doesn't belong to the new item_type, and the DB trigger would
+  // reject the update otherwise.
+  const { error } = await supabase
+    .from("products")
+    .update({ item_type: itemType, subtype_slug: null })
+    .eq("id", id);
+  if (error) {
+    redirect(`/admin?err=item_type&msg=${encodeURIComponent(error.message)}`);
+  }
+  revalidatePath("/admin");
+  revalidatePath("/");
+  revalidatePath(`/product/${id}`);
+  invalidatePublishedCountsCache();
+  redirect("/admin");
+}
+
+// ─── Bulk operations ─────────────────────────────────────────────
+
+export async function bulkUpdateStatusAction(fd: FormData): Promise<void> {
+  const ids = fd.getAll("ids").map((x) => x.toString()).filter(Boolean);
+  const next = pickOne(str(fd, "status"), PRODUCT_STATUSES) as
+    | ProductStatus
+    | null;
+  if (!ids.length || !next) {
+    redirect("/admin");
+  }
+  const supabase = createServiceRoleClient();
+  const { error } = await supabase
+    .from("products")
+    .update({ status: next })
+    .in("id", ids);
+  if (error) {
+    redirect(`/admin?err=bulk&msg=${encodeURIComponent(error.message)}`);
+  }
+  revalidatePath("/admin");
+  revalidatePath("/");
+  invalidatePublishedCountsCache();
+  redirect(`/admin?bulk=${ids.length}&status=${next}`);
+}
+
+export async function bulkDeleteAction(fd: FormData): Promise<void> {
+  const ids = fd.getAll("ids").map((x) => x.toString()).filter(Boolean);
+  if (!ids.length) redirect("/admin");
+  const supabase = createServiceRoleClient();
+  const { error } = await supabase.from("products").delete().in("id", ids);
+  if (error) {
+    redirect(`/admin?err=bulk_delete&msg=${encodeURIComponent(error.message)}`);
+  }
+  revalidatePath("/admin");
+  revalidatePath("/");
+  invalidatePublishedCountsCache();
+  redirect(`/admin?bulk_deleted=${ids.length}`);
 }
 
 export async function runAiInfer(fd: FormData): Promise<{

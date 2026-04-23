@@ -1,7 +1,8 @@
 import { loadTaxonomy } from "@/lib/taxonomy";
-import { addTaxonomyItem } from "./actions";
+import { addTaxonomyItem, addSubtype } from "./actions";
 import AutoTranslateButton from "./AutoTranslateButton";
 import DeleteChip from "./DeleteChip";
+import SubtypeChip from "./SubtypeChip";
 
 export const dynamic = "force-dynamic";
 
@@ -36,10 +37,12 @@ export default async function TaxonomyPage({ searchParams }: PageProps) {
 
   const missingCount =
     countMissing(tx.itemTypes) +
+    countMissing(tx.itemSubtypes) +
     countMissing(tx.rooms) +
     countMissing(tx.styles) +
     countMissing(tx.materials) +
-    countMissing(tx.colors);
+    countMissing(tx.colors) +
+    countMissing(tx.regions);
 
   return (
     <div className="mx-auto max-w-5xl space-y-6 px-6 py-8">
@@ -133,7 +136,274 @@ export default async function TaxonomyPage({ searchParams }: PageProps) {
           hex: r.hex,
         }))}
       />
+
+      <SubtypesBlock
+        itemTypes={tx.itemTypes.map((r) => ({ slug: r.slug, label: r.label_en }))}
+        rooms={tx.rooms.map((r) => ({ slug: r.slug, label: r.label_en }))}
+        subtypes={tx.itemSubtypes.map((s) => ({
+          slug: s.slug,
+          item_type_slug: s.item_type_slug,
+          room_slug: s.room_slug,
+          label_en: s.label_en,
+          label_zh: s.label_zh,
+          label_ms: s.label_ms,
+        }))}
+      />
+
+      <RegionsBlock
+        regions={tx.regions.map((r) => ({
+          slug: r.slug,
+          label_en: r.label_en,
+          label_zh: r.label_zh,
+          label_ms: r.label_ms,
+          region: r.region,
+        }))}
+      />
     </div>
+  );
+}
+
+// ─── Subtypes ──────────────────────────────────────────────────────
+//
+// Subtypes have an extra dimension over the other taxonomy tables
+// — they belong to an item_type AND own a room. Render them grouped
+// by item_type so the operator can see "what does TV cabinet have
+// today" at a glance, with an inline add-form that prefills the
+// item_type for that group.
+
+type SubtypeRow = {
+  slug: string;
+  item_type_slug: string;
+  room_slug: string;
+  label_en: string;
+  label_zh: string | null;
+  label_ms: string | null;
+};
+
+function SubtypesBlock({
+  itemTypes,
+  rooms,
+  subtypes,
+}: {
+  itemTypes: { slug: string; label: string }[];
+  rooms: { slug: string; label: string }[];
+  subtypes: SubtypeRow[];
+}) {
+  const byItemType = new Map<string, SubtypeRow[]>();
+  for (const s of subtypes) {
+    const arr = byItemType.get(s.item_type_slug) ?? [];
+    arr.push(s);
+    byItemType.set(s.item_type_slug, arr);
+  }
+
+  return (
+    <section className="rounded-lg border border-neutral-200 bg-white p-5">
+      <div className="mb-3 flex items-baseline justify-between">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-neutral-500">
+          Item subtypes
+        </h2>
+        <span className="text-xs text-neutral-400">
+          Optional drill-down on an item type · subtype owns its own room
+        </span>
+      </div>
+
+      {itemTypes.length === 0 ? (
+        <div className="text-xs text-neutral-400">
+          (No item types yet — add some above first.)
+        </div>
+      ) : (
+        <div className="flex flex-col gap-5">
+          {itemTypes.map((it) => {
+            const subs = byItemType.get(it.slug) ?? [];
+            return (
+              <div key={it.slug} className="border-l-2 border-neutral-200 pl-4">
+                <div className="mb-2 flex items-baseline gap-2">
+                  <span className="text-sm font-medium text-neutral-800">
+                    {it.label}
+                  </span>
+                  <span className="text-[11px] text-neutral-400">
+                    ({it.slug}) · {subs.length} subtype(s)
+                  </span>
+                </div>
+                <div className="mb-2 flex flex-wrap gap-2">
+                  {subs.length === 0 && (
+                    <span className="text-xs text-neutral-400">
+                      (none — products will use the item type&rsquo;s room)
+                    </span>
+                  )}
+                  {subs.map((s) => (
+                    <SubtypeChip
+                      key={`${s.item_type_slug}::${s.slug}`}
+                      itemTypeSlug={s.item_type_slug}
+                      slug={s.slug}
+                      label={s.label_en}
+                      roomSlug={s.room_slug}
+                      labelZh={s.label_zh}
+                      labelMs={s.label_ms}
+                    />
+                  ))}
+                </div>
+                <form
+                  action={addSubtype}
+                  className="grid grid-cols-1 items-end gap-2 md:grid-cols-[1fr_1fr_180px_auto]"
+                >
+                  <input
+                    type="hidden"
+                    name="item_type_slug"
+                    value={it.slug}
+                  />
+                  <label className="flex flex-col gap-1">
+                    <span className="text-[11px] text-neutral-600">
+                      Label (en) *
+                    </span>
+                    <input
+                      name="label_en"
+                      required
+                      placeholder="e.g. Floating"
+                      className="rounded-md border border-neutral-300 px-3 py-1.5 text-sm focus:border-black focus:outline-none"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    <span className="text-[11px] text-neutral-600">
+                      slug (auto)
+                    </span>
+                    <input
+                      name="slug"
+                      placeholder="a-z 0-9 _"
+                      pattern="[a-z0-9_]+"
+                      className="rounded-md border border-neutral-300 px-3 py-1.5 text-sm focus:border-black focus:outline-none"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    <span className="text-[11px] text-neutral-600">
+                      Room (subtype-owned) *
+                    </span>
+                    <select
+                      name="room_slug"
+                      required
+                      defaultValue={rooms[0]?.slug ?? ""}
+                      className="rounded-md border border-neutral-300 px-3 py-1.5 text-sm focus:border-black focus:outline-none"
+                    >
+                      {rooms.map((r) => (
+                        <option key={r.slug} value={r.slug}>
+                          {r.label} ({r.slug})
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <button
+                    type="submit"
+                    className="rounded-md bg-black px-3 py-1.5 text-sm font-medium text-white hover:bg-neutral-800"
+                  >
+                    Add
+                  </button>
+                </form>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
+}
+
+// ─── Regions ───────────────────────────────────────────────────────
+//
+// Regions are seeded by migration 0011 — the operator can't add /
+// remove them (Malaysia has a fixed 13 states + 3 federal territories)
+// but they need translation visibility, so render them read-only with
+// the same ZH/MS missing-indicator as the other blocks.
+
+type RegionRow = {
+  slug: string;
+  label_en: string;
+  label_zh: string | null;
+  label_ms: string | null;
+  region: string;
+};
+
+const REGION_GROUP_LABELS: Record<string, string> = {
+  north: "Northern",
+  central: "Central",
+  south: "Southern",
+  east: "East Coast",
+  sabah_sarawak: "East Malaysia",
+};
+const REGION_GROUP_ORDER = [
+  "north",
+  "central",
+  "south",
+  "east",
+  "sabah_sarawak",
+];
+
+function RegionsBlock({ regions }: { regions: RegionRow[] }) {
+  const byGroup = new Map<string, RegionRow[]>();
+  for (const r of regions) {
+    const arr = byGroup.get(r.region) ?? [];
+    arr.push(r);
+    byGroup.set(r.region, arr);
+  }
+  return (
+    <section className="rounded-lg border border-neutral-200 bg-white p-5">
+      <div className="mb-3 flex items-baseline justify-between">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-neutral-500">
+          Regions
+        </h2>
+        <span className="text-xs text-neutral-400">
+          Read-only · seeded by migration 0011 (13 states + 3 FT)
+        </span>
+      </div>
+      {regions.length === 0 ? (
+        <div className="text-xs text-rose-600">
+          No regions seeded — run migration 0011.
+        </div>
+      ) : (
+        <div className="flex flex-col gap-4">
+          {REGION_GROUP_ORDER.map((g) => {
+            const inGroup = byGroup.get(g) ?? [];
+            if (!inGroup.length) return null;
+            return (
+              <div key={g}>
+                <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-neutral-500">
+                  {REGION_GROUP_LABELS[g] ?? g}
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {inGroup.map((r) => {
+                    const bothMissing =
+                      r.label_zh == null && r.label_ms == null;
+                    return (
+                      <div
+                        key={r.slug}
+                        className={`inline-flex flex-col rounded-md border px-2.5 py-1.5 text-xs ${
+                          bothMissing
+                            ? "border-amber-300 bg-amber-50"
+                            : "border-neutral-300 bg-white"
+                        }`}
+                      >
+                        <div className="font-medium">{r.label_en}</div>
+                        <div className="mt-0.5 flex gap-2 text-[10px] leading-tight text-neutral-500">
+                          <span
+                            className={r.label_zh ? "" : "text-amber-600"}
+                          >
+                            ZH: {r.label_zh ?? "—"}
+                          </span>
+                          <span
+                            className={r.label_ms ? "" : "text-amber-600"}
+                          >
+                            MS: {r.label_ms ?? "—"}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </section>
   );
 }
 

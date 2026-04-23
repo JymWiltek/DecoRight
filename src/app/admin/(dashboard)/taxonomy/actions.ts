@@ -18,6 +18,11 @@ const VALID_KINDS: TaxonomyKind[] = [
   "colors",
 ];
 
+/** Wider kind that includes subtypes + regions for translation jobs only.
+ *  These two have non-standard schemas (compound key / read-only seed),
+ *  so they aren't part of the generic add/delete CRUD above. */
+type TranslatableKind = TaxonomyKind | "item_subtypes" | "regions";
+
 function slugify(input: string): string {
   // Always normalize: lowercase, ASCII-only, collapse everything else to `_`.
   // Runs on both the label fallback AND any user-typed slug — we never
@@ -158,10 +163,93 @@ export async function deleteTaxonomyItem(fd: FormData): Promise<void> {
   redirect(`/admin/taxonomy?deleted=${kind}`);
 }
 
+// ─── subtypes (item_subtypes) ──────────────────────────────────────
+//
+// Subtypes are NOT in the standard taxonomy CRUD because they have
+// two extra required fields: item_type_slug (which item_type they
+// belong to) AND room_slug (which room the subtype owns — overrides
+// item_type's room when picked, see migration 0011).
+
+export async function addSubtype(fd: FormData): Promise<void> {
+  const itemType = fd.get("item_type_slug")?.toString().trim() ?? "";
+  const room = fd.get("room_slug")?.toString().trim() ?? "";
+  const label = fd.get("label_en")?.toString().trim() ?? "";
+  const slugRaw = fd.get("slug")?.toString().trim() ?? "";
+
+  if (!itemType || !room || !label) {
+    redirect(`/admin/taxonomy?err=label&kind=item_subtypes`);
+  }
+  const slug = slugify(slugRaw || label);
+  if (!slug) {
+    redirect(`/admin/taxonomy?err=slug&kind=item_subtypes`);
+  }
+
+  const supabase = createServiceRoleClient();
+  const { error } = await supabase.from("item_subtypes").insert({
+    slug,
+    item_type_slug: itemType,
+    room_slug: room,
+    label_en: label,
+  });
+  if (error) {
+    redirect(
+      `/admin/taxonomy?err=db&kind=item_subtypes&msg=${encodeURIComponent(error.message)}`,
+    );
+  }
+
+  invalidateTaxonomyCache();
+  revalidatePath("/admin/taxonomy");
+  revalidatePath("/admin/products/new");
+  revalidatePath("/");
+  redirect(`/admin/taxonomy?added=item_subtypes`);
+}
+
+export async function deleteSubtype(fd: FormData): Promise<void> {
+  const itemType = fd.get("item_type_slug")?.toString() ?? "";
+  const slug = fd.get("slug")?.toString() ?? "";
+  if (!itemType || !slug) return;
+
+  const supabase = createServiceRoleClient();
+
+  // Refuse if any product still references this (item_type, subtype) pair.
+  const { count, error: countErr } = await supabase
+    .from("products")
+    .select("id", { count: "exact", head: true })
+    .eq("item_type", itemType)
+    .eq("subtype_slug", slug);
+  if (countErr) {
+    redirect(
+      `/admin/taxonomy?err=db&kind=item_subtypes&msg=${encodeURIComponent(countErr.message)}`,
+    );
+  }
+  if ((count ?? 0) > 0) {
+    redirect(
+      `/admin/taxonomy?err=inuse&kind=item_subtypes&slug=${encodeURIComponent(slug)}&count=${count ?? 0}`,
+    );
+  }
+
+  const { error } = await supabase
+    .from("item_subtypes")
+    .delete()
+    .eq("item_type_slug", itemType)
+    .eq("slug", slug);
+  if (error) {
+    redirect(
+      `/admin/taxonomy?err=db&kind=item_subtypes&msg=${encodeURIComponent(error.message)}`,
+    );
+  }
+
+  invalidateTaxonomyCache();
+  revalidatePath("/admin/taxonomy");
+  revalidatePath("/admin/products/new");
+  revalidatePath("/");
+  redirect(`/admin/taxonomy?deleted=item_subtypes`);
+}
+
 // ─── translate missing labels (OpenAI GPT-4o-mini) ─────────────────
 
 type TranslateJob = {
-  kind: TaxonomyKind;
+  kind: TranslatableKind;
   slug: string;
   label_en: string;
   need_zh: boolean;
@@ -280,11 +368,15 @@ export async function translateMissingTaxonomy(): Promise<void> {
   const supabase = createServiceRoleClient();
 
   // Pull every row from every taxonomy table where at least one
-  // translation column is null. We do 5 parallel queries — there are
-  // only ~5-50 rows per table so this is cheap.
-  const [it, rm, st, mt, co] = await Promise.all([
+  // translation column is null. 7 parallel queries — each table has
+  // ~5-50 rows so this is cheap. Subtypes + regions added in 0011.
+  const [it, sub, rm, st, mt, co, rg] = await Promise.all([
     supabase
       .from("item_types")
+      .select("slug, label_en, label_zh, label_ms")
+      .or("label_zh.is.null,label_ms.is.null"),
+    supabase
+      .from("item_subtypes")
       .select("slug, label_en, label_zh, label_ms")
       .or("label_zh.is.null,label_ms.is.null"),
     supabase
@@ -303,9 +395,13 @@ export async function translateMissingTaxonomy(): Promise<void> {
       .from("colors")
       .select("slug, label_en, label_zh, label_ms")
       .or("label_zh.is.null,label_ms.is.null"),
+    supabase
+      .from("regions")
+      .select("slug, label_en, label_zh, label_ms")
+      .or("label_zh.is.null,label_ms.is.null"),
   ]);
 
-  for (const r of [it, rm, st, mt, co]) {
+  for (const r of [it, sub, rm, st, mt, co, rg]) {
     if (r.error) {
       redirect(
         `/admin/taxonomy?err=db&kind=translate&msg=${encodeURIComponent(r.error.message)}`,
@@ -317,6 +413,15 @@ export async function translateMissingTaxonomy(): Promise<void> {
     ...(it.data ?? []).map(
       (r): TranslateJob => ({
         kind: "item_types",
+        slug: r.slug,
+        label_en: r.label_en,
+        need_zh: r.label_zh == null,
+        need_ms: r.label_ms == null,
+      }),
+    ),
+    ...(sub.data ?? []).map(
+      (r): TranslateJob => ({
+        kind: "item_subtypes",
         slug: r.slug,
         label_en: r.label_en,
         need_zh: r.label_zh == null,
@@ -353,6 +458,15 @@ export async function translateMissingTaxonomy(): Promise<void> {
     ...(co.data ?? []).map(
       (r): TranslateJob => ({
         kind: "colors",
+        slug: r.slug,
+        label_en: r.label_en,
+        need_zh: r.label_zh == null,
+        need_ms: r.label_ms == null,
+      }),
+    ),
+    ...(rg.data ?? []).map(
+      (r): TranslateJob => ({
+        kind: "regions",
         slug: r.slug,
         label_en: r.label_en,
         need_zh: r.label_zh == null,

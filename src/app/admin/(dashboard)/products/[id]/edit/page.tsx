@@ -14,6 +14,7 @@ type PageProps = {
   params: Promise<{ id: string }>;
   searchParams: Promise<{
     saved?: string;
+    fresh?: string;
     uploaded?: string;
     approved?: string;
     failed?: string;
@@ -69,6 +70,9 @@ export default async function EditProductPage({
       taxonomy={taxonomy}
       action={action}
       saved={sp.saved === "1"}
+      freshlyCreated={sp.fresh === "1"}
+      errCode={sp.err}
+      errMsg={sp.msg}
       imagesSection={
         <ProductImagesSection
           productId={id}

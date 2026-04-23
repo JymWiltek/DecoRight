@@ -6,9 +6,14 @@ import {
 } from "@/lib/constants/enum-labels";
 import type { ProductRow } from "@/lib/supabase/types";
 import type { Taxonomy } from "@/lib/taxonomy";
+import { deriveRoomSlug } from "@/lib/taxonomy";
 import PillGrid from "./PillGrid";
+import SubtypePicker from "./SubtypePicker";
+import RegionsPicker from "./RegionsPicker";
+import FileDropzone from "./FileDropzone";
 import AIInferButton from "./AIInferButton";
 import DeleteButton from "./DeleteButton";
+import SavedToast from "./SavedToast";
 
 type Props = {
   product?: ProductRow | null;
@@ -16,17 +21,15 @@ type Props = {
   action: (fd: FormData) => void | Promise<void>;
   saved?: boolean;
   /**
-   * Inline image management, rendered between Basics and Item type.
-   * Only meaningful on the edit workbench (we need a product id to
-   * hang images off). The new-product page passes `undefined`.
-   *
-   * Rendered as a sibling of the main product <form> — NOT inside
-   * it — because the image section contains its own server-action
-   * <form> elements (upload, approve, reject, …) and HTML forbids
-   * nested forms. All product-data fields use `form={FORM_ID}` to
-   * associate with the top-level update form regardless of where
-   * they live in the DOM tree.
+   * When true, render the post-create toast (the one with "+ Another"
+   * and "View" actions). Triggered by ?fresh=1 in the URL — only true
+   * on first load right after createProduct redirects here.
    */
+  freshlyCreated?: boolean;
+  /** ?err=upload|db code from a redirect after a failed save. */
+  errCode?: string;
+  /** ?msg=… message accompanying errCode. */
+  errMsg?: string;
   imagesSection?: React.ReactNode;
 };
 
@@ -37,10 +40,19 @@ export default function ProductForm({
   taxonomy,
   action,
   saved,
+  freshlyCreated,
+  errCode,
+  errMsg,
   imagesSection,
 }: Props) {
   const p = product;
   const isEdit = Boolean(p);
+  const derivedRoom = p
+    ? deriveRoomSlug(
+        { item_type: p.item_type, subtype_slug: p.subtype_slug },
+        taxonomy,
+      )
+    : null;
 
   return (
     <div className="mx-auto max-w-5xl space-y-8 px-6 py-8">
@@ -88,6 +100,19 @@ export default function ProductForm({
           </button>
         </div>
       </header>
+
+      {errCode && (
+        <div className="rounded-md border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+          <div className="font-semibold">
+            {errCode === "upload"
+              ? "Upload failed"
+              : errCode === "db"
+                ? "Database rejected the save"
+                : `Error (${errCode})`}
+          </div>
+          {errMsg && <div className="mt-1 text-xs">{errMsg}</div>}
+        </div>
+      )}
 
       <Section title="AI assist">
         <AIInferButton />
@@ -149,7 +174,7 @@ export default function ProductForm({
 
       <Section
         title="Item type *"
-        hint="Pick one — a product is one kind of thing. Room is derived from the item type (set under Taxonomy)."
+        hint="Pick one — a product is one kind of thing. Room is derived (item type → subtype if one is picked)."
       >
         <PillGrid
           form={FORM_ID}
@@ -159,6 +184,35 @@ export default function ProductForm({
             label: r.label_en,
           }))}
           initial={p?.item_type ?? null}
+        />
+      </Section>
+
+      <Section
+        title="Subtype"
+        hint="Optional — if the picked item type defines subtypes, you can drill in. Subtype's room wins over item type's."
+      >
+        <SubtypePicker
+          form={FORM_ID}
+          subtypes={taxonomy.itemSubtypes}
+          initial={p?.subtype_slug ?? null}
+          initialItemType={p?.item_type ?? null}
+        />
+        {derivedRoom && (
+          <p className="mt-2 text-xs text-neutral-500">
+            Currently derives to room:{" "}
+            <span className="font-mono text-neutral-800">{derivedRoom}</span>
+          </p>
+        )}
+      </Section>
+
+      <Section
+        title="Available in (regions)"
+        hint="Where Wiltek stocks this. Empty = nationally available."
+      >
+        <RegionsPicker
+          form={FORM_ID}
+          regions={taxonomy.regions}
+          initial={p?.store_locations ?? []}
         />
       </Section>
 
@@ -270,50 +324,30 @@ export default function ProductForm({
 
       <Section title="3D model & thumbnail">
         <Grid>
-          <Field label="Upload .glb (replace)">
-            <input
+          <Field label=".glb model (60 MB max)">
+            <FileDropzone
               form={FORM_ID}
-              type="file"
               name="glb_file"
               accept=".glb,model/gltf-binary"
-              className="text-sm"
+              maxFileMb={60}
+              currentUrl={p?.glb_url ?? null}
+              currentMeta={p?.glb_size_kb != null ? `${p.glb_size_kb} KB` : null}
+              hint="Drop .glb here, or click to pick"
             />
-            {p?.glb_url && (
-              <div className="mt-2 text-xs text-neutral-500">
-                Current:
-                <a
-                  href={p.glb_url}
-                  target="_blank"
-                  rel="noopener"
-                  className="text-sky-600 hover:underline"
-                >
-                  {p.glb_url.split("/").slice(-2).join("/")}
-                </a>
-                {p.glb_size_kb != null && <> · {p.glb_size_kb} KB</>}
-              </div>
-            )}
           </Field>
-          <Field label="Upload thumbnail (webp/png/jpg, replace)">
-            <input
+          <Field label="Thumbnail (4 MB max)">
+            <FileDropzone
               form={FORM_ID}
-              type="file"
               name="thumbnail_file"
               accept="image/webp,image/png,image/jpeg"
-              className="text-sm"
+              maxFileMb={4}
+              currentUrl={p?.thumbnail_url ?? null}
+              currentIsImage
+              hint="Drop image here, or click to pick"
             />
-            {p?.thumbnail_url && (
-              <div className="mt-2">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={p.thumbnail_url}
-                  alt=""
-                  className="h-24 w-24 rounded border border-neutral-200 object-cover"
-                />
-              </div>
-            )}
             <p className="mt-1 text-[11px] text-neutral-500">
-              Optional. If you upload an image above and approve it as primary,
-              the thumbnail is set automatically.
+              Optional. If you upload an image above and approve it as
+              primary, the thumbnail is set automatically.
             </p>
           </Field>
         </Grid>
@@ -388,6 +422,10 @@ export default function ProductForm({
           </button>
         </div>
       </footer>
+
+      {isEdit && (
+        <SavedToast show={Boolean(freshlyCreated)} productId={p!.id} />
+      )}
     </div>
   );
 }
