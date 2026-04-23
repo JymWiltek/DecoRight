@@ -42,6 +42,7 @@
   "product": {
     "notFound": "Product not found",
     "noModel": "No 3D model yet",
+    "noImages": "No photos uploaded yet — please check back soon.",
     "itemType": "Item",
     "room": "Room",
     "style": "Style",
@@ -50,6 +51,7 @@
     "weight": "Weight",
     "weightValue": "{kg} kg",
     "color": "Color",
+    "availableIn": "Available in",
     "buyNow": "Buy now →",
     "noPurchaseLink": "No purchase link yet",
     "arHintLine1": "Tap the AR icon at the bottom-right of the model to preview this product life-size with your phone camera.",

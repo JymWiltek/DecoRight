@@ -31,6 +31,10 @@ export type ProductRow = {
   styles: string[];
   colors: string[];
   materials: string[];
+  /** Migration 0011: subset of public.regions.slug. Drives the
+   *  "Available in: Penang, KL, Selangor" line on the product detail
+   *  page. Empty array = available nationally / unspecified. */
+  store_locations: string[];
   attributes: Record<string, unknown>;
   dimensions_mm: Dimensions | null;
   weight_kg: number | null;
@@ -61,6 +65,7 @@ export type ProductInsert = {
   styles?: string[];
   colors?: string[];
   materials?: string[];
+  store_locations?: string[];
   attributes?: Record<string, unknown>;
   dimensions_mm?: Dimensions | null;
   weight_kg?: number | null;
@@ -175,11 +180,42 @@ export type ItemTypeRow = TaxonomyRow & {
 export type ItemSubtypeRow = {
   slug: string;
   item_type_slug: string;
+  /** Migration 0011: subtype-owned room. NOT NULL — every subtype
+   *  must anchor itself to exactly one room so the storefront's
+   *  three-layer funnel can resolve "/room/X → which products" with
+   *  one query regardless of which level of the taxonomy carries
+   *  the room. */
+  room_slug: string;
   label_en: string;
   label_zh: string | null;
   label_ms: string | null;
   sort_order: number;
   created_at: string;
+};
+
+/** Migration 0011 — Malaysian retail regions catalog. Used for the
+ *  product detail page's "Available in: …" line and for the admin
+ *  product form's region multi-select. The `region` field groups the
+ *  16 entries into 5 conventional retail buckets (north / central /
+ *  south / east / sabah_sarawak) so the picker can render them in
+ *  collapsible sections. */
+export type RegionRow = {
+  slug: string;
+  label_en: string;
+  label_zh: string | null;
+  label_ms: string | null;
+  sort_order: number;
+  region: "north" | "central" | "south" | "east" | "sabah_sarawak";
+  created_at: string;
+};
+
+export type RegionInsert = {
+  slug: string;
+  label_en: string;
+  label_zh?: string | null;
+  label_ms?: string | null;
+  sort_order?: number;
+  region: RegionRow["region"];
 };
 
 export type AttributeSchemaField = {
@@ -209,6 +245,7 @@ export type ItemTypeInsert = TaxonomyInsert & {
 export type ItemSubtypeInsert = {
   slug: string;
   item_type_slug: string;
+  room_slug: string;
   label_en: string;
   label_zh?: string | null;
   label_ms?: string | null;
@@ -307,6 +344,12 @@ export type Database = {
         Row: ColorRow;
         Insert: ColorInsert;
         Update: Partial<ColorRow>;
+        Relationships: [];
+      };
+      regions: {
+        Row: RegionRow;
+        Insert: RegionInsert;
+        Update: Partial<RegionRow>;
         Relationships: [];
       };
       app_config: {

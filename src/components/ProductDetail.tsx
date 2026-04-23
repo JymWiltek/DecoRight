@@ -14,6 +14,10 @@ type Props = {
   styleLabels: string[];
   materialLabels: string[];
   colors: ColorOption[]; // tags from taxonomy, used for both filter + 3D switcher
+  /** Pre-resolved region labels (in current locale) for the
+   *  "Available in: …" line. Empty array = no regions = nationally
+   *  available / unspecified, line is hidden. */
+  regionLabels: string[];
 };
 
 export default function ProductDetail({
@@ -23,11 +27,14 @@ export default function ProductDetail({
   styleLabels,
   materialLabels,
   colors,
+  regionLabels,
 }: Props) {
   const t = useTranslations("product");
   const [variantIndex, setVariantIndex] = useState(0);
   const active = colors[variantIndex];
   const overrideColorHex = active?.hex ?? null;
+
+  const hasAnyVisual = Boolean(product.glb_url || product.thumbnail_url);
 
   return (
     <div className="grid gap-8 md:grid-cols-[1.2fr_1fr]">
@@ -39,11 +46,28 @@ export default function ProductDetail({
             poster={product.thumbnail_url}
             overrideColorHex={overrideColorHex}
           />
+        ) : product.thumbnail_url ? (
+          // P0-1: when there's no GLB but a thumbnail exists (newly-
+          // created product after rembg), show the static photo so the
+          // page isn't visibly empty. The 3D model arrives later via
+          // Meshy and replaces this on next render.
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={product.thumbnail_url}
+            alt={product.name}
+            className="h-full w-full object-cover"
+          />
         ) : (
-          <div className="flex h-full w-full items-center justify-center text-neutral-400">
-            {t("noModel")}
+          <div className="flex h-full w-full flex-col items-center justify-center gap-2 text-center text-neutral-400">
+            <span className="text-3xl">📷</span>
+            <span className="px-6 text-sm">
+              {t("noImages")}
+            </span>
+            <span className="text-xs text-neutral-300">{t("noModel")}</span>
           </div>
         )}
+        {/* (hasAnyVisual unused but kept for future no-visual diagnostics) */}
+        {!hasAnyVisual && null}
       </div>
 
       <div className="flex flex-col gap-5">
@@ -115,6 +139,12 @@ export default function ProductDetail({
             <>
               <dt className="text-neutral-500">{t("weight")}</dt>
               <dd>{t("weightValue", { kg: product.weight_kg })}</dd>
+            </>
+          )}
+          {regionLabels.length > 0 && (
+            <>
+              <dt className="text-neutral-500">{t("availableIn")}</dt>
+              <dd>{regionLabels.join("、")}</dd>
             </>
           )}
         </dl>

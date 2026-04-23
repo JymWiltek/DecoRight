@@ -5,7 +5,12 @@ import SiteHeader from "@/components/SiteHeader";
 import ProductDetail from "@/components/ProductDetail";
 import Breadcrumb, { type BreadcrumbItem } from "@/components/Breadcrumb";
 import { getPublishedProductById } from "@/lib/products";
-import { labelFor, labelMap, loadTaxonomy } from "@/lib/taxonomy";
+import {
+  deriveRoomSlug,
+  labelFor,
+  labelMap,
+  loadTaxonomy,
+} from "@/lib/taxonomy";
 import { BRAND } from "@config/brand";
 
 export const dynamic = "force-dynamic";
@@ -39,22 +44,30 @@ export default async function ProductPage({ params }: PageProps) {
   const roomLabels = labelMap(taxonomy.rooms, locale);
   const styleLabels = labelMap(taxonomy.styles, locale);
   const materialLabels = labelMap(taxonomy.materials, locale);
+  const regionLabels = labelMap(taxonomy.regions, locale);
   const colorsBySlug = new Map(taxonomy.colors.map((c) => [c.slug, c]));
 
   const itemTypeLabel = product.item_type
     ? (itemTypeLabels[product.item_type] ?? product.item_type)
     : null;
-  // Post-migration 0003: room is derived from the item_type row, not
-  // stored on the product. Look up the single parent room (if any).
+  // Migration 0011: subtype-aware. If a subtype was picked AND it
+  // owns its own room_slug, that wins; otherwise fall back to
+  // item_type.room_slug. Mirrors public.product_room_slug() in DB.
+  const derivedRoomSlug = deriveRoomSlug(
+    { item_type: product.item_type, subtype_slug: product.subtype_slug },
+    taxonomy,
+  );
   const itemTypeRow = product.item_type
     ? taxonomy.itemTypes.find((t) => t.slug === product.item_type)
     : null;
-  const roomLabelList =
-    itemTypeRow?.room_slug
-      ? [roomLabels[itemTypeRow.room_slug] ?? itemTypeRow.room_slug]
-      : [];
+  const roomLabelList = derivedRoomSlug
+    ? [roomLabels[derivedRoomSlug] ?? derivedRoomSlug]
+    : [];
   const styleLabelList = product.styles.map((s) => styleLabels[s] ?? s);
   const materialLabelList = product.materials.map((s) => materialLabels[s] ?? s);
+  const regionLabelList = product.store_locations.map(
+    (s) => regionLabels[s] ?? s,
+  );
 
   const colorOptions = product.colors
     .map((slug) => {
@@ -69,11 +82,14 @@ export default async function ProductPage({ params }: PageProps) {
   // still climb back up the three-layer funnel. Skip any segment
   // whose data is missing — e.g. legacy products without an
   // item_type get "Home › Product" with no mid-layer rubble.
+  // Room slug here uses the derived (subtype-aware) value so
+  // floating-TV-cabinets correctly link to /room/living_room even
+  // though the item_type itself might be in a different room.
   const breadcrumb: BreadcrumbItem[] = [{ label: tSite("home"), href: "/" }];
-  if (itemTypeRow?.room_slug) {
+  if (derivedRoomSlug) {
     breadcrumb.push({
-      label: roomLabels[itemTypeRow.room_slug] ?? itemTypeRow.room_slug,
-      href: `/room/${itemTypeRow.room_slug}`,
+      label: roomLabels[derivedRoomSlug] ?? derivedRoomSlug,
+      href: `/room/${derivedRoomSlug}`,
     });
   }
   if (itemTypeRow && itemTypeLabel) {
@@ -96,6 +112,7 @@ export default async function ProductPage({ params }: PageProps) {
           styleLabels={styleLabelList}
           materialLabels={materialLabelList}
           colors={colorOptions}
+          regionLabels={regionLabelList}
         />
       </main>
     </>

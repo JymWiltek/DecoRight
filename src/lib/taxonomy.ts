@@ -6,6 +6,8 @@ import type {
   TaxonomyRow,
   ColorRow,
   ItemTypeRow,
+  ItemSubtypeRow,
+  RegionRow,
 } from "./supabase/types";
 
 /** Cookie-free anon client. Taxonomy tables have public-read RLS, so no
@@ -26,10 +28,17 @@ function createAnonClient() {
 
 export type Taxonomy = {
   itemTypes: ItemTypeRow[];
+  /** Migration 0011: subtypes carry their own room_slug (subtype-owned
+   *  room). Loaded eagerly so the ProductForm can render a cascading
+   *  picker without an extra round-trip. Empty array for item_types
+   *  that don't define subtypes — those fall back to item_type.room_slug. */
+  itemSubtypes: ItemSubtypeRow[];
   rooms: TaxonomyRow[];
   styles: TaxonomyRow[];
   materials: TaxonomyRow[];
   colors: ColorRow[];
+  /** Migration 0011: Malaysian retail regions (13 states + 3 FT). */
+  regions: RegionRow[];
 };
 
 const TAG = "taxonomy";
@@ -38,24 +47,53 @@ export async function loadTaxonomy(): Promise<Taxonomy> {
   return unstable_cache(
     async (): Promise<Taxonomy> => {
       const supabase = createAnonClient();
-      const [it, rm, st, mt, co] = await Promise.all([
+      const [it, sub, rm, st, mt, co, rg] = await Promise.all([
         supabase.from("item_types").select("*").order("sort_order"),
+        supabase.from("item_subtypes").select("*").order("sort_order"),
         supabase.from("rooms").select("*").order("sort_order"),
         supabase.from("styles").select("*").order("sort_order"),
         supabase.from("materials").select("*").order("sort_order"),
         supabase.from("colors").select("*").order("sort_order"),
+        supabase.from("regions").select("*").order("sort_order"),
       ]);
       return {
         itemTypes: it.data ?? [],
+        itemSubtypes: sub.data ?? [],
         rooms: rm.data ?? [],
         styles: st.data ?? [],
         materials: mt.data ?? [],
         colors: co.data ?? [],
+        regions: rg.data ?? [],
       };
     },
-    ["taxonomy-v1"],
+    // Bumped to v2 — adds itemSubtypes + regions, so any v1 cache
+    // entry would be missing those keys.
+    ["taxonomy-v2"],
     { tags: [TAG], revalidate: 300 },
   )();
+}
+
+/** Subtype-aware room derivation. Mirrors the SQL function
+ *  public.product_room_slug. If a product picked a subtype, that
+ *  subtype's room wins. Otherwise the item_type's room (if any).
+ *  Returns null for products with no item_type or no derivable room
+ *  (which can't be published — enforced by trigger
+ *  products_room_derivable in migration 0011). */
+export function deriveRoomSlug(
+  product: { item_type: string | null; subtype_slug: string | null },
+  taxonomy: Pick<Taxonomy, "itemTypes" | "itemSubtypes">,
+): string | null {
+  if (!product.item_type) return null;
+  if (product.subtype_slug) {
+    const sub = taxonomy.itemSubtypes.find(
+      (s) =>
+        s.item_type_slug === product.item_type &&
+        s.slug === product.subtype_slug,
+    );
+    if (sub) return sub.room_slug;
+  }
+  const it = taxonomy.itemTypes.find((t) => t.slug === product.item_type);
+  return it?.room_slug ?? null;
 }
 
 /** Call after any insert/update/delete on a taxonomy table.

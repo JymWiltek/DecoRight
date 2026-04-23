@@ -22,20 +22,40 @@ export type ProductFilters = {
 };
 
 /**
- * Resolve a list of room slugs → the set of item_type slugs that
- * live in those rooms. Used to turn "picked bedroom+living_room"
- * into an `item_type in (bed_frame, mattress, sofa, ...)` query.
+ * Resolve a list of room slugs → both the item_type slugs whose
+ * room_slug matches AND the (item_type, subtype) pairs of subtypes
+ * whose room_slug matches. Migration 0011 made room derivation
+ * subtype-aware, so we mirror that here: a "bedroom" pick should
+ * surface a floating-TV-cabinet (item_type=tv_cabinet/room=living_room
+ * but subtype=floating/room=bedroom) AND a regular bed_frame.
  */
-async function itemTypesInRooms(
+async function itemTypesAndSubtypesInRooms(
   roomSlugs: string[],
-): Promise<string[]> {
+): Promise<{
+  /** item_types whose own room_slug matches — a product with NO
+   *  subtype that picks one of these item_types belongs to the room. */
+  itemTypeSlugs: string[];
+  /** Subtype-owned matches: a product whose (item_type, subtype) pair
+   *  is in this list ALSO belongs to the room. */
+  subtypePairs: { itemType: string; subtype: string }[];
+}> {
   const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("item_types")
-    .select("slug")
-    .in("room_slug", roomSlugs);
-  if (error) throw error;
-  return (data ?? []).map((r) => r.slug);
+  const [itResp, subResp] = await Promise.all([
+    supabase.from("item_types").select("slug").in("room_slug", roomSlugs),
+    supabase
+      .from("item_subtypes")
+      .select("slug,item_type_slug")
+      .in("room_slug", roomSlugs),
+  ]);
+  if (itResp.error) throw itResp.error;
+  if (subResp.error) throw subResp.error;
+  return {
+    itemTypeSlugs: (itResp.data ?? []).map((r) => r.slug),
+    subtypePairs: (subResp.data ?? []).map((r) => ({
+      itemType: r.item_type_slug,
+      subtype: r.slug,
+    })),
+  };
 }
 
 export async function listPublishedProducts(
@@ -45,27 +65,53 @@ export async function listPublishedProducts(
   const supabase = await createClient();
   let query = supabase.from("products").select("*").eq("status", "published");
 
-  // Combine room and item_type picks into one `item_type in (...)`
-  // filter. Semantics: picked rooms ∪ picked item_types, ANDed.
-  let itemTypeSet: Set<string> | null = null;
+  // ── Room filter (subtype-aware) ─────────────────────────────
+  // A product belongs to the picked room(s) if EITHER:
+  //   (a) it picked an item_type whose room_slug matches AND it has
+  //       no subtype, OR
+  //   (b) it picked a (item_type, subtype) pair where the subtype's
+  //       room_slug matches.
+  // We translate this to a PostgREST `or(...)` of two `and(...)`
+  // groups. If the user also picked specific item_types we intersect
+  // with those.
   if (filters.rooms?.length) {
-    const fromRooms = await itemTypesInRooms(filters.rooms);
-    itemTypeSet = new Set(fromRooms);
-  }
-  if (filters.itemTypes?.length) {
-    if (itemTypeSet) {
-      // Intersection — "bedroom" AND "sofa" returns no products,
-      // which is the honest answer (no sofas live in bedroom).
-      itemTypeSet = new Set(
-        filters.itemTypes.filter((t) => itemTypeSet!.has(t)),
+    const { itemTypeSlugs, subtypePairs } =
+      await itemTypesAndSubtypesInRooms(filters.rooms);
+
+    let allowedItemTypes = itemTypeSlugs;
+    let allowedSubtypePairs = subtypePairs;
+    if (filters.itemTypes?.length) {
+      const picked = new Set(filters.itemTypes);
+      allowedItemTypes = allowedItemTypes.filter((t) => picked.has(t));
+      allowedSubtypePairs = allowedSubtypePairs.filter((p) =>
+        picked.has(p.itemType),
       );
-    } else {
-      itemTypeSet = new Set(filters.itemTypes);
     }
-  }
-  if (itemTypeSet) {
-    if (itemTypeSet.size === 0) return [];
-    query = query.in("item_type", Array.from(itemTypeSet));
+
+    if (allowedItemTypes.length === 0 && allowedSubtypePairs.length === 0) {
+      return [];
+    }
+
+    const orParts: string[] = [];
+    if (allowedItemTypes.length > 0) {
+      // (subtype_slug is null AND item_type IN (...))
+      orParts.push(
+        `and(subtype_slug.is.null,item_type.in.(${allowedItemTypes
+          .map((s) => s.replace(/[(),]/g, ""))
+          .join(",")}))`,
+      );
+    }
+    for (const p of allowedSubtypePairs) {
+      // PostgREST disallows commas/parens in identifiers within or(),
+      // and our slugs are [a-z0-9_] so no escaping needed in practice.
+      orParts.push(
+        `and(item_type.eq.${p.itemType},subtype_slug.eq.${p.subtype})`,
+      );
+    }
+    query = query.or(orParts.join(","));
+  } else if (filters.itemTypes?.length) {
+    // No room filter — straight item_type IN (...)
+    query = query.in("item_type", filters.itemTypes);
   }
 
   // Array columns: overlap = product matches if ANY of the user's

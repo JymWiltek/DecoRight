@@ -42,6 +42,8 @@
   "product": {
     "notFound": "Produk tidak dijumpai",
     "noModel": "Tiada model 3D lagi",
+    "noImages": "Belum ada gambar dimuat naik — sila kembali tidak lama lagi.",
+    "availableIn": "Tersedia di",
     "itemType": "Jenis",
     "room": "Bilik",
     "style": "Gaya",

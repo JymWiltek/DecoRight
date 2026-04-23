@@ -53,7 +53,21 @@ export default async function RoomPage({ params }: PageProps) {
   const room = taxonomy.rooms.find((r) => r.slug === slug);
   if (!room) notFound();
 
-  const items = taxonomy.itemTypes.filter((it) => it.room_slug === slug);
+  // Migration 0011: an item_type belongs to room X if EITHER
+  //   (a) item_type.room_slug === X (the original 0003 rule), OR
+  //   (b) the item_type has at least one subtype whose room_slug === X.
+  // Otherwise floating-TV-cabinets (subtype owns the bedroom anchor)
+  // would never appear under /room/bedroom even though products
+  // genuinely live there.
+  const itemTypeSlugsInRoomViaSubtype = new Set(
+    taxonomy.itemSubtypes
+      .filter((s) => s.room_slug === slug)
+      .map((s) => s.item_type_slug),
+  );
+  const items = taxonomy.itemTypes.filter(
+    (it) =>
+      it.room_slug === slug || itemTypeSlugsInRoomViaSubtype.has(it.slug),
+  );
   const roomLabel = labelFor(room, locale);
 
   return (
