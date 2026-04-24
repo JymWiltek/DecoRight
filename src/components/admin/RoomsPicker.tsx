@@ -19,6 +19,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { ItemTypeRoomRow, TaxonomyRow } from "@/lib/supabase/types";
+import { subscribeAutofillApply } from "@/lib/ai/autofill-bus";
 
 type Props = {
   form: string;
@@ -90,6 +91,18 @@ export default function RoomsPicker({
       return next;
     });
   }
+
+  // Vision-autofill listener. Same pattern as PillGrid — filter to
+  // valid slugs in the current taxonomy so a stale AI pick (room
+  // removed since last inference) can't sneak past the server
+  // validator.
+  useEffect(() => {
+    const validRooms = new Set(rooms.map((r) => r.slug));
+    return subscribeAutofillApply((detail) => {
+      if (!Array.isArray(detail.room_slugs)) return;
+      setSelected(new Set(detail.room_slugs.filter((s) => validRooms.has(s))));
+    });
+  }, [rooms]);
 
   return (
     <div className="flex flex-col gap-2">

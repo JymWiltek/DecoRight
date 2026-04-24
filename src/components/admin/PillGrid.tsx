@@ -1,6 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import {
+  subscribeAutofillApply,
+  type AutofillApplyDetail,
+  type AutofillFieldName,
+} from "@/lib/ai/autofill-bus";
 
 export type PillOption = {
   slug: string;
@@ -55,6 +60,27 @@ export default function PillGrid(props: Props) {
       : [];
 
   const [selected, setSelected] = useState<string[]>(initialState);
+
+  // Listen for Vision-autofill events. The AIInferButton broadcasts
+  // once per run; each picker grabs its own slice by matching `name`.
+  // We ignore the event if its payload for this field is undefined
+  // (the AI didn't try) so clicking "Re-run AI" doesn't clobber
+  // pickers the model has no opinion about.
+  useEffect(() => {
+    return subscribeAutofillApply((detail: AutofillApplyDetail) => {
+      const key = name as AutofillFieldName;
+      const valid = new Set(options.map((o) => o.slug));
+      if (isMulti) {
+        const picks = detail[key as "room_slugs" | "styles" | "colors" | "materials"];
+        if (!Array.isArray(picks)) return;
+        setSelected(picks.filter((s): s is string => typeof s === "string" && valid.has(s)));
+      } else {
+        const pick = detail[key as "item_type" | "subtype_slug"];
+        if (pick === undefined) return;
+        setSelected(pick && valid.has(pick) ? [pick] : []);
+      }
+    });
+  }, [name, options, isMulti]);
 
   function toggle(slug: string) {
     setSelected((prev) => {

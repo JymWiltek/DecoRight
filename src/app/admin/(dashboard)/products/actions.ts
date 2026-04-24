@@ -3,8 +3,9 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createServiceRoleClient } from "@/lib/supabase/service";
-import { glbPublicUrl, uploadThumbnail } from "@/lib/storage";
+import { glbPublicUrl, uploadThumbnail, getSignedRawUrl } from "@/lib/storage";
 import { inferProductFields } from "@/lib/ai/infer";
+import { requireAdmin } from "@/lib/auth/require-admin";
 import { invalidatePublishedCountsCache } from "@/lib/products";
 import { runRembgForImage } from "@/lib/rembg/pipeline";
 import {
@@ -646,19 +647,114 @@ export async function bulkDeleteAction(fd: FormData): Promise<void> {
   redirect(`/admin?bulk_deleted=${ids.length}`);
 }
 
-export async function runAiInfer(fd: FormData): Promise<{
-  suggestedFields: Record<string, unknown>;
+/**
+ * Vision-backed autofill. Invoked by the "AI autofill" button on
+ * /admin/products/[id]/edit.
+ *
+ * Flow:
+ *   1. Admin-gate the call (server actions are URL-addressable).
+ *   2. Look up up to MAX_IMAGES rows from product_images, preferring
+ *      cutouts (public URL, background removed → cleaner signal) and
+ *      falling back to raw (private bucket → mint a signed URL valid
+ *      long enough for OpenAI to GET it).
+ *   3. Hand the URLs to inferProductFields() which asks GPT-4o to
+ *      classify against the live taxonomy enums.
+ *   4. Return a slim, JSON-serializable shape so the client can fan
+ *      the picks out to pickers via the autofill-bus CustomEvent.
+ *
+ * No revalidatePath() here — nothing is written to DB until the
+ * operator clicks Save and the regular updateProduct path runs.
+ * The AI-filled bits get persisted into ai_filled_fields at that
+ * point (hidden inputs already handle that via ProductForm).
+ */
+const AI_MAX_IMAGES = 3;
+
+export type RunAiInferResult = {
+  ok: true;
+  fields: Record<string, unknown>;
   inferredKeys: string[];
+  confidence: Partial<Record<string, number>>;
+  model: string;
   note?: string;
-}> {
-  const result = await inferProductFields({
-    name: str(fd, "name") ?? undefined,
-    description: str(fd, "description") ?? undefined,
-    brand: str(fd, "brand"),
-  });
+  debug: {
+    latency_ms: number;
+    imageCount: number;
+    usage?: {
+      prompt_tokens?: number;
+      completion_tokens?: number;
+      total_tokens?: number;
+    };
+  };
+} | {
+  ok: false;
+  error: string;
+};
+
+export async function runAiInfer(
+  productId: string | null,
+): Promise<RunAiInferResult> {
+  try {
+    await requireAdmin();
+  } catch {
+    return { ok: false, error: "Not signed in." };
+  }
+
+  if (!productId || productId.length < 10) {
+    return { ok: false, error: "Save the product first, then attach an image before running AI autofill." };
+  }
+
+  const supabase = createServiceRoleClient();
+  const { data: images, error: imgErr } = await supabase
+    .from("product_images")
+    .select("id, raw_image_url, cutout_image_url, state, created_at")
+    .eq("product_id", productId)
+    .order("created_at", { ascending: true })
+    .limit(AI_MAX_IMAGES);
+  if (imgErr) {
+    return { ok: false, error: `Failed to load product images: ${imgErr.message}` };
+  }
+  if (!images || images.length === 0) {
+    return { ok: false, error: "Upload at least one product photo before running AI autofill." };
+  }
+
+  // Resolve fetchable URLs. Cutouts already carry full public URLs;
+  // raw stores only a storage path, so mint a signed URL good for
+  // one hour (plenty — OpenAI fetches synchronously during the call).
+  const imageUrls: string[] = [];
+  for (const img of images) {
+    if (img.cutout_image_url) {
+      imageUrls.push(img.cutout_image_url);
+      continue;
+    }
+    if (img.raw_image_url) {
+      try {
+        const signed = await getSignedRawUrl(img.raw_image_url);
+        imageUrls.push(signed);
+      } catch (err) {
+        // Skip this row; others may still work.
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(`[runAiInfer] signed URL failed for ${img.raw_image_url}: ${msg}`);
+      }
+    }
+  }
+
+  if (imageUrls.length === 0) {
+    return { ok: false, error: "No fetchable image URLs could be built for this product." };
+  }
+
+  const result = await inferProductFields({ imageUrls });
+
   return {
-    suggestedFields: result.fields as Record<string, unknown>,
+    ok: true,
+    fields: result.fields as Record<string, unknown>,
     inferredKeys: result.inferredKeys,
+    confidence: result.confidence,
+    model: result.model,
     note: result.note,
+    debug: {
+      latency_ms: result.debug.latency_ms,
+      imageCount: imageUrls.length,
+      usage: result.debug.usage,
+    },
   };
 }

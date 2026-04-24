@@ -304,7 +304,7 @@ export default function ProductForm({
         )}
 
         <Section title="AI assist">
-          <AIInferButton />
+          <AIInferButton productId={p?.id ?? null} />
         </Section>
 
         <Section title="Basics">

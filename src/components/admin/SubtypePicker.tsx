@@ -22,6 +22,7 @@
 
 import { useEffect, useState } from "react";
 import type { ItemSubtypeRow } from "@/lib/supabase/types";
+import { subscribeAutofillApply } from "@/lib/ai/autofill-bus";
 
 type Props = {
   /** All subtypes from taxonomy. We filter client-side because the
@@ -96,6 +97,27 @@ export default function SubtypePicker({
   function toggle(slug: string) {
     setSelected((prev) => (prev === slug ? null : slug));
   }
+
+  // Vision-autofill listener. The AI payload only makes sense if
+  // the picked subtype actually belongs to the item_type that's
+  // currently selected — we enforce that here as a second line of
+  // defense on top of the server-side taxonomy guard in infer.ts.
+  useEffect(() => {
+    return subscribeAutofillApply((detail) => {
+      if (detail.subtype_slug === undefined) return;
+      if (!detail.subtype_slug) {
+        setSelected(null);
+        return;
+      }
+      const sub = subtypes.find((s) => s.slug === detail.subtype_slug);
+      const pickedItemType = detail.item_type ?? itemType;
+      if (sub && sub.item_type_slug === pickedItemType) {
+        setSelected(sub.slug);
+      } else {
+        setSelected(null);
+      }
+    });
+  }, [subtypes, itemType]);
 
   if (!itemType) {
     return (
