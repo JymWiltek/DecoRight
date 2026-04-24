@@ -211,7 +211,12 @@ async function parsePayload(fd: FormData): Promise<Omit<ProductInsert, "id">> {
     supplier: str(fd, "supplier"),
     description: str(fd, "description"),
     status,
-    ai_filled_fields: fd.getAll("ai_filled_fields").map((x) => x.toString()),
+    // De-dup: ProductForm re-emits the persisted list from the
+    // product row AND AIInferButton adds a fresh set after each run,
+    // so the same key can arrive twice. A Set keeps the column clean.
+    ai_filled_fields: [
+      ...new Set(fd.getAll("ai_filled_fields").map((x) => x.toString())),
+    ],
   };
 }
 

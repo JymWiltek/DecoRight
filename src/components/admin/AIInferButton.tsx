@@ -17,9 +17,11 @@
  *        < 0.3 → red ("low, human review")
  *
  * No DB writes from this component — Save still flows through
- * updateProduct. The AI-filled fields get stamped into
- * products.ai_filled_fields by the hidden input already emitted
- * by ProductForm whenever the bound product row carries that array.
+ * updateProduct. After a run we emit hidden <input name="ai_filled_fields">
+ * rows for every key the model filled; ProductForm separately emits
+ * the persisted list for already-AI-touched rows. parsePayload on
+ * the server de-dupes the union into a Set before writing, so the
+ * two sources can safely overlap.
  *
  * Rate limit: soft 100 runs/day via localStorage. Nothing server-
  * side yet — a determined user could wipe localStorage. Hard limit
@@ -39,6 +41,10 @@ type Props = {
    *  (before the first Save redirect) — button renders a hint
    *  instead of firing. */
   productId: string | null;
+  /** id of the main <form> so the hidden `ai_filled_fields` inputs
+   *  we render after a run submit with the rest of ProductForm
+   *  (which uses the "empty form + external inputs" layout). */
+  form: string;
 };
 
 type LastRun = Extract<RunAiInferResult, { ok: true }>;
@@ -72,7 +78,7 @@ function bumpTodayCount(): number {
   return next.count;
 }
 
-export default function AIInferButton({ productId }: Props) {
+export default function AIInferButton({ productId, form }: Props) {
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [lastRun, setLastRun] = useState<LastRun | null>(null);
@@ -118,6 +124,18 @@ export default function AIInferButton({ productId }: Props) {
 
   return (
     <div className="flex flex-col gap-2">
+      {/* Hidden inputs so Save persists the AI-touched key set into
+          products.ai_filled_fields. Rendered OUTSIDE the <form> and
+          linked via form={…} like every other field on this page. */}
+      {lastRun?.inferredKeys.map((key) => (
+        <input
+          key={`ai-${key}`}
+          form={form}
+          type="hidden"
+          name="ai_filled_fields"
+          value={key}
+        />
+      ))}
       <div className="flex items-center gap-3">
         <button
           type="button"
