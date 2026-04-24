@@ -63,12 +63,12 @@ export default function ProductForm({
           AIInferButton finds this via data-product-form and builds
           a FormData from form.elements — form.elements DOES include
           elements that reference this form via form="..." attrs. */}
-      <form
-        id={FORM_ID}
-        action={action}
-        encType="multipart/form-data"
-        data-product-form
-      />
+      {/* Post direct-upload refactor: the form no longer carries file
+          bytes — GLB is uploaded straight to Storage by FileDropzone,
+          which drops a small `glb_path` hidden input here. So we can
+          drop encType="multipart/form-data" and ship tiny POSTs that
+          don't trip Vercel's 4.5 MB platform body cap. */}
+      <form id={FORM_ID} action={action} data-product-form />
 
       <header className="flex items-center justify-between">
         <div>
@@ -181,9 +181,13 @@ export default function ProductForm({
         <Field label=".glb model">
           <FileDropzone
             form={FORM_ID}
-            name="glb_file"
+            // Name is the STORAGE PATH field the server action reads —
+            // post-refactor the client PUTs bytes direct to Storage
+            // and only the resulting path string flows through FormData.
+            name="glb_path"
             accept=".glb,model/gltf-binary"
             maxFileMb={60}
+            productId={p?.id ?? null}
             currentUrl={p?.glb_url ?? null}
             currentMeta={p?.glb_size_kb != null ? `${p.glb_size_kb} KB` : null}
             hint="Drop .glb here, or click to pick"

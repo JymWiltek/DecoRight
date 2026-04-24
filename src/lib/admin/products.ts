@@ -27,6 +27,12 @@ export type AdminProductListResult = {
   /** Per-product image counts. Surfaces the "no images uploaded
    *  yet" situation in the table without an extra fetch per row. */
   imageCounts: Record<string, number>;
+  /** Per-product list of image ids stuck in a pre-approval state
+   *  (raw or cutout_failed). The direct-upload dropzone can leave
+   *  rows in `raw` if the browser closed mid-kickRembg, or in
+   *  `cutout_failed` if rembg errored. The admin list surfaces a
+   *  one-click "Retry rembg" button for these. */
+  stuckImageIds: Record<string, string[]>;
 };
 
 export async function listAllProducts(
@@ -83,21 +89,30 @@ export async function listAllProducts(
   const products = data ?? [];
   const ids = products.map((p) => p.id);
   let imageCounts: Record<string, number> = {};
+  const stuckImageIds: Record<string, string[]> = {};
   if (ids.length > 0) {
-    // We just need a count per product. Pulling product_id only and
-    // tallying in JS is two orders of magnitude lighter than N
-    // count(*) queries. ~500 products ⇒ < 5K image rows in practice.
+    // We need total counts + ids of stuck rows. One query, select
+    // (id, product_id, state) and bucket in JS — still an order of
+    // magnitude lighter than N×count queries, and the stuck payload
+    // stays tiny because most products have 0 stuck images.
     const { data: imgRows } = await supabase
       .from("product_images")
-      .select("product_id")
+      .select("id,product_id,state")
       .in("product_id", ids);
     imageCounts = (imgRows ?? []).reduce<Record<string, number>>((acc, r) => {
       acc[r.product_id] = (acc[r.product_id] ?? 0) + 1;
       return acc;
     }, {});
+    for (const r of imgRows ?? []) {
+      if (r.state === "raw" || r.state === "cutout_failed") {
+        const list = stuckImageIds[r.product_id] ?? [];
+        list.push(r.id);
+        stuckImageIds[r.product_id] = list;
+      }
+    }
   }
 
-  return { products, imageCounts };
+  return { products, imageCounts, stuckImageIds };
 }
 
 export async function getProductById(id: string): Promise<ProductRow | null> {

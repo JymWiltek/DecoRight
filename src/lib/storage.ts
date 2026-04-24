@@ -65,6 +65,76 @@ export async function getSignedRawUrl(path: string): Promise<string> {
   return data.signedUrl;
 }
 
+// ─── signed upload URLs — direct-to-Storage from the browser ───
+//
+// Why: Vercel Hobby caps serverless function request bodies at
+// 4.5 MB; a 47 MB .glb or a batch of phone photos exceed that and
+// the platform drops the POST before Next ever sees it (operator
+// sees "This page couldn't load"). Signed upload URLs mint a
+// short-lived token that authorizes a PUT straight into Storage,
+// so file bytes never transit through our Vercel function.
+//
+// The server action mints the URL (small KB response), the client
+// uploads the file, then calls a second lightweight action to
+// attach the final storage path to a DB row. Bypasses the cap
+// completely.
+//
+// URLs are good for 2 hours by default (Supabase fixed); upsert
+// semantics default to false, overridden on GLB where the path
+// is stable per product (`products/<id>/model.glb`).
+
+export async function createSignedRawImageUploadUrl(
+  productId: string,
+  imageId: string,
+  ext: string,
+): Promise<{ signedUrl: string; token: string; path: string }> {
+  const supabase = createServiceRoleClient();
+  const path = `${productId}/${imageId}.${ext}`;
+  const { data, error } = await supabase.storage
+    .from(RAW_BUCKET)
+    .createSignedUploadUrl(path);
+  if (error) throw error;
+  return { signedUrl: data.signedUrl, token: data.token, path: data.path };
+}
+
+export async function createSignedGlbUploadUrl(
+  productId: string,
+): Promise<{ signedUrl: string; token: string; path: string }> {
+  const supabase = createServiceRoleClient();
+  // Same fixed path `uploadGlb` used — one GLB per product, upsert
+  // so replacing works without first deleting.
+  const path = `products/${productId}/model.glb`;
+  const { data, error } = await supabase.storage
+    .from(MODELS_BUCKET)
+    .createSignedUploadUrl(path, { upsert: true });
+  if (error) throw error;
+  return { signedUrl: data.signedUrl, token: data.token, path: data.path };
+}
+
+/**
+ * Convert a raw-images storage path to its public-facing reference
+ * shape (which for the private bucket is just the path — reads go
+ * through `getSignedRawUrl`). Kept here so all path-convention
+ * knowledge lives in this file.
+ */
+export function rawImagePath(productId: string, imageId: string, ext: string): string {
+  return `${productId}/${imageId}.${ext}`;
+}
+
+/**
+ * Resolve the public URL for a GLB stored at the canonical path. Used
+ * by updateProduct after the client reports a successful direct
+ * upload so we can store the final URL (not the storage-path
+ * placeholder) in products.glb_url.
+ */
+export function glbPublicUrl(productId: string): string {
+  const supabase = createServiceRoleClient();
+  const { data } = supabase.storage
+    .from(MODELS_BUCKET)
+    .getPublicUrl(`products/${productId}/model.glb`);
+  return data.publicUrl;
+}
+
 // ─── cutouts (public) ───────────────────────────────────────
 
 export async function uploadCutout(

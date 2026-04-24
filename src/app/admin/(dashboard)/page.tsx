@@ -16,6 +16,7 @@ import PriceCell from "@/components/admin/PriceCell";
 import ItemTypeCell from "@/components/admin/ItemTypeCell";
 import BulkBar from "@/components/admin/BulkBar";
 import SelectAllCheckbox from "@/components/admin/SelectAllCheckbox";
+import RetryRembgInlineButton from "@/components/admin/RetryRembgInlineButton";
 
 export const dynamic = "force-dynamic";
 
@@ -67,7 +68,7 @@ export default async function AdminProductsPage({
     ? (sp.status as ProductStatus)
     : undefined;
 
-  const [{ products, imageCounts }, taxonomy] = await Promise.all([
+  const [{ products, imageCounts, stuckImageIds }, taxonomy] = await Promise.all([
     listAllProducts({
       q: sp.q,
       status: statusFilter,
@@ -311,6 +312,20 @@ export default async function AdminProductsPage({
                       >
                         {imgN === 0 ? "0 imgs" : `${imgN} imgs`}
                       </div>
+                      {/* Direct-upload fallback: if the browser closed
+                          mid-kickRembg or rembg itself errored, some
+                          images sit in `raw` / `cutout_failed` forever.
+                          Give the operator a one-click recovery path
+                          from the list so they don't have to open each
+                          product to see a cutout_failed card. */}
+                      {stuckImageIds[p.id] && stuckImageIds[p.id].length > 0 && (
+                        <div className="mt-1">
+                          <RetryRembgInlineButton
+                            productId={p.id}
+                            imageIds={stuckImageIds[p.id]}
+                          />
+                        </div>
+                      )}
                     </td>
                     <td className="px-4 py-3 align-middle text-xs text-neutral-500">
                       {new Date(p.updated_at).toLocaleString("en-MY")}

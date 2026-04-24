@@ -1,7 +1,6 @@
 import { UploadDropzone } from "./UploadDropzone";
 import DeleteImageButton from "./DeleteImageButton";
 import {
-  uploadRawImages,
   markImageUnsatisfied,
   retryFailedImage,
 } from "@/app/admin/(dashboard)/products/[id]/edit/image-actions";
@@ -102,8 +101,6 @@ export default function ProductImagesSection({
     },
   );
 
-  const boundUpload = uploadRawImages.bind(null, productId);
-
   return (
     <section className="rounded-lg border border-neutral-200 bg-white p-5">
       <div className="mb-4 flex items-baseline justify-between gap-4">
@@ -186,28 +183,16 @@ export default function ProductImagesSection({
         <Banner tone="emerald">Retry succeeded — cutout approved.</Banner>
       ) : null}
 
-      {/* uploader */}
-      <form action={boundUpload} className="space-y-3">
-        <input type="hidden" name="returnTo" value={returnTo} />
-        <UploadDropzone
-          name="files"
-          accept="image/jpeg,image/png,image/webp"
-          multiple
-        />
-        <div className="flex items-center justify-between gap-2">
-          <p className="text-xs text-neutral-500">
-            JPG / PNG / WebP · each ≤ 8 MB · Background removal runs
-            automatically on upload (~$0.001/img via Replicate).
-            Click × on an approved image to swap it for another.
-          </p>
-          <button
-            type="submit"
-            className="rounded-md bg-black px-4 py-1.5 text-xs font-medium text-white hover:bg-neutral-800"
-          >
-            Upload
-          </button>
-        </div>
-      </form>
+      {/* Uploader: post-refactor the dropzone is self-contained —
+          it mints a signed URL, PUTs bytes direct to Storage, then
+          calls attachRawImages + kickRembgPipeline server actions
+          itself. No <form> wrapper, no FormData carrying bytes. */}
+      <UploadDropzone
+        productId={productId}
+        accept="image/jpeg,image/png,image/webp"
+        multiple
+        maxFileMb={8}
+      />
 
       {/* list */}
       {images.length === 0 ? (

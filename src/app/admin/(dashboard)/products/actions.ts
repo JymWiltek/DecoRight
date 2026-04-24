@@ -3,7 +3,7 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createServiceRoleClient } from "@/lib/supabase/service";
-import { uploadGlb, uploadThumbnail } from "@/lib/storage";
+import { glbPublicUrl, uploadThumbnail } from "@/lib/storage";
 import { inferProductFields } from "@/lib/ai/infer";
 import { invalidatePublishedCountsCache } from "@/lib/products";
 import {
@@ -182,6 +182,22 @@ function uploadErrMsg(err: unknown, defaultLabel: string): string {
   return defaultLabel;
 }
 
+/**
+ * Validate a storage path the client wrote into `glb_path` before we
+ * trust it into the DB. The FileDropzone mints this via signed URL,
+ * but since server actions are URL-addressable we still sanity-check
+ * the shape to defeat a hand-crafted POST that tries to point the
+ * product at someone else's storage object.
+ *
+ * Expected shape: `products/<productId>/model.glb` — we derive this
+ * deterministically from productId, so we just confirm the client
+ * didn't try anything fancy.
+ */
+function validGlbPath(path: string | null, productId: string): boolean {
+  if (!path) return false;
+  return path === `products/${productId}/model.glb`;
+}
+
 export async function createProduct(fd: FormData): Promise<void> {
   // /admin/products/new only ships the `name` input. parsePayload
   // returns sane defaults (empty arrays, draft status) for everything
@@ -190,18 +206,28 @@ export async function createProduct(fd: FormData): Promise<void> {
   const id = crypto.randomUUID();
   const supabase = createServiceRoleClient();
 
-  // GLB and thumbnail can be uploaded from /products/new too if the
-  // form ever grows to include them — keep them optional so a name-
-  // only submit still works.
+  // GLB + thumbnail could come from /products/new if that form ever
+  // grows them. Today it's name-only, so both paths stay null.
+  //
+  // Post direct-upload refactor (2026-04): `glb_path` is a STRING
+  // storage path the FileDropzone wrote via a signed URL — not a File
+  // blob. We validate the shape (must be `products/<id>/model.glb`)
+  // and resolve its public URL here. `glb_size_kb` is a companion
+  // number field the dropzone writes alongside.
   let glb_url: string | null = null;
   let glb_size_kb: number | null = null;
   let thumbnail_url: string | null = null;
 
   try {
-    const glb = fileOrNull(fd, "glb_file");
-    if (glb) {
-      glb_url = await uploadGlb(id, glb);
-      glb_size_kb = Math.round(glb.size / 1024);
+    const glbPath = str(fd, "glb_path");
+    if (glbPath) {
+      if (!validGlbPath(glbPath, id)) {
+        redirect(
+          `/admin/products/new?err=upload&msg=${encodeURIComponent("invalid glb path")}`,
+        );
+      }
+      glb_url = glbPublicUrl(id);
+      glb_size_kb = num(fd, "glb_size_kb");
     }
     const thumb = fileOrNull(fd, "thumbnail_file");
     if (thumb) {
@@ -262,10 +288,17 @@ export async function updateProduct(id: string, fd: FormData): Promise<void> {
   const updates: ProductUpdate = { ...payload };
 
   try {
-    const glb = fileOrNull(fd, "glb_file");
-    if (glb) {
-      updates.glb_url = await uploadGlb(id, glb);
-      updates.glb_size_kb = Math.round(glb.size / 1024);
+    const glbPath = str(fd, "glb_path");
+    if (glbPath) {
+      // Same validation as createProduct — the signed-URL mint used
+      // this exact path, so anything else is a crafted request.
+      if (!validGlbPath(glbPath, id)) {
+        redirect(
+          `/admin/products/${id}/edit?err=upload&msg=${encodeURIComponent("invalid glb path")}`,
+        );
+      }
+      updates.glb_url = glbPublicUrl(id);
+      updates.glb_size_kb = num(fd, "glb_size_kb");
     }
     const thumb = fileOrNull(fd, "thumbnail_file");
     if (thumb) {
