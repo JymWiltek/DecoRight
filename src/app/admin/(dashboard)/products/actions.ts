@@ -654,9 +654,10 @@ export async function bulkDeleteAction(fd: FormData): Promise<void> {
  * Flow:
  *   1. Admin-gate the call (server actions are URL-addressable).
  *   2. Look up up to MAX_IMAGES rows from product_images, preferring
- *      cutouts (public URL, background removed → cleaner signal) and
- *      falling back to raw (private bucket → mint a signed URL valid
- *      long enough for OpenAI to GET it).
+ *      raw (signed URL against private bucket — JPGs are small enough
+ *      that OpenAI's fetcher doesn't time out) with cutout as a
+ *      fallback for legacy rows missing a raw_image_url. See the
+ *      in-body comment for the cutout-first regression history.
  *   3. Hand the URLs to inferProductFields() which asks GPT-4o to
  *      classify against the live taxonomy enums.
  *   4. Return a slim, JSON-serializable shape so the client can fan
@@ -717,24 +718,38 @@ export async function runAiInfer(
     return { ok: false, error: "Upload at least one product photo before running AI autofill." };
   }
 
-  // Resolve fetchable URLs. Cutouts already carry full public URLs;
-  // raw stores only a storage path, so mint a signed URL good for
-  // one hour (plenty — OpenAI fetches synchronously during the call).
+  // Resolve fetchable URLs. IMPORTANT: prefer RAW over CUTOUT.
+  //
+  // Why not cutouts? They're rembg PNGs with alpha — lossless and
+  // often 5-10× larger than the source JPG (measured: 6.56MB PNG
+  // vs 1.45MB JPG for the same shot). OpenAI's Vision fetcher has
+  // a short per-URL timeout, and Supabase Storage in ap-southeast-1
+  // regularly missed it on the 6.56MB payloads we first tried —
+  // every call came back `400 Timeout while downloading …`. The
+  // raw JPG is well under that ceiling and GPT-4o has no trouble
+  // classifying through background (faucets on counters, chairs
+  // in rooms) — cutouts were a "nice to have" for cleanliness,
+  // not a correctness requirement.
+  //
+  // Raw lives in the private bucket, so we mint a 1h signed URL.
+  // Cutout stays as a fallback for legacy rows that somehow lost
+  // their raw_image_url.
   const imageUrls: string[] = [];
   for (const img of images) {
-    if (img.cutout_image_url) {
-      imageUrls.push(img.cutout_image_url);
-      continue;
-    }
     if (img.raw_image_url) {
       try {
         const signed = await getSignedRawUrl(img.raw_image_url);
         imageUrls.push(signed);
+        continue;
       } catch (err) {
-        // Skip this row; others may still work.
+        // Fall through to cutout fallback — the row may have a
+        // still-fetchable cutout even if the raw is gone.
         const msg = err instanceof Error ? err.message : String(err);
         console.warn(`[runAiInfer] signed URL failed for ${img.raw_image_url}: ${msg}`);
       }
+    }
+    if (img.cutout_image_url) {
+      imageUrls.push(img.cutout_image_url);
     }
   }
 
