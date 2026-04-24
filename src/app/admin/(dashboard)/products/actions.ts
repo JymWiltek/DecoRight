@@ -6,6 +6,7 @@ import { createServiceRoleClient } from "@/lib/supabase/service";
 import { glbPublicUrl, uploadThumbnail } from "@/lib/storage";
 import { inferProductFields } from "@/lib/ai/infer";
 import { invalidatePublishedCountsCache } from "@/lib/products";
+import { runRembgForImage } from "@/lib/rembg/pipeline";
 import {
   PRICE_TIERS,
   PRODUCT_STATUSES,
@@ -17,6 +18,53 @@ import type {
   ProductInsert,
   ProductUpdate,
 } from "@/lib/supabase/types";
+
+/** Accepted image extensions (lowercased, no leading dot). Must match
+ *  the MIME→ext map in upload-actions.ts so a signed URL minted
+ *  there yields an entry that passes validation here. */
+const ALLOWED_IMAGE_EXTS = new Set(["jpg", "png", "webp", "gif"]);
+
+/** Anchored UUID regex. crypto.randomUUID() emits v4; we accept any
+ *  v1-5 since the server doesn't care about the version bits — just
+ *  the shape. Defeats path-injection via crafted `imageId`. */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+type RawImageEntry = { imageId: string; ext: string };
+
+/**
+ * Parse the `raw_image_entries` hidden field the client dropzone
+ * appends at submit time. Shape: JSON array of `{imageId, ext}`.
+ *
+ * Validation is tight: uuid-shaped id + known extension. Anything
+ * else is dropped silently — a crafted POST can't wedge a `../`
+ * path traversal into raw_image_url because we reconstruct the
+ * path server-side as `<productId>/<imageId>.<ext>` from these
+ * validated pieces.
+ */
+function parseRawImageEntries(fd: FormData): RawImageEntry[] {
+  const raw = fd.get("raw_image_entries");
+  if (typeof raw !== "string" || !raw.trim()) return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(parsed)) return [];
+  const out: RawImageEntry[] = [];
+  for (const item of parsed) {
+    if (!item || typeof item !== "object") continue;
+    const o = item as Record<string, unknown>;
+    const id = typeof o.imageId === "string" ? o.imageId : null;
+    const ext =
+      typeof o.ext === "string" ? o.ext.toLowerCase().replace(/^\./, "") : null;
+    if (!id || !ext) continue;
+    if (!UUID_RE.test(id)) continue;
+    if (!ALLOWED_IMAGE_EXTS.has(ext)) continue;
+    out.push({ imageId: id, ext });
+  }
+  return out;
+}
 
 // Taxonomy slugs are validated against the live DB tables — not a
 // hard-coded list — so operators can add new item types / rooms /
@@ -198,6 +246,87 @@ function validGlbPath(path: string | null, productId: string): boolean {
   return path === `products/${productId}/model.glb`;
 }
 
+/**
+ * Insert one product_images row per staged entry at state='raw'.
+ * Idempotent via upsert on id — if the client retried the save and
+ * the row already exists we just refresh it.
+ *
+ * The raw bytes already live in Storage at
+ * `<productId>/<imageId>.<ext>` (the signed URL mint used that path
+ * deterministically). Here we just record their existence in the DB
+ * so the rembg worker can find them.
+ */
+async function attachStagedRawImages(
+  productId: string,
+  entries: RawImageEntry[],
+): Promise<{ ok: true; ids: string[] } | { ok: false; error: string }> {
+  if (entries.length === 0) return { ok: true, ids: [] };
+  const supabase = createServiceRoleClient();
+  const rows = entries.map((e) => ({
+    id: e.imageId,
+    product_id: productId,
+    state: "raw" as const,
+    raw_image_url: `${productId}/${e.imageId}.${e.ext}`,
+  }));
+  const { error } = await supabase
+    .from("product_images")
+    .upsert(rows, { onConflict: "id" });
+  if (error) return { ok: false, error: error.message };
+  return { ok: true, ids: rows.map((r) => r.id) };
+}
+
+/**
+ * Run rembg AUTO for every image on `productId` that's currently
+ * state='raw' or 'cutout_failed'. Called ONLY when the product ends
+ * up `status='published'` after this save — draft products never
+ * burn rembg quota (that's the whole "nothing commits until Publish"
+ * principle).
+ *
+ * Sequential on purpose:
+ *   - rembg is quota-metered via advisory lock in reserve_api_slot();
+ *     concurrent calls serialize on that lock anyway.
+ *   - Keeps the progress deterministic for the caller's telemetry
+ *     (approved/failed counts used by the redirect banner).
+ *
+ * Returns per-run counts so the caller can encode them into the
+ * redirect query for the UI banner.
+ */
+async function processPendingImagesForPublish(
+  productId: string,
+): Promise<{ approved: number; failed: number; ran: number }> {
+  const supabase = createServiceRoleClient();
+  const { data, error } = await supabase
+    .from("product_images")
+    .select("id")
+    .eq("product_id", productId)
+    .in("state", ["raw", "cutout_failed"]);
+  if (error) return { approved: 0, failed: 0, ran: 0 };
+  const ids = (data ?? []).map((r) => r.id);
+  if (ids.length === 0) return { approved: 0, failed: 0, ran: 0 };
+
+  // cutout_failed rows need their stale cutout artifacts cleared
+  // before the worker re-runs — reset to state='raw' first so the
+  // worker fetch path hits raw_image_url, not a dead cutout one.
+  await supabase
+    .from("product_images")
+    .update({
+      state: "raw",
+      cutout_image_url: null,
+      rembg_provider: null,
+      rembg_cost_usd: null,
+    })
+    .in("id", ids);
+
+  let approved = 0;
+  let failed = 0;
+  for (const id of ids) {
+    const res = await runRembgForImage(productId, id, undefined, "auto");
+    if (res.ok) approved++;
+    else failed++;
+  }
+  return { approved, failed, ran: ids.length };
+}
+
 export async function createProduct(fd: FormData): Promise<void> {
   // /admin/products/new only ships the `name` input. parsePayload
   // returns sane defaults (empty arrays, draft status) for everything
@@ -260,10 +389,41 @@ export async function createProduct(fd: FormData): Promise<void> {
     );
   }
 
+  // Attach any staged raw images (unlikely on /new today — that form
+  // is name-only — but kept here so a future /new that grows an
+  // image picker Just Works). Rows go in at state='raw'.
+  const stagedEntries = parseRawImageEntries(fd);
+  if (stagedEntries.length > 0) {
+    const attach = await attachStagedRawImages(id, stagedEntries);
+    if (!attach.ok) {
+      redirect(
+        `/admin/products/${id}/edit?err=db&msg=${encodeURIComponent(
+          `image row insert failed: ${attach.error}`,
+        )}`,
+      );
+    }
+  }
+
+  // Rembg runs iff the product ends up published. createProduct on /new
+  // currently always lands as draft, but the check is symmetric with
+  // updateProduct so the rule is enforced in one place.
+  let rembgCounts = { approved: 0, failed: 0, ran: 0 };
+  if (payload.status === "published") {
+    rembgCounts = await processPendingImagesForPublish(id);
+  }
+
   revalidatePath("/admin");
   revalidatePath("/");
+  revalidatePath(`/product/${id}`);
   invalidatePublishedCountsCache();
-  redirect(`/admin/products/${id}/edit?saved=1&fresh=1`);
+
+  const qs = new URLSearchParams({ saved: "1", fresh: "1" });
+  if (stagedEntries.length > 0) qs.set("uploaded", String(stagedEntries.length));
+  if (rembgCounts.ran > 0) {
+    qs.set("approved", String(rembgCounts.approved));
+    qs.set("failed", String(rembgCounts.failed));
+  }
+  redirect(`/admin/products/${id}/edit?${qs.toString()}`);
 }
 
 export async function updateProduct(id: string, fd: FormData): Promise<void> {
@@ -317,11 +477,48 @@ export async function updateProduct(id: string, fd: FormData): Promise<void> {
     );
   }
 
+  // Attach staged raw images (PUT already happened client-side via
+  // signed URL). Rows go in at state='raw' — rembg only runs iff
+  // the product ends up published (below).
+  const stagedEntries = parseRawImageEntries(fd);
+  if (stagedEntries.length > 0) {
+    const attach = await attachStagedRawImages(id, stagedEntries);
+    if (!attach.ok) {
+      redirect(
+        `/admin/products/${id}/edit?err=db&msg=${encodeURIComponent(
+          `image row insert failed: ${attach.error}`,
+        )}`,
+      );
+    }
+  }
+
+  // The core of the "commit on Save" rule:
+  //   - Save-as-Draft (intent=draft) → status=draft → skip rembg.
+  //   - Save (intent=save) → respects PillGrid; if user left it on
+  //     'published' the product stays published → rembg runs on
+  //     any raw / cutout_failed rows. This is the "operator edited
+  //     a published product, added a new photo, clicked Save" case
+  //     Jym flagged in test 3.
+  //   - Publish (intent=publish) → status=published → rembg runs.
+  // We key off the *final* payload.status so the single rule covers
+  // all three intents without branching on intent name.
+  let rembgCounts = { approved: 0, failed: 0, ran: 0 };
+  if (payload.status === "published") {
+    rembgCounts = await processPendingImagesForPublish(id);
+  }
+
   revalidatePath("/admin");
   revalidatePath("/");
   revalidatePath(`/product/${id}`);
   invalidatePublishedCountsCache();
-  redirect(`/admin/products/${id}/edit?saved=1`);
+
+  const qs = new URLSearchParams({ saved: "1" });
+  if (stagedEntries.length > 0) qs.set("uploaded", String(stagedEntries.length));
+  if (rembgCounts.ran > 0) {
+    qs.set("approved", String(rembgCounts.approved));
+    qs.set("failed", String(rembgCounts.failed));
+  }
+  redirect(`/admin/products/${id}/edit?${qs.toString()}`);
 }
 
 export async function deleteProduct(id: string): Promise<void> {

@@ -183,10 +183,11 @@ export default function ProductImagesSection({
         <Banner tone="emerald">Retry succeeded — cutout approved.</Banner>
       ) : null}
 
-      {/* Uploader: post-refactor the dropzone is self-contained —
-          it mints a signed URL, PUTs bytes direct to Storage, then
-          calls attachRawImages + kickRembgPipeline server actions
-          itself. No <form> wrapper, no FormData carrying bytes. */}
+      {/* Uploader: pure-preview dropzone. Files stage as thumbnails
+          in React state; nothing touches Storage until the operator
+          clicks Save / Publish on ProductForm above (that form owns
+          the submit lifecycle and iterates registered uploaders).
+          rembg spend is gated on final product status=published. */}
       <UploadDropzone
         productId={productId}
         accept="image/jpeg,image/png,image/webp"

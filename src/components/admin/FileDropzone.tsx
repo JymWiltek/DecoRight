@@ -1,45 +1,43 @@
 "use client";
 
 /**
- * Single-file drop-or-click input with client-direct-upload.
+ * Single-file dropzone (currently only used for the GLB model).
+ * Pure-preview — nothing touches Storage until the form Save /
+ * Publish button fires.
  *
- * Before 2026-04 this was a dumb proxy: pick a file, populate a
- * hidden <input type="file" form="product-form">, let the main Save
- * action's FormData carry the bytes up. For a 47 MB GLB that
- * approach hits Vercel Hobby's 4.5 MB platform body cap and the
- * Save click just dies (operator sees "This page couldn't load" —
- * no server log, because the platform rejects before Next ever runs).
- *
- * New design: the moment the user picks a file, we:
- *   1. Mint a signed PUT URL via `getSignedUploadUrl("glb", productId)`.
- *   2. PUT the bytes straight to Supabase Storage (bypasses Vercel).
- *   3. Write the returned storage path into a hidden
- *      `<input name="glb_path">` associated with the product form.
- *      Also write the size into `<input name="glb_size_kb">`.
- *   4. When the operator clicks Save, the main server action reads
- *      the small string fields — no file bytes ever enter FormData.
- *
- * For /products/new we don't have a productId yet → the form
- * disables the dropzone until save produces one (createProduct
- * returns a fresh id and redirects to /edit?fresh=1). That's fine
- * in practice: operator flow has always been "create draft with
- * name, then attach GLB + images on the edit page".
+ * Mechanics:
+ *   - User picks / drops a file → we stash it in component state and
+ *     render filename + size + a Clear button. No network IO.
+ *   - On mount we register with <StagedUploadsProvider> (from
+ *     ProductForm). When the form submits, the provider invokes our
+ *     `run()` which:
+ *       1. Mints a signed PUT URL (`getSignedUploadUrl("glb", …)`).
+ *       2. PUTs the .glb bytes directly to Supabase Storage. This
+ *          step bypasses Vercel's 4.5 MB platform body cap — the
+ *          whole reason for the direct-upload refactor.
+ *       3. Returns hidden fields (`glb_path`, `glb_size_kb`) that
+ *          ProductForm appends to its FormData before calling the
+ *          server action.
+ *   - On /products/new there's no productId yet, so the dropzone
+ *     disables itself with a hint to save the name first. That
+ *     keeps us from minting a signed URL for a UUID that doesn't
+ *     exist in the products table yet.
  */
 
-import { useRef, useState, type DragEvent } from "react";
+import { useEffect, useRef, useState, type DragEvent } from "react";
 import { getSignedUploadUrl } from "@/app/admin/(dashboard)/products/upload-actions";
+import {
+  useLatestRef,
+  useRegisterStagedUploader,
+  useStagedUploads,
+  type StagedField,
+} from "./product-form-staging";
 
 type Props = {
-  /** Hidden input name on the PATH field — what the server action
-   *  reads to learn where the bytes live. Conventionally "glb_path". */
-  name: string;
   /** Comma-sep MIME types (forwarded to input.accept). */
   accept: string;
   /** Hard cap in MB. Mirrored by the storage bucket's file_size_limit. */
   maxFileMb: number;
-  /** Form id to associate hidden inputs with — required because the
-   *  dropzone lives outside the main <form> in ProductForm. */
-  form?: string;
   /** Pre-existing file URL to show as "current" preview. Optional. */
   currentUrl?: string | null;
   /** When set, render currentUrl as <img>; otherwise as a link. */
@@ -48,21 +46,18 @@ type Props = {
   currentMeta?: string | null;
   /** Visible label inside the dropzone when no file is selected. */
   hint?: string;
-  /** Product id — required. When null (e.g. on /products/new before
-   *  first save) the dropzone disables itself with a gentle hint. */
+  /** Product id — required for the signed-URL mint path. When null
+   *  (e.g. on /products/new before first save) the dropzone shows a
+   *  gentle disabled hint. */
   productId?: string | null;
-  /** Only "glb" is supported today. Kept explicit so a future model /
-   *  thumbnail reuse is one-line. */
+  /** Only "glb" is supported today. Kept explicit so a future
+   *  thumbnail dropzone is a one-line change. */
   kind?: "glb";
 };
 
-type Phase = "idle" | "uploading" | "done" | "error";
-
 export default function FileDropzone({
-  name,
   accept,
   maxFileMb,
-  form,
   currentUrl,
   currentIsImage,
   currentMeta,
@@ -72,17 +67,46 @@ export default function FileDropzone({
 }: Props) {
   const pickerRef = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
-  const [phase, setPhase] = useState<Phase>("idle");
   const [error, setError] = useState<string | null>(null);
   const [picked, setPicked] = useState<File | null>(null);
-  /** Storage path returned after a successful direct upload. This is
-   *  what actually ships to the product save action via the hidden
-   *  `name` input. */
-  const [uploadedPath, setUploadedPath] = useState<string | null>(null);
-
-  const busy = phase === "uploading";
-  const disabled = !productId;
   const maxBytes = maxFileMb * 1024 * 1024;
+
+  const { busy } = useStagedUploads();
+  const disabled = !productId || busy;
+
+  // The staged uploader reads the *latest* picked file via a ref so
+  // the registration itself can be mount-once.
+  const pickedRef = useLatestRef(picked);
+
+  useRegisterStagedUploader("glb_file", {
+    label: "3D model",
+    pendingCount: () => (pickedRef.current ? 1 : 0),
+    run: async (onProgress) => {
+      const file = pickedRef.current;
+      if (!file || !productId) return [];
+      onProgress({
+        label: `3D model (${file.name})`,
+        done: 0,
+        total: 1,
+      });
+      const r = await getSignedUploadUrl(kind, productId, file.name, file.type);
+      if (!r.ok) {
+        throw new Error(r.error);
+      }
+      await putBytes(r.ticket.signedUrl, file);
+      onProgress({
+        label: `3D model (${file.name})`,
+        done: 1,
+        total: 1,
+      });
+      const sizeKb = Math.round(file.size / 1024);
+      const fields: StagedField[] = [
+        { name: "glb_path", value: r.ticket.path },
+        { name: "glb_size_kb", value: String(sizeKb) },
+      ];
+      return fields;
+    },
+  });
 
   function vet(f: File): string | null {
     if (accept) {
@@ -100,25 +124,7 @@ export default function FileDropzone({
     return null;
   }
 
-  async function putBytes(signedUrl: string, file: File): Promise<void> {
-    const res = await fetch(signedUrl, {
-      method: "PUT",
-      headers: {
-        "Content-Type": file.type || "model/gltf-binary",
-        "x-upsert": "true",
-        "cache-control": "max-age=31536000",
-      },
-      body: file,
-    });
-    if (!res.ok) {
-      const text = await res.text().catch(() => "");
-      throw new Error(
-        `upload failed (${res.status}): ${text || res.statusText}`,
-      );
-    }
-  }
-
-  async function take(f: File) {
+  function take(f: File) {
     const vetErr = vet(f);
     if (vetErr) {
       setError(vetErr);
@@ -132,79 +138,54 @@ export default function FileDropzone({
     }
     setError(null);
     setPicked(f);
-    setPhase("uploading");
-    try {
-      const r = await getSignedUploadUrl(kind, productId, f.name, f.type);
-      if (!r.ok) {
-        throw new Error(r.error);
-      }
-      await putBytes(r.ticket.signedUrl, f);
-      setUploadedPath(r.ticket.path);
-      setPhase("done");
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      setError(msg);
-      setPhase("error");
-      setUploadedPath(null);
-    }
   }
 
   function onDrop(e: DragEvent<HTMLDivElement>) {
     e.preventDefault();
     setDragging(false);
-    if (busy || disabled) return;
+    if (disabled) return;
     const f = e.dataTransfer.files[0];
-    if (f) void take(f);
+    if (f) take(f);
   }
 
   function onClear(e: React.MouseEvent) {
     e.stopPropagation();
-    if (busy) return;
+    if (disabled) return;
     setPicked(null);
-    setUploadedPath(null);
-    setPhase("idle");
     setError(null);
   }
 
-  const sizeKb = picked ? Math.round(picked.size / 1024) : null;
+  // Clear the error banner automatically when the user picks a new
+  // valid file (handled in take()), but also clear it if the product
+  // id shows up post-redirect — otherwise a new-product flow shows
+  // the stale "save first" hint forever.
+  useEffect(() => {
+    if (productId && error?.startsWith("Save the product first")) {
+      setError(null);
+    }
+  }, [productId, error]);
 
   return (
     <div className="flex flex-col gap-2">
-      {/* Hidden inputs carried in the main product form. These are
-          the ONLY things that make it to the server action. */}
-      {uploadedPath && (
-        <>
-          <input type="hidden" form={form} name={name} value={uploadedPath} />
-          {sizeKb != null && (
-            <input
-              type="hidden"
-              form={form}
-              name={`${name.replace(/_path$/, "")}_size_kb`}
-              value={sizeKb}
-            />
-          )}
-        </>
-      )}
-
       <div
         onDrop={onDrop}
         onDragOver={(e) => {
           e.preventDefault();
-          if (!busy && !disabled && !dragging) setDragging(true);
+          if (!disabled && !dragging) setDragging(true);
         }}
         onDragLeave={(e) => {
           if (e.currentTarget.contains(e.relatedTarget as Node)) return;
           setDragging(false);
         }}
         onClick={() => {
-          if (busy || disabled) return;
+          if (disabled) return;
           pickerRef.current?.click();
         }}
         role="button"
         tabIndex={0}
-        aria-disabled={busy || disabled}
+        aria-disabled={disabled}
         onKeyDown={(e) => {
-          if ((e.key === "Enter" || e.key === " ") && !busy && !disabled) {
+          if ((e.key === "Enter" || e.key === " ") && !disabled) {
             e.preventDefault();
             pickerRef.current?.click();
           }
@@ -212,11 +193,9 @@ export default function FileDropzone({
         className={`relative flex min-h-[100px] flex-col items-center justify-center rounded-md border-2 border-dashed p-4 text-center text-sm transition ${
           disabled
             ? "cursor-not-allowed border-neutral-200 bg-neutral-50 text-neutral-400"
-            : busy
-              ? "cursor-wait border-neutral-300 bg-neutral-50 opacity-70"
-              : dragging
-                ? "cursor-pointer border-black bg-neutral-100"
-                : "cursor-pointer border-neutral-300 bg-neutral-50 hover:border-neutral-500"
+            : dragging
+              ? "cursor-pointer border-black bg-neutral-100"
+              : "cursor-pointer border-neutral-300 bg-neutral-50 hover:border-neutral-500"
         }`}
       >
         <input
@@ -226,11 +205,11 @@ export default function FileDropzone({
           hidden
           onChange={(e) => {
             const f = e.currentTarget.files?.[0];
-            if (f) void take(f);
+            if (f) take(f);
             e.currentTarget.value = "";
           }}
         />
-        {disabled ? (
+        {!productId ? (
           <div className="text-xs">
             Save the product first (just the name works), then drop a{" "}
             .glb here on the edit page.
@@ -239,14 +218,7 @@ export default function FileDropzone({
           <>
             <div className="font-medium text-neutral-800">{picked.name}</div>
             <div className="mt-1 text-xs text-neutral-500">
-              {(picked.size / 1024).toFixed(0)} KB ·{" "}
-              {phase === "uploading"
-                ? "uploading direct to Storage…"
-                : phase === "done"
-                  ? "uploaded — click Save to apply"
-                  : phase === "error"
-                    ? "upload failed"
-                    : "ready"}
+              {(picked.size / 1024).toFixed(0)} KB · staged — uploads on Save
             </div>
             {!busy && (
               <button
@@ -264,8 +236,7 @@ export default function FileDropzone({
               {hint ?? "Click to pick a file, or drop it here"}
             </div>
             <div className="mt-1 text-xs text-neutral-500">
-              Max {maxFileMb} MB · uploads direct to Storage (no platform
-              size limit)
+              Max {maxFileMb} MB · staged for Save (no platform size limit)
             </div>
           </>
         )}
@@ -302,4 +273,27 @@ export default function FileDropzone({
       )}
     </div>
   );
+}
+
+/**
+ * PUT bytes directly to the signed URL. Identical to the image
+ * dropzone's helper but kept local — both files are terse enough
+ * that de-duping would cost more in imports than the 12 lines save.
+ */
+async function putBytes(signedUrl: string, file: File): Promise<void> {
+  const res = await fetch(signedUrl, {
+    method: "PUT",
+    headers: {
+      "Content-Type": file.type || "model/gltf-binary",
+      "x-upsert": "true",
+      "cache-control": "max-age=31536000",
+    },
+    body: file,
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(
+      `upload failed (${res.status}): ${text || res.statusText}`,
+    );
+  }
 }

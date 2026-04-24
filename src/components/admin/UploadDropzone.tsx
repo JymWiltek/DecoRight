@@ -1,44 +1,41 @@
 "use client";
 
 /**
- * Facebook-style image picker with client-direct-upload.
+ * Pure-preview image dropzone.
  *
- * Before the 2026-04 refactor this was a "populate the hidden file
- * input then let the outer <form action=uploadRawImages> submit" dumb
- * proxy. That path fell over on Vercel: a batch of phone photos or
- * a single high-res scan routinely exceeds Vercel Hobby's 4.5 MB
- * platform body cap, which kills the POST before Next.js can parse
- * it — the operator sees "This page couldn't load".
+ * Design (post "commit-on-Save" refactor):
+ *   - Drop / pick files → instant thumbnail previews. Nothing touches
+ *     Storage or the DB. The × removes a staged file; Clear nukes
+ *     the whole batch. This mirrors Gmail draft semantics: it's not
+ *     sent until you click Send.
+ *   - The dropzone registers itself with <StagedUploadsProvider>
+ *     (mounted by ProductForm). When the form's Save / Publish
+ *     button fires, ProductForm iterates registered uploaders; our
+ *     `run()` then:
+ *        a. For each staged file, mint a signed PUT URL via
+ *           `getSignedUploadUrl("raw_image", …)`.
+ *        b. PUT bytes directly to Supabase Storage (no Vercel body cap).
+ *        c. Return a `raw_image_entries` JSON blob that gets appended
+ *           to the FormData the server action receives.
+ *   - DB row insertion + optional rembg happen inside the server
+ *     action (createProduct / updateProduct). That's the single
+ *     commit point; if the user clicks Save-as-Draft, rembg never
+ *     runs. If Publish or Save-on-published, the server action
+ *     kicks rembg synchronously.
  *
- * New design:
- *   1. User picks / drops N files → instant thumbnail previews.
- *      Nothing uploads yet. × removes, Clear all nukes.
- *   2. Click Upload:
- *      a. For each file, call `getSignedUploadUrl("raw_image", ...)`
- *         to mint a signed PUT URL + pre-generate a product_image id.
- *      b. PUT the raw bytes directly to Supabase Storage (bypasses
- *         Vercel entirely — no platform body cap in the way).
- *      c. Once all uploads finish, call `attachRawImages` once to
- *         insert all the product_images rows (state=raw).
- *      d. Call `kickRembgPipeline` to run rembg AUTO on each row;
- *         successes land at cutout_approved (+ primary if first),
- *         failures land at cutout_failed.
- *   3. `router.refresh()` pulls the new rows into the surrounding
- *      ProductImagesSection.
- *
- * No <form> wrapper needed: every mutation is an explicit RPC and
- * the dropzone owns its lifecycle. Progress + error feedback live
- * entirely client-side.
+ * No progress indicator *inside* the dropzone during submit — the
+ * banner lives at the form level (SubmitPhaseBanner). This avoids
+ * a confusing "which spinner is authoritative?" UX.
  */
 
 import { useEffect, useRef, useState, type DragEvent } from "react";
-import { useRouter } from "next/navigation";
+import { getSignedUploadUrl } from "@/app/admin/(dashboard)/products/upload-actions";
 import {
-  getSignedUploadUrl,
-  attachRawImages,
-  kickRembgPipeline,
-  type AttachRawImageEntry,
-} from "@/app/admin/(dashboard)/products/upload-actions";
+  useLatestRef,
+  useRegisterStagedUploader,
+  useStagedUploads,
+  type StagedField,
+} from "./product-form-staging";
 
 type Props = {
   productId: string;
@@ -60,38 +57,91 @@ type Preview = {
   objectUrl: string;
 };
 
-type Phase = "idle" | "uploading" | "attaching" | "rembg" | "done" | "error";
-
-type FailedImage = { imageId: string; code: string; msg: string };
-
 export function UploadDropzone({
   productId,
   accept = DEFAULT_ACCEPT,
   multiple = true,
   maxFileMb = 8,
 }: Props) {
-  const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [previews, setPreviews] = useState<Preview[]>([]);
   const [errors, setErrors] = useState<string[]>([]);
-  const [phase, setPhase] = useState<Phase>("idle");
-  const [progress, setProgress] = useState<{ done: number; total: number }>({
-    done: 0,
-    total: 0,
-  });
-  const [failures, setFailures] = useState<FailedImage[]>([]);
-  const [lastSummary, setLastSummary] = useState<string | null>(null);
 
   const maxBytes = maxFileMb * 1024 * 1024;
-  const busy = phase !== "idle" && phase !== "done" && phase !== "error";
+  const { busy } = useStagedUploads();
+  const disabled = busy;
 
+  // Parent's submit handler needs to read the *current* previews
+  // list, but we only want to register the uploader once on mount
+  // (otherwise the registration resubscribes on every state change).
+  const previewsRef = useLatestRef(previews);
+
+  // Clean up object URLs on unmount. Can't put this in the same
+  // effect as appendFiles' creation because unmount cleanup runs
+  // only once.
   useEffect(() => {
     return () => {
-      for (const p of previews) URL.revokeObjectURL(p.objectUrl);
+      for (const p of previewsRef.current) URL.revokeObjectURL(p.objectUrl);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useRegisterStagedUploader("raw_images", {
+    label: "images",
+    pendingCount: () => previewsRef.current.length,
+    run: async (onProgress) => {
+      const files = previewsRef.current;
+      if (files.length === 0) return [];
+
+      const entries: { imageId: string; ext: string }[] = [];
+      const runtimeErrors: string[] = [];
+
+      for (let i = 0; i < files.length; i++) {
+        const p = files[i];
+        onProgress({
+          label: `image ${i + 1}/${files.length} (${p.file.name})`,
+          done: i,
+          total: files.length,
+        });
+        try {
+          const r = await getSignedUploadUrl(
+            "raw_image",
+            productId,
+            p.file.name,
+            p.file.type,
+          );
+          if (!r.ok || !r.ticket.imageId) {
+            throw new Error(r.ok ? "missing image id" : r.error);
+          }
+          await putBytes(r.ticket.signedUrl, p.file);
+          // Recover the extension from the minted path ("<product>/<id>.<ext>").
+          const ext = r.ticket.path.split(".").pop() ?? "jpg";
+          entries.push({ imageId: r.ticket.imageId, ext });
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          runtimeErrors.push(`${p.file.name}: ${msg}`);
+        }
+      }
+      onProgress({
+        label: `${entries.length} image${entries.length === 1 ? "" : "s"} uploaded`,
+        done: files.length,
+        total: files.length,
+      });
+
+      // Surface runtime errors as a persistent banner below the
+      // dropzone — but don't throw, we still want the server action
+      // to proceed with the images that DID upload.
+      if (runtimeErrors.length > 0) setErrors(runtimeErrors);
+
+      if (entries.length === 0) return [];
+
+      const result: StagedField[] = [
+        { name: "raw_image_entries", value: JSON.stringify(entries) },
+      ];
+      return result;
+    },
+  });
 
   function vet(incoming: File[]): { ok: File[]; errors: string[] } {
     const ok: File[] = [];
@@ -119,24 +169,28 @@ export function UploadDropzone({
       file: f,
       objectUrl: URL.createObjectURL(f),
     }));
-    const next = multiple ? [...previews, ...added] : added.slice(0, 1);
-    if (!multiple) {
-      for (const p of previews) URL.revokeObjectURL(p.objectUrl);
-    }
-    setPreviews(next);
+    setPreviews((prev) => {
+      if (!multiple) {
+        for (const p of prev) URL.revokeObjectURL(p.objectUrl);
+        return added.slice(0, 1);
+      }
+      return [...prev, ...added];
+    });
   }
 
   function removeAt(idx: number) {
-    if (busy) return;
-    const removed = previews[idx];
-    if (removed) URL.revokeObjectURL(removed.objectUrl);
-    setPreviews(previews.filter((_, i) => i !== idx));
+    if (disabled) return;
+    setPreviews((prev) => {
+      const removed = prev[idx];
+      if (removed) URL.revokeObjectURL(removed.objectUrl);
+      return prev.filter((_, i) => i !== idx);
+    });
   }
 
   function handleDrop(e: DragEvent<HTMLDivElement>) {
     e.preventDefault();
     setIsDragging(false);
-    if (busy) return;
+    if (disabled) return;
     const { ok, errors: errs } = vet(Array.from(e.dataTransfer.files));
     setErrors(errs);
     if (ok.length === 0) return;
@@ -145,7 +199,7 @@ export function UploadDropzone({
 
   function handleDragOver(e: DragEvent<HTMLDivElement>) {
     e.preventDefault();
-    if (busy) return;
+    if (disabled) return;
     if (!isDragging) setIsDragging(true);
   }
 
@@ -155,141 +209,18 @@ export function UploadDropzone({
   }
 
   function handleClick() {
-    if (busy) return;
+    if (disabled) return;
     inputRef.current?.click();
   }
 
   function handleClearAll(e: React.MouseEvent) {
     e.stopPropagation();
-    if (busy) return;
-    for (const p of previews) URL.revokeObjectURL(p.objectUrl);
-    setPreviews([]);
-  }
-
-  /**
-   * PUT a single file to the signed URL. We use fetch() instead of
-   * supabase.storage.uploadToSignedUrl because fetch works identically
-   * in a Server Component-bundled module tree, whereas uploadToSignedUrl
-   * would require importing the supabase client here (more code, same
-   * wire protocol).
-   */
-  async function putBytes(signedUrl: string, file: File): Promise<void> {
-    const res = await fetch(signedUrl, {
-      method: "PUT",
-      headers: {
-        "Content-Type": file.type || "application/octet-stream",
-        "x-upsert": "true",
-        // Cache the bytes hard at the CDN. The path is stable per image-id
-        // and we'd never re-upload to the same path without intending
-        // to replace — and the rembg output path is different anyway.
-        "cache-control": "max-age=31536000",
-      },
-      body: file,
+    if (disabled) return;
+    setPreviews((prev) => {
+      for (const p of prev) URL.revokeObjectURL(p.objectUrl);
+      return [];
     });
-    if (!res.ok) {
-      const text = await res.text().catch(() => "");
-      throw new Error(
-        `upload failed (${res.status}): ${text || res.statusText}`,
-      );
-    }
   }
-
-  async function handleUpload() {
-    if (busy || previews.length === 0) return;
-    setErrors([]);
-    setFailures([]);
-    setLastSummary(null);
-
-    setPhase("uploading");
-    setProgress({ done: 0, total: previews.length });
-
-    const uploaded: AttachRawImageEntry[] = [];
-    const ticketByFile: Array<{ file: File; imageId: string; ext: string }> =
-      [];
-
-    // Phase 1: mint ticket + PUT bytes, per file, sequentially. Parallel
-    // would be faster but Storage rate-limits per-project and the UX
-    // benefit for a 1–10 file batch is small.
-    for (let i = 0; i < previews.length; i++) {
-      const p = previews[i];
-      try {
-        const r = await getSignedUploadUrl(
-          "raw_image",
-          productId,
-          p.file.name,
-          p.file.type,
-        );
-        if (!r.ok || !r.ticket.imageId) {
-          throw new Error(r.ok ? "missing image id" : r.error);
-        }
-        await putBytes(r.ticket.signedUrl, p.file);
-        // Recover the extension from the minted path ("<product>/<id>.<ext>").
-        const ext = r.ticket.path.split(".").pop() ?? "jpg";
-        uploaded.push({ imageId: r.ticket.imageId, ext });
-        ticketByFile.push({ file: p.file, imageId: r.ticket.imageId, ext });
-        setProgress({ done: i + 1, total: previews.length });
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        setErrors((prev) => [...prev, `${p.file.name}: ${msg}`]);
-      }
-    }
-
-    if (uploaded.length === 0) {
-      setPhase("error");
-      return;
-    }
-
-    // Phase 2: attach rows.
-    setPhase("attaching");
-    const attachRes = await attachRawImages(productId, uploaded);
-    if (!attachRes.ok) {
-      setErrors((prev) => [...prev, `attach: ${attachRes.error}`]);
-      setPhase("error");
-      return;
-    }
-
-    // Phase 3: rembg AUTO per image.
-    setPhase("rembg");
-    setProgress({ done: 0, total: uploaded.length });
-    const kickRes = await kickRembgPipeline(
-      productId,
-      uploaded.map((u) => u.imageId),
-    );
-    let approved = 0;
-    const fails: FailedImage[] = [];
-    for (const o of kickRes.outcomes) {
-      if (o.ok) approved++;
-      else fails.push({ imageId: o.imageId, code: o.code ?? "rembg", msg: o.msg ?? "" });
-    }
-    setFailures(fails);
-    setProgress({ done: kickRes.outcomes.length, total: kickRes.outcomes.length });
-
-    // Clear previews (they're now represented as cards below by the
-    // refreshed ProductImagesSection).
-    for (const p of previews) URL.revokeObjectURL(p.objectUrl);
-    setPreviews([]);
-
-    const summary =
-      fails.length === 0
-        ? `${approved} image${approved === 1 ? "" : "s"} uploaded and cutout-approved.`
-        : `${approved} approved · ${fails.length} failed (retry on each card below).`;
-    setLastSummary(summary);
-    setPhase("done");
-
-    // Pull the new rows into the surrounding server component.
-    router.refresh();
-  }
-
-  // ── render ─────────────────────────────────────────────────
-
-  const phaseLabel: Record<Phase, string> = {
-    idle: "",
-    uploading: `Uploading ${progress.done}/${progress.total}…`,
-    attaching: "Saving…",
-    rembg: `Removing background ${progress.done}/${progress.total}…`,
-    done: lastSummary ?? "Done.",
-    error: "Upload failed — see errors below.",
-  };
 
   return (
     <div className="flex flex-col gap-3">
@@ -300,15 +231,15 @@ export function UploadDropzone({
         onClick={handleClick}
         role="button"
         tabIndex={0}
-        aria-disabled={busy}
+        aria-disabled={disabled}
         onKeyDown={(e) => {
-          if ((e.key === "Enter" || e.key === " ") && !busy) {
+          if ((e.key === "Enter" || e.key === " ") && !disabled) {
             e.preventDefault();
             handleClick();
           }
         }}
         className={`relative flex min-h-[140px] flex-col items-center justify-center rounded-md border-2 border-dashed p-6 text-center text-sm transition ${
-          busy
+          disabled
             ? "cursor-not-allowed border-neutral-300 bg-neutral-50 opacity-60"
             : isDragging
               ? "cursor-pointer border-black bg-neutral-100"
@@ -343,19 +274,22 @@ export function UploadDropzone({
           JPG / PNG / WebP · each ≤ {maxFileMb} MB
           {multiple ? " · multi-select" : ""}
         </div>
+        <div className="mt-1 text-[11px] text-neutral-400">
+          Nothing uploads until you click Save / Publish.
+        </div>
       </div>
 
       {previews.length > 0 && (
         <div className="flex flex-col gap-2 rounded-md border border-neutral-200 bg-white p-3">
           <div className="flex items-baseline justify-between">
             <div className="text-xs font-medium text-neutral-800">
-              {previews.length} file{previews.length === 1 ? "" : "s"} ready
-              to upload
+              {previews.length} file{previews.length === 1 ? "" : "s"} staged
+              — upload on Save / Publish
             </div>
             <button
               type="button"
               onClick={handleClearAll}
-              disabled={busy}
+              disabled={disabled}
               className="text-xs text-neutral-500 underline hover:text-rose-600 disabled:opacity-50"
             >
               Clear all
@@ -379,7 +313,7 @@ export function UploadDropzone({
                     e.stopPropagation();
                     removeAt(i);
                   }}
-                  disabled={busy}
+                  disabled={disabled}
                   className="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full bg-black/70 text-xs text-white opacity-0 transition group-hover:opacity-100 hover:bg-black disabled:opacity-0"
                   aria-label={`Remove ${p.file.name}`}
                   title="Remove"
@@ -398,58 +332,6 @@ export function UploadDropzone({
               </div>
             ))}
           </div>
-          <div className="flex items-center justify-between gap-2 pt-1">
-            <div className="text-[11px] text-neutral-500">
-              Uploads directly to Storage — no platform size limit.
-              Background removal (~$0.001/img via Replicate) runs
-              automatically.
-            </div>
-            <button
-              type="button"
-              onClick={handleUpload}
-              disabled={busy}
-              className="rounded-md bg-black px-4 py-1.5 text-xs font-medium text-white hover:bg-neutral-800 disabled:opacity-50"
-            >
-              {busy ? "Uploading…" : `Upload ${previews.length}`}
-            </button>
-          </div>
-        </div>
-      )}
-
-      {phase !== "idle" && (
-        <div
-          className={`rounded-md px-3 py-2 text-xs ${
-            phase === "error"
-              ? "bg-rose-50 text-rose-700"
-              : phase === "done"
-                ? failures.length === 0
-                  ? "bg-emerald-50 text-emerald-700"
-                  : "bg-amber-50 text-amber-800"
-                : "bg-neutral-50 text-neutral-700"
-          }`}
-          role="status"
-        >
-          {phaseLabel[phase]}
-        </div>
-      )}
-
-      {failures.length > 0 && (
-        <div className="rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-800">
-          <div className="mb-1 font-medium">
-            Background removal failed on {failures.length}:
-          </div>
-          <ul className="list-disc space-y-0.5 pl-4">
-            {failures.map((f) => (
-              <li key={f.imageId}>
-                <code className="font-mono">{f.imageId.slice(0, 8)}</code> —{" "}
-                {f.code}
-                {f.msg ? ` (${f.msg})` : ""}
-              </li>
-            ))}
-          </ul>
-          <div className="mt-1 text-[11px] text-amber-700">
-            Each failed image shows a Retry button on its card below.
-          </div>
         </div>
       )}
 
@@ -465,4 +347,29 @@ export function UploadDropzone({
       )}
     </div>
   );
+}
+
+/**
+ * PUT bytes directly to the signed URL. We use plain fetch() instead
+ * of supabase.storage.uploadToSignedUrl because fetch works identically
+ * without pulling the supabase client into this module. The wire
+ * format is identical — Storage accepts x-upsert + Content-Type
+ * headers either way.
+ */
+async function putBytes(signedUrl: string, file: File): Promise<void> {
+  const res = await fetch(signedUrl, {
+    method: "PUT",
+    headers: {
+      "Content-Type": file.type || "application/octet-stream",
+      "x-upsert": "true",
+      "cache-control": "max-age=31536000",
+    },
+    body: file,
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(
+      `upload failed (${res.status}): ${text || res.statusText}`,
+    );
+  }
 }
