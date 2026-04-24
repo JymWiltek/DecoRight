@@ -185,13 +185,31 @@ export default function ProductForm({
       // case so the UI isn't stuck on "Saving…".
       setPhase({ kind: "idle" });
     } catch (err) {
-      // Server-action redirects surface as thrown NEXT_REDIRECT markers
-      // that Next's runtime intercepts — they don't reach this catch.
-      // Anything that DOES reach here is a real problem we couldn't
-      // redirect for (e.g. network flake during the action RPC).
+      // IMPORTANT: server-action redirects are thrown as a special
+      // marker object with `digest` starting with "NEXT_REDIRECT"
+      // (or "NEXT_NOT_FOUND" for notFound()). Next's client runtime
+      // intercepts the throw at the framework boundary to perform
+      // the navigation — but only if WE rethrow. Swallowing it here
+      // is what made the first test show a red "Save failed:
+      // NEXT_REDIRECT" banner while the save actually succeeded.
+      if (isFrameworkRedirect(err)) throw err;
       const msg = err instanceof Error ? err.message : String(err);
       setPhase({ kind: "error", message: `Save failed: ${msg}` });
     }
+  }
+
+  /**
+   * Detects the internal-nav marker Next.js throws from redirect()
+   * / notFound(). We check the `digest` string shape rather than
+   * importing from `next/dist/client/components/...` — that path is
+   * unstable across Next versions, but the digest contract is the
+   * piece the framework relies on publicly.
+   */
+  function isFrameworkRedirect(err: unknown): boolean {
+    if (!err || typeof err !== "object" || !("digest" in err)) return false;
+    const d = (err as { digest?: unknown }).digest;
+    if (typeof d !== "string") return false;
+    return d.startsWith("NEXT_REDIRECT") || d === "NEXT_NOT_FOUND";
   }
 
   function onFormSubmit(e: React.FormEvent<HTMLFormElement>) {
