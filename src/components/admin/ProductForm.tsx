@@ -192,7 +192,18 @@ export default function ProductForm({
       // the navigation — but only if WE rethrow. Swallowing it here
       // is what made the first test show a red "Save failed:
       // NEXT_REDIRECT" banner while the save actually succeeded.
-      if (isFrameworkRedirect(err)) throw err;
+      //
+      // We also reset phase → idle BEFORE rethrowing. Without this,
+      // the banner stays stuck on "Saving…" after the redirect lands:
+      // React preserves component state across Next's soft-nav remount,
+      // so a phase that was "saving" at throw time survives into the
+      // destination page. setState is synchronous bookkeeping — it
+      // schedules the update, and the scheduled update carries through
+      // the remount to show the freshly-landed page in its idle state.
+      if (isFrameworkRedirect(err)) {
+        setPhase({ kind: "idle" });
+        throw err;
+      }
       const msg = err instanceof Error ? err.message : String(err);
       setPhase({ kind: "error", message: `Save failed: ${msg}` });
     }
