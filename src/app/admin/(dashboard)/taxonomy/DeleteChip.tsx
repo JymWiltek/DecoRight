@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { deleteTaxonomyItem, updateTaxonomyLabels } from "./actions";
+import TriLingualLabel from "@/components/admin/TriLingualLabel";
 
 type Kind = "item_types" | "rooms" | "styles" | "materials" | "colors";
 
@@ -55,7 +56,11 @@ export default function DeleteChip({
   hex,
 }: Props) {
   const [editing, setEditing] = useState(false);
-  const bothMissing = labelZh == null && labelMs == null;
+  // Now that the chip itself surfaces per-row red dots for missing
+  // translations, the chip-level border tint flips on ANY missing
+  // language (was: only when BOTH missing). Stronger at-a-glance
+  // signal that the chip needs attention.
+  const anyMissing = labelZh == null || labelMs == null;
 
   if (editing) {
     return (
@@ -113,8 +118,8 @@ export default function DeleteChip({
 
   return (
     <div
-      className={`inline-flex flex-col rounded-md border px-2.5 py-1.5 text-xs ${
-        bothMissing
+      className={`inline-flex flex-col rounded-md border px-3 py-2 ${
+        anyMissing
           ? "border-amber-300 bg-amber-50"
           : "border-neutral-300 bg-white"
       }`}
@@ -129,44 +134,38 @@ export default function DeleteChip({
           );
           if (!ok) e.preventDefault();
         }}
-        className="inline-flex items-center gap-1"
+        className="inline-flex items-start gap-2"
       >
         <input type="hidden" name="kind" value={kind} />
         <input type="hidden" name="slug" value={slug} />
         {hex && (
           <span
-            className="h-3 w-3 rounded-full border border-neutral-300"
+            className="mt-1 h-3 w-3 shrink-0 rounded-full border border-neutral-300"
             style={{ backgroundColor: hex }}
           />
         )}
-        <span className="font-medium">{label}</span>
-        <span className="text-neutral-400">· {slug}</span>
-        <button
-          type="button"
-          onClick={() => setEditing(true)}
-          className="ml-1 text-neutral-400 hover:text-sky-600"
-          title="Edit labels"
-          aria-label={`Edit ${label}`}
-        >
-          ✎
-        </button>
-        <button
-          type="submit"
-          className="text-neutral-400 hover:text-rose-600"
-          title="Delete"
-          aria-label={`Delete ${label}`}
-        >
-          ×
-        </button>
+        <TriLingualLabel en={label} zh={labelZh} ms={labelMs} />
+        <div className="ml-1 flex flex-col items-end gap-0.5 text-neutral-400">
+          <button
+            type="button"
+            onClick={() => setEditing(true)}
+            className="text-sm hover:text-sky-600"
+            title="Edit labels"
+            aria-label={`Edit ${label}`}
+          >
+            ✎
+          </button>
+          <button
+            type="submit"
+            className="text-sm hover:text-rose-600"
+            title="Delete"
+            aria-label={`Delete ${label}`}
+          >
+            ×
+          </button>
+        </div>
       </form>
-      <div className="mt-0.5 flex gap-2 text-[10px] leading-tight text-neutral-500">
-        <span className={labelZh ? "" : "text-amber-600"}>
-          ZH: {labelZh ?? "—"}
-        </span>
-        <span className={labelMs ? "" : "text-amber-600"}>
-          MS: {labelMs ?? "—"}
-        </span>
-      </div>
+      <div className="mt-1 text-[10px] text-neutral-400">{slug}</div>
     </div>
   );
 }

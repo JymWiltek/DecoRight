@@ -23,6 +23,7 @@
 import { useEffect, useState } from "react";
 import type { ItemSubtypeRow } from "@/lib/supabase/types";
 import { subscribeAutofillApply } from "@/lib/ai/autofill-bus";
+import TriLingualLabel from "./TriLingualLabel";
 
 type Props = {
   /** All subtypes from taxonomy. We filter client-side because the
@@ -155,13 +156,17 @@ export default function SubtypePicker({
               type="button"
               onClick={() => toggle(opt.slug)}
               aria-pressed={active}
-              className={`rounded-full border px-3 py-1 text-xs transition ${
+              className={`rounded-md border px-3 py-2 transition ${
                 active
                   ? "border-black bg-black text-white"
-                  : "border-neutral-300 bg-white text-neutral-700 hover:border-neutral-500"
+                  : "border-neutral-300 bg-white text-neutral-800 hover:border-neutral-500"
               }`}
             >
-              {opt.label_en}
+              <TriLingualLabel
+                en={opt.label_en}
+                zh={opt.label_zh}
+                ms={opt.label_ms}
+              />
             </button>
           );
         })}

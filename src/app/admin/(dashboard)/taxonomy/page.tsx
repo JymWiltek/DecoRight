@@ -3,6 +3,7 @@ import { addTaxonomyItem, addSubtype, setItemTypeRooms } from "./actions";
 import AutoTranslateButton from "./AutoTranslateButton";
 import DeleteChip from "./DeleteChip";
 import SubtypeChip from "./SubtypeChip";
+import TriLingualLabel from "@/components/admin/TriLingualLabel";
 
 export const dynamic = "force-dynamic";
 
@@ -379,12 +380,12 @@ function SubtypesBlock({
           {itemTypes.map((it) => {
             const subs = byItemType.get(it.slug) ?? [];
             return (
-              <div key={it.slug} className="border-l-2 border-neutral-200 pl-4">
+              <div key={it.slug} className="border-l-4 border-neutral-300 pl-4">
                 <div className="mb-2 flex items-baseline gap-2">
-                  <span className="text-sm font-medium text-neutral-800">
+                  <span className="text-base font-semibold text-neutral-900">
                     {it.label}
                   </span>
-                  <span className="text-[11px] text-neutral-400">
+                  <span className="text-xs text-neutral-400">
                     ({it.slug}) · {subs.length} subtype(s)
                   </span>
                 </div>
@@ -515,29 +516,24 @@ function RegionsBlock({ regions }: { regions: RegionRow[] }) {
                 </div>
                 <div className="flex flex-wrap gap-2">
                   {inGroup.map((r) => {
-                    const bothMissing =
-                      r.label_zh == null && r.label_ms == null;
+                    const anyMissing =
+                      r.label_zh == null || r.label_ms == null;
                     return (
                       <div
                         key={r.slug}
-                        className={`inline-flex flex-col rounded-md border px-2.5 py-1.5 text-xs ${
-                          bothMissing
+                        className={`inline-flex flex-col rounded-md border px-3 py-2 ${
+                          anyMissing
                             ? "border-amber-300 bg-amber-50"
                             : "border-neutral-300 bg-white"
                         }`}
                       >
-                        <div className="font-medium">{r.label_en}</div>
-                        <div className="mt-0.5 flex gap-2 text-[10px] leading-tight text-neutral-500">
-                          <span
-                            className={r.label_zh ? "" : "text-amber-600"}
-                          >
-                            ZH: {r.label_zh ?? "—"}
-                          </span>
-                          <span
-                            className={r.label_ms ? "" : "text-amber-600"}
-                          >
-                            MS: {r.label_ms ?? "—"}
-                          </span>
+                        <TriLingualLabel
+                          en={r.label_en}
+                          zh={r.label_zh}
+                          ms={r.label_ms}
+                        />
+                        <div className="mt-1 text-[10px] text-neutral-400">
+                          {r.slug}
                         </div>
                       </div>
                     );

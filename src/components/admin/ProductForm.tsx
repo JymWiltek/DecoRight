@@ -90,7 +90,12 @@ export default function ProductForm({
   // form hard to scan once we passed 30+ types.
   const itemTypeOptions = [...taxonomy.itemTypes]
     .sort((a, b) => a.label_en.localeCompare(b.label_en))
-    .map((r) => ({ slug: r.slug, label: r.label_en }));
+    .map((r) => ({
+      slug: r.slug,
+      label: r.label_en,
+      label_zh: r.label_zh,
+      label_ms: r.label_ms,
+    }));
 
   const formRef = useRef<HTMLFormElement>(null);
   const registryRef = useRef<Map<string, StagedUploader>>(new Map());
@@ -433,12 +438,19 @@ export default function ProductForm({
             options={taxonomy.styles.map((r) => ({
               slug: r.slug,
               label: r.label_en,
+              label_zh: r.label_zh,
+              label_ms: r.label_ms,
             }))}
             initial={p?.styles ?? []}
           />
         </Section>
 
         <Section title="Colors (multi)">
+          {/* Colors stay single-line under each swatch — the dot IS
+              the meaning, the label is a hint. Stacking 3 lines of
+              text under a 36px swatch wastes vertical space without
+              improving comprehension. ZH/MS still editable on the
+              taxonomy page chip. */}
           <PillGrid
             form={FORM_ID}
             name="colors"
@@ -461,6 +473,8 @@ export default function ProductForm({
             options={taxonomy.materials.map((r) => ({
               slug: r.slug,
               label: r.label_en,
+              label_zh: r.label_zh,
+              label_ms: r.label_ms,
             }))}
             initial={p?.materials ?? []}
           />

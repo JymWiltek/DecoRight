@@ -6,10 +6,18 @@ import {
   type AutofillApplyDetail,
   type AutofillFieldName,
 } from "@/lib/ai/autofill-bus";
+import TriLingualLabel from "./TriLingualLabel";
 
 export type PillOption = {
   slug: string;
+  /** Canonical EN label (always present). For non-taxonomy uses
+   *  (Status, Price Tier) this is the only label rendered. */
   label: string;
+  /** When EITHER label_zh or label_ms is provided, the pill renders
+   *  as a 3-row tri-lingual stack (EN / ZH / MS). Status pills omit
+   *  these and stay compact one-liners. */
+  label_zh?: string | null;
+  label_ms?: string | null;
   hex?: string; // colors only
 };
 
@@ -142,19 +150,41 @@ export default function PillGrid(props: Props) {
               </button>
             );
           }
+          // Tri-lingual rendering kicks in when the caller passes
+          // label_zh or label_ms. Compact callers (Status / Price
+          // Tier) leave those undefined and get the original
+          // single-line text-xs pill.
+          const triLingual =
+            opt.label_zh !== undefined || opt.label_ms !== undefined;
           return (
             <button
               key={opt.slug}
               type="button"
               onClick={() => toggle(opt.slug)}
               aria-pressed={active}
-              className={`rounded-full border px-3 py-1 text-xs transition ${
-                active
-                  ? "border-black bg-black text-white"
-                  : "border-neutral-300 bg-white text-neutral-700 hover:border-neutral-500"
-              }`}
+              className={
+                triLingual
+                  ? `rounded-md border px-3 py-2 transition ${
+                      active
+                        ? "border-black bg-black text-white"
+                        : "border-neutral-300 bg-white text-neutral-800 hover:border-neutral-500"
+                    }`
+                  : `rounded-full border px-3 py-1 text-xs transition ${
+                      active
+                        ? "border-black bg-black text-white"
+                        : "border-neutral-300 bg-white text-neutral-700 hover:border-neutral-500"
+                    }`
+              }
             >
-              {opt.label}
+              {triLingual ? (
+                <TriLingualLabel
+                  en={opt.label}
+                  zh={opt.label_zh ?? null}
+                  ms={opt.label_ms ?? null}
+                />
+              ) : (
+                opt.label
+              )}
             </button>
           );
         })}

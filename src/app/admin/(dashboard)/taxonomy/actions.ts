@@ -371,6 +371,66 @@ export async function updateTaxonomyLabels(fd: FormData): Promise<void> {
   redirect(`/admin/taxonomy?added=${kind}`);
 }
 
+// ─── tri-lingual subtype label edit ────────────────────────────────
+//
+// Subtypes have a compound key (item_type_slug + slug), so they
+// don't fit updateTaxonomyLabels' single-table single-slug pattern.
+// Same shape otherwise — patch label_en (NOT NULL guard) /
+// label_zh / label_ms, then bust caches.
+
+export async function updateSubtypeLabels(fd: FormData): Promise<void> {
+  const itemTypeSlug = fd.get("item_type_slug")?.toString() ?? "";
+  const slug = fd.get("slug")?.toString() ?? "";
+  if (!itemTypeSlug || !slug) {
+    redirect(`/admin/taxonomy?err=label&kind=item_subtypes`);
+  }
+
+  const patch: {
+    label_en?: string;
+    label_zh?: string | null;
+    label_ms?: string | null;
+  } = {};
+  const raw_en = fd.get("label_en");
+  if (raw_en != null) {
+    const v = raw_en.toString().trim();
+    if (!v) {
+      // label_en is NOT NULL.
+      redirect(`/admin/taxonomy?err=label&kind=item_subtypes`);
+    }
+    patch.label_en = v;
+  }
+  const raw_zh = fd.get("label_zh");
+  if (raw_zh != null) {
+    const v = raw_zh.toString().trim();
+    patch.label_zh = v ? v : null;
+  }
+  const raw_ms = fd.get("label_ms");
+  if (raw_ms != null) {
+    const v = raw_ms.toString().trim();
+    patch.label_ms = v ? v : null;
+  }
+  if (Object.keys(patch).length === 0) {
+    redirect(`/admin/taxonomy`);
+  }
+
+  const supabase = createServiceRoleClient();
+  const { error } = await supabase
+    .from("item_subtypes")
+    .update(patch)
+    .eq("item_type_slug", itemTypeSlug)
+    .eq("slug", slug);
+  if (error) {
+    redirect(
+      `/admin/taxonomy?err=db&kind=item_subtypes&msg=${encodeURIComponent(error.message)}`,
+    );
+  }
+
+  invalidateTaxonomyCache();
+  revalidatePath("/admin/taxonomy");
+  revalidatePath("/");
+  redirect(`/admin/taxonomy?added=item_subtypes`);
+}
+
 // ─── translate missing labels (OpenAI GPT-4o-mini) ─────────────────
 
 type TranslateJob = {

@@ -20,6 +20,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { ItemTypeRoomRow, TaxonomyRow } from "@/lib/supabase/types";
 import { subscribeAutofillApply } from "@/lib/ai/autofill-bus";
+import TriLingualLabel from "./TriLingualLabel";
 
 type Props = {
   form: string;
@@ -125,12 +126,12 @@ export default function RoomsPicker({
               type="button"
               onClick={() => toggle(r.slug)}
               aria-pressed={active}
-              className={`rounded-full border px-3 py-1 text-xs transition ${
+              className={`relative rounded-md border px-3 py-2 transition ${
                 active
                   ? "border-black bg-black text-white"
                   : isRecommended
                     ? "border-sky-300 bg-sky-50 text-sky-800 hover:border-sky-500"
-                    : "border-neutral-300 bg-white text-neutral-700 hover:border-neutral-500"
+                    : "border-neutral-300 bg-white text-neutral-800 hover:border-neutral-500"
               }`}
               title={
                 isRecommended
@@ -138,9 +139,18 @@ export default function RoomsPicker({
                   : "Not typically paired with this item type — still allowed"
               }
             >
-              {r.label_en}
+              <TriLingualLabel
+                en={r.label_en}
+                zh={r.label_zh}
+                ms={r.label_ms}
+              />
               {isRecommended && !active && (
-                <span className="ml-1 text-[10px] opacity-60">★</span>
+                <span
+                  aria-hidden
+                  className="absolute right-1 top-0.5 text-[10px] opacity-60"
+                >
+                  ★
+                </span>
               )}
             </button>
           );
