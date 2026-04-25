@@ -112,6 +112,51 @@ export async function createSignedGlbUploadUrl(
 }
 
 /**
+ * Mint a signed PUT URL for a product's single thumbnail. One thumbnail
+ * per product (path is keyed only by productId + ext), upsert=true so a
+ * re-upload overwrites the previous file in place. Used by the inline
+ * "swap thumbnail" button on the /admin product list — bypasses the
+ * Vercel 4.5 MB body cap by letting the browser PUT direct to Storage.
+ *
+ * Why ext is part of the path: a JPG and a PNG of the same product would
+ * otherwise collide at the same key under different file types. Keeping
+ * ext in the filename means a switch from JPG→PNG creates a NEW object
+ * (the old JPG lingers in the bucket as orphan bytes — acceptable, and
+ * cheaper than a delete-before-upload round-trip).
+ */
+export async function createSignedThumbnailUploadUrl(
+  productId: string,
+  ext: string,
+): Promise<{ signedUrl: string; token: string; path: string }> {
+  const supabase = createServiceRoleClient();
+  const path = `products/${productId}/thumbnail.${ext}`;
+  const { data, error } = await supabase.storage
+    .from(THUMBS_BUCKET)
+    .createSignedUploadUrl(path, { upsert: true });
+  if (error) throw error;
+  return { signedUrl: data.signedUrl, token: data.token, path: data.path };
+}
+
+/**
+ * Resolve the public URL for a thumbnail at the canonical path. Pairs
+ * with `createSignedThumbnailUploadUrl`: after the client direct-PUTs
+ * the bytes, the server action calls this to compute the URL it stores
+ * in `products.thumbnail_url`.
+ *
+ * Caller is expected to append `?v=<timestamp>` for cache-busting —
+ * THUMBS_BUCKET is public + cache-controlled to 1 year, so without a
+ * version query the CDN keeps serving stale bytes for a year after a
+ * swap. Same trick `uploadCutout` uses on the cutouts bucket.
+ */
+export function thumbnailPublicUrl(productId: string, ext: string): string {
+  const supabase = createServiceRoleClient();
+  const { data } = supabase.storage
+    .from(THUMBS_BUCKET)
+    .getPublicUrl(`products/${productId}/thumbnail.${ext}`);
+  return data.publicUrl;
+}
+
+/**
  * Convert a raw-images storage path to its public-facing reference
  * shape (which for the private bucket is just the path — reads go
  * through `getSignedRawUrl`). Kept here so all path-convention
