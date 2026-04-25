@@ -38,6 +38,7 @@ import { createServiceRoleClient } from "@/lib/supabase/service";
 import {
   createSignedRawImageUploadUrl,
   createSignedGlbUploadUrl,
+  createSignedThumbnailUploadUrl,
 } from "@/lib/storage";
 import {
   runRembgForImage,
@@ -59,7 +60,7 @@ const IMAGE_MIME_TO_EXT: Record<string, string> = {
   "image/gif": "gif",
 };
 
-export type SignedUploadKind = "raw_image" | "glb";
+export type SignedUploadKind = "raw_image" | "glb" | "thumbnail";
 
 export type SignedUploadTicket = {
   /** Pre-minted storage-path the client PUTs into. */
@@ -72,23 +73,35 @@ export type SignedUploadTicket = {
   token: string;
   /** For raw_image: the pre-generated image-id the client later sends
    *  back to the Save server action as part of `raw_image_entries`.
-   *  For glb: undefined (the storage path IS the identifier — one
-   *  GLB per product, fixed path). */
+   *  For glb / thumbnail: undefined (the storage path IS the identifier —
+   *  one GLB / one thumbnail per product, fixed path). */
   imageId?: string;
+  /** For thumbnail: the validated extension the client used. The
+   *  follow-up server action `setProductThumbnail` needs it to
+   *  reconstruct the public URL stored in products.thumbnail_url.
+   *  Undefined for raw_image / glb. */
+  ext?: string;
 };
 
 /**
  * Mint a signed URL so the browser can PUT bytes straight into
  * Storage. Admin-gated.
  *
- * For images: we pre-generate a UUID here so the client can upload
+ * For raw_image: we pre-generate a UUID here so the client can upload
  * multiple files in parallel without a race between picking a
  * filename and the DB insert. The same id becomes the product_images
  * PK when the Save server action inserts the row.
  *
- * For GLB: path is fixed per product (`products/<id>/model.glb`)
+ * For glb: path is fixed per product (`products/<id>/model.glb`)
  * so a re-upload overwrites the previous model cleanly (upsert=true).
  * One model per product — the id is implicit in the productId arg.
+ *
+ * For thumbnail: similar to glb — fixed path per product
+ * (`products/<id>/thumbnail.<ext>`), upsert=true, so the inline
+ * "swap thumbnail" button on the /admin product list can replace
+ * an existing thumbnail with one direct PUT. The returned ticket
+ * carries `ext` (not `imageId`) so the follow-up `setProductThumbnail`
+ * action can reconstruct the public URL.
  */
 export async function getSignedUploadUrl(
   kind: SignedUploadKind,
@@ -114,8 +127,11 @@ export async function getSignedUploadUrl(
       return { ok: true, ticket };
     }
 
-    // raw_image: validate MIME, derive extension, mint a fresh
-    // product_image id, mint a signed URL.
+    // raw_image / thumbnail: both go through the same MIME→ext gate
+    // (centralized in IMAGE_MIME_TO_EXT). Splitting only after the
+    // validation keeps the malformed-input rejection identical for
+    // both paths — a non-image file is rejected here with the same
+    // error message regardless of which dropzone called us.
     const ext =
       IMAGE_MIME_TO_EXT[mime] ??
       // Tolerate a filename-based fallback for the rare browser that
@@ -128,6 +144,22 @@ export async function getSignedUploadUrl(
       };
     }
     const normalizedExt = ext === "jpeg" ? "jpg" : ext;
+
+    if (kind === "thumbnail") {
+      const t = await createSignedThumbnailUploadUrl(productId, normalizedExt);
+      return {
+        ok: true,
+        ticket: {
+          path: t.path,
+          signedUrl: t.signedUrl,
+          token: t.token,
+          // Caller needs `ext` to call setProductThumbnail next.
+          ext: normalizedExt,
+        },
+      };
+    }
+
+    // raw_image: mint a fresh product_image id, mint a signed URL.
     const imageId = crypto.randomUUID();
     const t = await createSignedRawImageUploadUrl(
       productId,
