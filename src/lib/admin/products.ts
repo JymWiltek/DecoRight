@@ -11,6 +11,12 @@ export type AdminProductSort =
   | "status_asc"
   | "status_desc";
 
+/** Sentinel passed for `itemType` to filter rows where item_type IS NULL.
+ *  We need a value distinct from "" (= "no filter") and from any real
+ *  item_type slug. Picking a string with double underscores keeps it
+ *  obviously synthetic — no taxonomy slug will ever look like this. */
+export const ITEM_TYPE_NONE = "__none__" as const;
+
 export type AdminProductListOptions = {
   /** Free-text query — matches name / brand / item_type slug
    *  (case-insensitive substring). Server-side, not client filter,
@@ -19,6 +25,11 @@ export type AdminProductListOptions = {
   /** Restrict to a single status badge (clicking the count chip in
    *  the header sets this). Empty = all statuses. */
   status?: "draft" | "published" | "archived" | "link_broken";
+  /** Restrict to a single item_type slug, or to rows with item_type IS
+   *  NULL when set to ITEM_TYPE_NONE. Validated by the page component
+   *  against the taxonomy before reaching this layer — listAllProducts
+   *  itself just trusts the value. */
+  itemType?: string;
   sort?: AdminProductSort;
 };
 
@@ -54,6 +65,15 @@ export async function listAllProducts(
 
   if (opts.status) {
     query = query.eq("status", opts.status);
+  }
+
+  if (opts.itemType === ITEM_TYPE_NONE) {
+    // Surface the rows that haven't been classified yet so the operator
+    // can clean them up. Without this filter they're hard to find since
+    // they have no human-readable item_type to search for.
+    query = query.is("item_type", null);
+  } else if (opts.itemType) {
+    query = query.eq("item_type", opts.itemType);
   }
 
   switch (opts.sort ?? "updated_desc") {

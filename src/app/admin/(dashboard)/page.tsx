@@ -1,6 +1,7 @@
 import Link from "next/link";
 import {
   listAllProducts,
+  ITEM_TYPE_NONE,
   type AdminProductSort,
 } from "@/lib/admin/products";
 import { loadTaxonomy, labelMap } from "@/lib/taxonomy";
@@ -14,6 +15,7 @@ import SortableHeader from "@/components/admin/SortableHeader";
 import StatusCell from "@/components/admin/StatusCell";
 import PriceCell from "@/components/admin/PriceCell";
 import ItemTypeCell from "@/components/admin/ItemTypeCell";
+import ItemTypeFilter from "@/components/admin/ItemTypeFilter";
 import BulkBar from "@/components/admin/BulkBar";
 import SelectAllCheckbox from "@/components/admin/SelectAllCheckbox";
 import RetryRembgInlineButton from "@/components/admin/RetryRembgInlineButton";
@@ -41,6 +43,11 @@ const STATUS_CHIP_STYLES: Record<string, string> = {
 type SearchParams = Promise<{
   q?: string;
   status?: string;
+  /** Item type filter — a taxonomy slug, or "__none__" for NULL rows.
+   *  Validated against the loaded taxonomy before use; anything else
+   *  is silently dropped (no 404 — the user just sees the unfiltered
+   *  list, same behavior as an unknown ?status=). */
+  type?: string;
   sort?: string;
   bulk?: string;
   bulk_deleted?: string;
@@ -68,14 +75,34 @@ export default async function AdminProductsPage({
     ? (sp.status as ProductStatus)
     : undefined;
 
-  const [{ products, imageCounts, stuckImageIds }, taxonomy] = await Promise.all([
-    listAllProducts({
-      q: sp.q,
-      status: statusFilter,
-      sort,
-    }),
-    loadTaxonomy(),
-  ]);
+  // Load the taxonomy first so we can validate ?type= against the live
+  // set of item type slugs before passing it to listAllProducts. Two
+  // valid shapes: an actual slug, or the "__none__" sentinel for
+  // NULL-item_type rows. Anything else is dropped — invalid params
+  // never reach the DB layer.
+  const taxonomy = await loadTaxonomy();
+  const validItemTypeSlugs = new Set(taxonomy.itemTypes.map((r) => r.slug));
+  // Note: We compare against the literal "__none__" rather than
+  // importing ITEM_TYPE_NONE_PARAM from the client component. Importing
+  // a primitive constant from a "use client" module into a server
+  // component sometimes resolves to undefined under Turbopack, which
+  // silently broke the (untyped) filter (the literal !== undefined
+  // comparison always fell through to the slug branch). Importing the
+  // server-side `ITEM_TYPE_NONE` (also "__none__") works, but the
+  // literal makes the contract explicit at the read site.
+  const itemTypeParam =
+    sp.type === ITEM_TYPE_NONE
+      ? ITEM_TYPE_NONE
+      : sp.type && validItemTypeSlugs.has(sp.type)
+        ? sp.type
+        : undefined;
+
+  const { products, imageCounts, stuckImageIds } = await listAllProducts({
+    q: sp.q,
+    status: statusFilter,
+    itemType: itemTypeParam,
+    sort,
+  });
 
   // /admin is hardcoded English; pass "en" explicitly so admin pill
   // labels stay English regardless of the operator's locale cookie.
@@ -84,6 +111,28 @@ export default async function AdminProductsPage({
     slug: r.slug,
     label: r.label_en,
   }));
+
+  // The Item Type filter dropdown wants the full tri-lingual rows so
+  // each chip can show EN/ZH/MS. Stable alpha order by label_en keeps
+  // the operator's eye trained on a predictable layout.
+  const itemTypeFilterOptions = [...taxonomy.itemTypes]
+    .sort((a, b) => a.label_en.localeCompare(b.label_en))
+    .map((r) => ({
+      slug: r.slug,
+      label_en: r.label_en,
+      label_zh: r.label_zh,
+      label_ms: r.label_ms,
+    }));
+
+  // Per-item-type counts within the current (search + status filtered)
+  // set. The dropdown chips show "(N)" so the operator can see which
+  // types have rows before clicking. Includes the "__none__" key for
+  // products whose item_type IS NULL.
+  const itemTypeCounts = products.reduce<Record<string, number>>((acc, p) => {
+    const k = p.item_type ?? ITEM_TYPE_NONE;
+    acc[k] = (acc[k] ?? 0) + 1;
+    return acc;
+  }, {});
 
   // Counts are computed across the FILTERED set so the operator sees
   // "what the chips say I'd see if I clicked them". For unfiltered
@@ -98,14 +147,26 @@ export default async function AdminProductsPage({
   const preserve: Record<string, string | undefined> = {
     q: sp.q,
     status: sp.status,
+    type: sp.type,
   };
 
   function chipHref(forStatus: ProductStatus | "all"): string {
     const params = new URLSearchParams();
     if (sp.q) params.set("q", sp.q);
     if (sp.sort) params.set("sort", sp.sort);
+    if (sp.type) params.set("type", sp.type);
     if (forStatus !== "all") params.set("status", forStatus);
     return `/admin?${params.toString()}`;
+  }
+
+  // Pretty label for the "X shown · type=Faucet" header line. We
+  // resolve the slug back to a label so the operator sees a name,
+  // not a slug.
+  let itemTypeFilterLabel: string | undefined;
+  if (itemTypeParam === ITEM_TYPE_NONE) {
+    itemTypeFilterLabel = "(untyped)";
+  } else if (itemTypeParam) {
+    itemTypeFilterLabel = itemTypeLabels[itemTypeParam] ?? itemTypeParam;
   }
 
   return (
@@ -117,6 +178,7 @@ export default async function AdminProductsPage({
             {products.length} shown
             {sp.q && ` · matching "${sp.q}"`}
             {statusFilter && ` · status=${PRODUCT_STATUS_LABELS[statusFilter]}`}
+            {itemTypeFilterLabel && ` · type=${itemTypeFilterLabel}`}
           </p>
         </div>
         <Link
@@ -148,7 +210,7 @@ export default async function AdminProductsPage({
         </div>
       )}
 
-      {/* Search + status filter chips */}
+      {/* Search + status chips + item type dropdown */}
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <SearchBar />
         <div className="flex flex-wrap gap-1.5">
@@ -179,6 +241,11 @@ export default async function AdminProductsPage({
             ),
           )}
         </div>
+        <ItemTypeFilter
+          options={itemTypeFilterOptions}
+          current={itemTypeParam}
+          counts={itemTypeCounts}
+        />
       </div>
 
       {/* The bulk form wraps the table so per-row checkboxes belong
