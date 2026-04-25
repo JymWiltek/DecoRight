@@ -3,7 +3,12 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createServiceRoleClient } from "@/lib/supabase/service";
-import { glbPublicUrl, uploadThumbnail, getSignedRawUrl } from "@/lib/storage";
+import {
+  glbPublicUrl,
+  uploadThumbnail,
+  getSignedRawUrl,
+  thumbnailPublicUrl,
+} from "@/lib/storage";
 import { inferProductFields } from "@/lib/ai/infer";
 import { requireAdmin } from "@/lib/auth/require-admin";
 import { invalidatePublishedCountsCache } from "@/lib/products";
@@ -777,4 +782,66 @@ export async function runAiInfer(
       usage: result.debug.usage,
     },
   };
+}
+
+/**
+ * Finalize an inline thumbnail swap. The browser already PUT the bytes
+ * direct to Storage via a signed URL minted by `getSignedUploadUrl`;
+ * this action just reconstructs the public URL (with cache-bust),
+ * writes it to `products.thumbnail_url`, and revalidates the surfaces
+ * that show product cards.
+ *
+ * Why a thin "post-upload commit" action instead of carrying the URL
+ * back in the upload-actions response: the browser's PUT happens
+ * outside our server function entirely, so there has to be a second
+ * round-trip *anyway* to mark the DB. Splitting it like this also lets
+ * the client retry just the DB write (a transient Postgres failure
+ * doesn't force a re-upload of the bytes).
+ *
+ * Cache-bust: THUMBS_BUCKET is public + cache-controlled to 1 year.
+ * Without `?v=<timestamp>` an upserted file would keep returning the
+ * old bytes from CDN/browser caches for hours-to-days. Same trick
+ * uploadCutout already uses on cutouts URLs.
+ *
+ * Validation: ext must be one of ALLOWED_IMAGE_EXTS (also enforced by
+ * upload-actions before minting the URL), productId must be UUID-shaped.
+ * Returns a JSON outcome — caller (ThumbnailSwapButton) shows inline
+ * red-border + tooltip on failure rather than a redirect.
+ */
+export async function setProductThumbnail(
+  productId: string,
+  ext: string,
+): Promise<{ ok: true; url: string } | { ok: false; error: string }> {
+  await requireAdmin();
+
+  if (!UUID_RE.test(productId)) {
+    return { ok: false, error: "invalid product id" };
+  }
+  const normalizedExt = ext.toLowerCase().replace(/^\./, "");
+  if (!ALLOWED_IMAGE_EXTS.has(normalizedExt)) {
+    return { ok: false, error: `unsupported image extension (${ext})` };
+  }
+
+  const baseUrl = thumbnailPublicUrl(productId, normalizedExt);
+  const url = `${baseUrl}?v=${Date.now()}`;
+
+  const supabase = createServiceRoleClient();
+  const { error } = await supabase
+    .from("products")
+    .update({ thumbnail_url: url })
+    .eq("id", productId);
+  if (error) {
+    return { ok: false, error: error.message };
+  }
+
+  // Surfaces that render product cards: admin list, public homepage,
+  // public detail page, and the per-product edit page (the GLB-side
+  // preview also uses thumbnail_url).
+  revalidatePath("/admin");
+  revalidatePath("/");
+  revalidatePath(`/admin/products/${productId}/edit`);
+  revalidatePath(`/product/${productId}`);
+  invalidatePublishedCountsCache();
+
+  return { ok: true, url };
 }
