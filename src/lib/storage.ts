@@ -4,13 +4,25 @@ import { createServiceRoleClient } from "@/lib/supabase/service";
  * Storage buckets (created by migration 0003 STEP 9):
  *   - raw-images   : PRIVATE  — operator uploads, signed-URL reads
  *   - cutouts      : PUBLIC   — rembg output, CDN-cached
- *   - models       : PUBLIC   — Meshy .glb output (Stage B)
- *   - thumbnails   : PUBLIC   — legacy, kept for back-compat
+ *   - models       : PUBLIC   — GLBs (Phase A: Meshy auto + manual
+ *                               uploads, both at the same fixed
+ *                               path; 60 MB file_size_limit is
+ *                               enough for either)
+ *   - thumbnails   : PUBLIC   — used by the inline thumbnail-swap
+ *                               button on /admin
  *
  * Path convention (per user decision):
  *   raw-images/<product_id>/<image_id>.<ext>
  *   cutouts/<product_id>/<image_id>.png
- *   models/<product_id>/<meshy_job_id>.glb
+ *   models/products/<product_id>/model.glb
+ *   thumbnails/products/<product_id>/thumbnail.<ext>
+ *
+ * Note on the GLB path: one GLB per product (NOT keyed by
+ * meshy_task_id). Re-runs upsert at the same key so a Meshy retry
+ * or a manual hand-upload replaces the old bytes in place. The
+ * meshy_task_id is recorded in the products row, not in the path —
+ * cleaner cache-busting (?v=Date.now()) and simpler URL stability
+ * for any external links to /product/<id>.
  */
 
 const RAW_BUCKET = "raw-images";
@@ -212,8 +224,14 @@ export async function uploadCutout(
   return `${data.publicUrl}?v=${Date.now()}`;
 }
 
-// ─── models (public) — Stage B ──────────────────────────────
+// ─── models (public) — Phase A GLBs ─────────────────────────
 
+/**
+ * Server-side upload from a `File` object. Used by the legacy
+ * "operator hand-uploads a .glb via the admin form" path. Returns
+ * the public URL (no cache-bust here — callers that care append
+ * ?v=Date.now() like updateProduct does).
+ */
 export async function uploadGlb(productId: string, file: File): Promise<string> {
   const supabase = createServiceRoleClient();
   const path = `products/${productId}/model.glb`;
@@ -227,6 +245,46 @@ export async function uploadGlb(productId: string, file: File): Promise<string> 
   if (error) throw error;
   const { data } = supabase.storage.from(MODELS_BUCKET).getPublicUrl(path);
   return data.publicUrl;
+}
+
+/**
+ * Server-side upload from raw bytes. The Meshy polling worker
+ * (Milestone 3) calls this with the Uint8Array `downloadMeshyGlb`
+ * returns — Meshy's CDN URL is short-lived, so we re-host immediately
+ * after a task hits SUCCEEDED.
+ *
+ * Mirrors `uploadCutout`'s shape: wraps the bytes in a Blob (works
+ * across Node 18+ and edge runtimes), upserts at the canonical
+ * path, returns the public URL with a `?v=<timestamp>` cache-bust
+ * (the bucket sets cacheControl=1y, and a Meshy retry would otherwise
+ * keep serving stale bytes from CDN edges for that full year).
+ *
+ * Why not reuse uploadGlb(file): callers in worker-land have raw
+ * bytes from a fetch(), not a `File`. Forcing them to wrap in
+ * `new File([bytes], ...)` works in some runtimes but trips on
+ * older Node where File isn't global. A typed bytes overload is
+ * less surprising.
+ */
+export async function uploadGlbBytes(
+  productId: string,
+  bytes: Uint8Array,
+): Promise<string> {
+  const supabase = createServiceRoleClient();
+  const path = `products/${productId}/model.glb`;
+  const { error } = await supabase.storage
+    .from(MODELS_BUCKET)
+    .upload(
+      path,
+      new Blob([bytes as BlobPart], { type: "model/gltf-binary" }),
+      {
+        upsert: true,
+        contentType: "model/gltf-binary",
+        cacheControl: "31536000",
+      },
+    );
+  if (error) throw error;
+  const { data } = supabase.storage.from(MODELS_BUCKET).getPublicUrl(path);
+  return `${data.publicUrl}?v=${Date.now()}`;
 }
 
 // ─── thumbnails (legacy, still used by manual upload) ───────
