@@ -19,6 +19,7 @@ import ItemTypeFilter from "@/components/admin/ItemTypeFilter";
 import BulkBar from "@/components/admin/BulkBar";
 import SelectAllCheckbox from "@/components/admin/SelectAllCheckbox";
 import RetryRembgInlineButton from "@/components/admin/RetryRembgInlineButton";
+import ThumbnailSwapButton from "@/components/admin/ThumbnailSwapButton";
 
 export const dynamic = "force-dynamic";
 
@@ -317,20 +318,15 @@ export default async function AdminProductsPage({
                     </td>
                     <td className="px-4 py-3 align-middle">
                       <div className="flex items-center gap-3">
-                        <div className="relative h-10 w-10 overflow-hidden rounded bg-neutral-100">
-                          {p.thumbnail_url ? (
-                            // eslint-disable-next-line @next/next/no-img-element
-                            <img
-                              src={p.thumbnail_url}
-                              alt=""
-                              className="h-full w-full object-cover"
-                            />
-                          ) : (
-                            <span className="absolute inset-0 flex items-center justify-center text-[9px] text-neutral-400">
-                              no img
-                            </span>
-                          )}
-                        </div>
+                        {/* Inline swap: click the tile to replace the
+                            thumbnail without leaving the list. Falls
+                            back to "no img" when the row hasn't been
+                            given one yet — that placeholder is also
+                            clickable. */}
+                        <ThumbnailSwapButton
+                          productId={p.id}
+                          currentUrl={p.thumbnail_url}
+                        />
                         <div>
                           <div className="font-medium text-neutral-900">
                             <Link
