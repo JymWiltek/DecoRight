@@ -29,7 +29,7 @@ export class RemoveBgProvider implements RemBgProvider {
   readonly id = "removebg" as const;
 
   isConfigured(): boolean {
-    return Boolean(process.env.REMOVEBG_API_KEY);
+    return Boolean(process.env.REMOVE_BG_API_KEY);
   }
 
   async run(req: RemBgRequest): Promise<RemBgResult> {
@@ -52,7 +52,7 @@ export class RemoveBgProvider implements RemBgProvider {
       const res = await fetch(ENDPOINT, {
         method: "POST",
         headers: {
-          "X-Api-Key": process.env.REMOVEBG_API_KEY as string,
+          "X-Api-Key": process.env.REMOVE_BG_API_KEY as string,
           "Content-Type": "application/x-www-form-urlencoded",
           Accept: "image/png",
         },
