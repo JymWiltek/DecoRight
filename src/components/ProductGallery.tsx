@@ -4,19 +4,22 @@ import { useState } from "react";
 import ModelViewer from "./ModelViewer";
 
 /**
- * Product gallery — shows three kinds of slides in this order:
+ * Product gallery — main image priority is "3D first, photo fallback":
  *
- *   1. STYLED THUMBNAIL — the primary image's cutout (transparent PNG)
- *      composited at render-time on a soft grey gradient. This is what
- *      the catalog tile shows; we render it again here as slide #1 so
- *      what the visitor clicked is what they see.
+ *   - With GLB:  slide 1 is the <model-viewer>. The styled-thumbnail
+ *                cutout is NOT shown — once we can show the real 3D
+ *                model, the gradient-composited 2D fallback is just
+ *                noise. Original scene photos still follow as slides
+ *                2+ for context.
  *
- *   2. 3D VIEWER — embedded <model-viewer> with AR if a .glb is set.
- *      Skipped if the product has no model yet.
+ *   - Without GLB:  slide 1 is the styled-thumbnail (the cutout
+ *                composited on a soft grey gradient — same look as
+ *                the catalog tile so what was clicked is what shows).
+ *                Silent degradation: the visitor never learns there's
+ *                supposed to be a 3D viewer here.
  *
- *   3. ORIGINAL SCENE PHOTOS — the raw uploads, one per slide. These
- *      are full-bleed, untreated photos so the visitor can see the
- *      product in context.
+ *   - In both cases, original scene photos (the raw uploads) follow
+ *                as the trailing slides for in-context shots.
  *
  * No slides → caller should not even mount this; it returns null.
  *
@@ -56,10 +59,11 @@ export default function ProductGallery({
   overrideColorHex,
   emptyLabel,
 }: Props) {
+  // 3D wins the main slot when present. The styled-thumbnail only
+  // appears as the silent fallback when there's no GLB — we never
+  // want to show both because the cutout-on-gradient composite is
+  // a stand-in for the 3D viewer, not a peer of it.
   const slides: Slide[] = [];
-  if (primaryCutoutUrl) {
-    slides.push({ kind: "styled-thumbnail", cutoutUrl: primaryCutoutUrl });
-  }
   if (glbUrl) {
     slides.push({
       kind: "model",
@@ -67,6 +71,8 @@ export default function ProductGallery({
       alt: productName,
       poster: primaryCutoutUrl,
     });
+  } else if (primaryCutoutUrl) {
+    slides.push({ kind: "styled-thumbnail", cutoutUrl: primaryCutoutUrl });
   }
   for (const r of originalRawUrls) {
     slides.push({ kind: "original", rawUrl: r });
