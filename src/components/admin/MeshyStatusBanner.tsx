@@ -50,6 +50,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { getMeshyStatus, type MeshyStatusSnapshot } from "@/app/admin/(dashboard)/products/actions";
+import RetryMeshyButton from "./RetryMeshyButton";
 
 type Props = {
   productId: string;
@@ -166,8 +167,19 @@ export default function MeshyStatusBanner({ productId, initial, justKickedOff }:
             {snap.error?.slice(0, 240) || "未知错误"}
           </div>
           <div className="text-[10px] opacity-60 mt-1">
-            尝试次数: {snap.attempts}/3 · 重试按钮在 Commit 3 上线。
+            尝试次数: {snap.attempts}/3
           </div>
+          {/* Retry surface — only renders when productStatus='draft'
+              AND meshy_status='failed'. The button itself enforces
+              both, so a row that's somehow succeeded-via-manual-upload
+              (status='published' + meshy_status='failed') gets the
+              red banner without a Retry, which is correct: GLB
+              already exists, no re-run allowed. */}
+          <RetryMeshyButton
+            productId={productId}
+            productStatus={snap.productStatus}
+            meshyStatus={snap.status}
+          />
         </div>
       </Banner>
     );

@@ -14,6 +14,7 @@ import { requireAdmin } from "@/lib/auth/require-admin";
 import { invalidatePublishedCountsCache } from "@/lib/products";
 import { runRembgForImage } from "@/lib/rembg/pipeline";
 import { kickOffMeshyForProduct } from "@/lib/meshy-kickoff";
+import { retryMeshyForProductCore } from "@/lib/meshy-retry";
 import {
   PRICE_TIERS,
   PRODUCT_STATUSES,
@@ -1020,4 +1021,44 @@ export async function getMeshyStatus(
       attempts: data.meshy_attempts,
     },
   };
+}
+
+// ─── M3 · Commit 3: operator-driven retry ──────────────────────
+//
+// Thin wrapper around retryMeshyForProductCore. Adds the three
+// things the core deliberately doesn't know about — admin cookie
+// gate, request-shape validation, and Next cache revalidation —
+// so the core stays callable from smoke scripts (no Next runtime).
+//
+// Same split pattern as updateProduct → kickOffMeshyForProduct.
+//
+// Surfaced via RetryMeshyButton inside the red MeshyStatusBanner.
+// See src/lib/meshy-retry.ts for the full state-machine reasoning.
+
+export async function retryMeshyForProduct(
+  productId: string,
+): Promise<
+  | { ok: true; taskId: string }
+  | { ok: false; error: string; code?: string }
+> {
+  try {
+    await requireAdmin();
+  } catch {
+    return { ok: false, error: "Not signed in.", code: "unauthenticated" };
+  }
+
+  if (!UUID_RE.test(productId)) {
+    return { ok: false, error: "invalid product id", code: "bad_request" };
+  }
+
+  const result = await retryMeshyForProductCore(productId);
+
+  if (result.ok) {
+    // Bust the cached edit page so a same-tab back/forward sees
+    // the fresh row. The banner's own router.refresh() (called
+    // by RetryMeshyButton on success) handles the current tab.
+    revalidatePath(`/admin/products/${productId}/edit`);
+  }
+
+  return result;
 }
