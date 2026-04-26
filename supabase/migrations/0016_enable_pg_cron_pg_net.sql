@@ -1,0 +1,130 @@
+-- 0016_enable_pg_cron_pg_net.sql
+--
+-- Phase A · Milestone 3 · Commit 4 of 7.
+--
+-- Enables the two Postgres extensions the Meshy polling worker
+-- (Commit 5: edge function) + scheduler (Commit 6: cron job) will
+-- depend on. Pure infrastructure — zero business logic, zero data
+-- writes, zero schema changes outside the two `create extension`
+-- statements. Lands as its own commit so the audit trail for
+-- "when did we start scheduling stuff" is unambiguous; future
+-- 'why is cron doing X' diffs only need to walk the cron.job
+-- table back to a single migration.
+--
+-- ---------------------------------------------------------------
+-- Why pg_cron
+-- ---------------------------------------------------------------
+-- The Meshy state machine (kick off → poll → succeed/fail) needs
+-- a server-side timer that keeps running after the operator
+-- closes their browser. Two viable options on the table:
+--
+--   (a) pg_cron + pg_net      — Postgres calls an HTTP endpoint
+--                               on a schedule; the endpoint is
+--                               our edge function that polls
+--                               Meshy + downloads GLB.
+--   (b) GitHub Actions cron   — external schedule hits the same
+--                               endpoint via curl.
+--
+-- Phase A picks (a) for three reasons:
+--
+--   1. The schedule lives next to the data it reads. Operators
+--      reading the products table can `select * from cron.job`
+--      and see every job that touches it. With GitHub Actions,
+--      the schedule is in a different repo half the time and
+--      diverges from the DB without anyone noticing.
+--
+--   2. No GitHub credentials need to live anywhere. The runner
+--      would need a SUPABASE_FUNCTION_URL + a service-role key
+--      (or a custom shared secret) to invoke the function. With
+--      pg_cron the call is intra-Supabase — no internet hop, no
+--      shared secret, no key rotation.
+--
+--   3. pg_net is rate-limited by the Supabase project itself, so
+--      a runaway schedule can't hammer Meshy faster than the
+--      project's connection budget allows.
+--
+-- The downside — pg_cron's job runner is single-threaded per DB
+-- — is fine here. Phase A targets at most ~10 in-flight Meshy
+-- tasks at once, the worker fans out across them in a single
+-- query, and the worst-case poll batch finishes in seconds.
+--
+-- ---------------------------------------------------------------
+-- Why pg_net
+-- ---------------------------------------------------------------
+-- pg_cron schedules jobs but only executes SQL. To trigger an
+-- edge function we need to make an HTTP request from inside
+-- Postgres. pg_net is the official Supabase extension for that
+-- — it ships an async `net.http_post(...)` function that returns
+-- a request_id and writes the response to net._http_response
+-- when it lands. The cron job will be a one-liner:
+--
+--   select net.http_post(
+--     url     := 'https://<project-ref>.supabase.co/functions/v1/poll-meshy',
+--     headers := jsonb_build_object(
+--       'Authorization', 'Bearer ' || current_setting('app.cron_secret'),
+--       'Content-Type',  'application/json'
+--     ),
+--     body    := '{}'::jsonb
+--   );
+--
+-- (The actual cron schedule is Commit 6 — this migration just
+-- makes net.http_post callable.)
+--
+-- The async-request model means the cron job itself returns
+-- immediately; the long-running Meshy poll happens inside the
+-- edge function, not blocking the cron worker. If the edge
+-- function takes 30s to walk all in-flight tasks, the next
+-- 60s tick can still fire on schedule.
+--
+-- ---------------------------------------------------------------
+-- Schema location
+-- ---------------------------------------------------------------
+-- Both extensions install into their own schemas (`cron` and
+-- `net`) by default on Supabase. We do NOT relocate them — the
+-- supabase-managed roles already grant the right permissions to
+-- those schemas (postgres + service_role can call cron.schedule
+-- and net.http_post; anon + authenticated cannot, by design —
+-- we don't want client-side code minting cron jobs).
+--
+-- ---------------------------------------------------------------
+-- Idempotency
+-- ---------------------------------------------------------------
+-- `create extension if not exists` is the standard idiom — safe
+-- to re-run, no-op if the extension is already installed. This
+-- migration can be applied multiple times without effect, which
+-- matches how supabase-cli replays migrations during branch
+-- creation / reset.
+--
+-- ---------------------------------------------------------------
+-- Verification (post-apply)
+-- ---------------------------------------------------------------
+--   psql -d <db> -c '\dx pg_cron'
+--   psql -d <db> -c '\dx pg_net'
+-- Both should appear with installed_version non-null. Or via SQL:
+--   select extname, extversion
+--     from pg_extension
+--    where extname in ('pg_cron','pg_net');
+--   → expect 2 rows.
+--
+-- ---------------------------------------------------------------
+-- Rollback
+-- ---------------------------------------------------------------
+-- `drop extension pg_cron cascade;` would also drop the cron
+-- schema + every scheduled job. Not part of this migration —
+-- if we ever want to back out cron, that's a deliberate
+-- separate decision (likely Commit 6's down-migration if it
+-- ever needs one), not something to bundle here.
+
+begin;
+
+-- pg_cron — schedule SQL (or pg_net calls) on a cron expression.
+-- Supabase ships this as a managed extension; `create extension`
+-- enables it for this DB.
+create extension if not exists pg_cron;
+
+-- pg_net — async HTTP from inside Postgres. Required because
+-- pg_cron only executes SQL and we need to invoke an edge
+-- function on each tick.
+create extension if not exists pg_net;
+
+commit;
