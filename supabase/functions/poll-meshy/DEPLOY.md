@@ -15,7 +15,7 @@ have to be configured for the system to function:
 |---|-----------------------------|-------------------------|--------------|
 | 1 | Publish kickoff + Retry     | Next.js (Vercel)        | `MESHY_API_KEY` env var |
 | 2 | Poll worker (Edge Function) | Supabase Edge Functions | `MESHY_API_KEY` + `CRON_SECRET` secrets |
-| 3 | Cron schedule               | Postgres (pg_cron)      | `app.cron_secret` GUC matching #2's `CRON_SECRET` |
+| 3 | Cron schedule               | Postgres (pg_cron)      | row in `private._app_config` matching #2's `CRON_SECRET` |
 
 Skip any one and you get a partial outage that's annoying to
 diagnose:
@@ -32,7 +32,7 @@ diagnose:
   (test key `msy_dummy_api_key_for_test_mode_12345678` works for
   local dev only — it returns simulated results, never real GLBs).
 - Supabase project access (to set Edge Function secrets and run
-  `ALTER DATABASE`).
+  one INSERT in the SQL Editor).
 - Vercel project access (to set the production env var).
 - Local install: `npx supabase --version` should print something
   (we use `npx`, no global install needed).
@@ -131,45 +131,75 @@ cached. Don't commit it (already in `.gitignore`).
 This is the secret that gates the Edge Function. It has to match
 in **two places** (see table at the top):
 
-```bash
-# Generate one shared value:
-CRON_SECRET=$(openssl rand -hex 32)
-echo "Save this somewhere safe: $CRON_SECRET"
+  1. A row in `private._app_config` (read by the cron job's SQL
+     on every tick, lookup key `'cron_secret'`).
+  2. `CRON_SECRET` Edge Function secret (read inside the function
+     as `Deno.env.get('CRON_SECRET')`).
 
-# Set it as an Edge Function secret (read inside the function as
-# Deno.env.get('CRON_SECRET')):
-npx supabase secrets set CRON_SECRET="$CRON_SECRET"
-```
+> **Historical note** — earlier drafts of this runbook stored the
+> cron-side copy in a Postgres custom GUC (`app.cron_secret`) set
+> via `ALTER DATABASE postgres SET ...`. That path is **dead** on
+> Supabase managed Postgres: neither `service_role` nor the
+> Dashboard `postgres` role has permission to set custom GUC
+> classes, and PostgreSQL helpfully echoed the entire failed
+> `ALTER DATABASE` statement (including the secret) into its
+> error message — leaking would-be secrets twice during the
+> Milestone 3 activation. Migration `0018` pivots to a regular
+> table in a `private` schema (invisible to PostgREST,
+> belt-and-braces RLS-revoked from anon + authenticated). The
+> full rationale is in the header of
+> `supabase/migrations/0018_app_config_for_cron_secret.sql`.
 
-Now set it as a Postgres database setting too, so the cron job's
-`current_setting('app.cron_secret', true)` returns the same value:
+**4a. Pick one shared value.** You can either generate it
+locally (`openssl rand -hex 32`, save it somewhere) and paste
+that *same* value into both places, **or** let Postgres generate
+it via `gen_random_bytes` so the value never leaves the database
+on the way in. The dashboard recipe below uses the latter — it
+returns the freshly-generated value as the query result so you
+can copy it once into the Edge Function secret.
 
-```bash
-# Connect to the Supabase Postgres (use the connection string from
-# Settings → Database → Connection string → URI):
-psql "$DATABASE_URL" \
-  -c "ALTER DATABASE postgres SET app.cron_secret = '$CRON_SECRET';"
-```
-
-Or do it via the SQL Editor in the Supabase dashboard:
+**4b. Insert the row in `private._app_config`** (Dashboard →
+SQL Editor → New query):
 
 ```sql
-ALTER DATABASE postgres SET app.cron_secret = 'paste-the-hex-value';
+insert into private._app_config (key, value)
+values ('cron_secret', encode(gen_random_bytes(32), 'hex'))
+on conflict (key) do update
+  set value = excluded.value, updated_at = now()
+returning value;
 ```
 
-Verify the database setting took:
+The result row's `value` column is your secret. Copy it — you
+need to paste it once more in step 4c. After that you can close
+the query tab; the value will never leave the database again.
+
+(If you'd rather generate locally, replace
+`encode(gen_random_bytes(32), 'hex')` with `'paste-your-hex-here'`
+and run the same INSERT.)
+
+**4c. Set the Edge Function secret** (Dashboard → Project
+Settings → Edge Functions → Secrets):
+
+  - Name: `CRON_SECRET`
+  - Value: paste the hex string from 4b
+  - Save.
+
+(There is no Supabase Management API tool exposed via MCP /
+local CLI for setting Edge Function secrets — Dashboard paste
+is the only path. `npx supabase secrets set CRON_SECRET=...`
+also works if you have a CLI access token.)
+
+**4d. Verify the table row landed:**
 
 ```sql
-SHOW app.cron_secret;
--- expect: paste-the-hex-value
+select key, length(value) as len, updated_at
+  from private._app_config
+ where key = 'cron_secret';
+-- expect: 1 row, len=64 (32 bytes hex-encoded), recent updated_at.
 ```
 
-> **Why two places?** The Edge Function reads `CRON_SECRET` from
-> its Deno runtime env (set via `supabase secrets set`). The cron
-> job runs SQL inside Postgres and reads `app.cron_secret` from
-> the database's GUC. They're independent stores; the migration
-> deliberately uses a setting (not a hardcoded value) so the
-> secret is never committed to git.
+Do **not** `select value` here — there's no need to surface the
+plaintext again, and SQL Editor history would retain it.
 
 ---
 
@@ -305,26 +335,32 @@ Once you're seeing `200`s, the pipeline is live. End-to-end test:
 
 ## Rotating `CRON_SECRET`
 
-Routine maintenance, ~yearly or after any suspected leak:
+Routine maintenance, ~yearly or after any suspected leak. Same
+recipe as Step 4 — the INSERT uses `on conflict (key) do update`,
+so re-running it overwrites the existing row in place:
 
-```bash
-NEW_SECRET=$(openssl rand -hex 32)
+**Database side** (Dashboard → SQL Editor):
 
-# Edge Function side:
-npx supabase secrets set CRON_SECRET="$NEW_SECRET"
-
-# Database side (do this within ~60s of the above to minimize
-# the window where ticks 401):
-psql "$DATABASE_URL" \
-  -c "ALTER DATABASE postgres SET app.cron_secret = '$NEW_SECRET';"
+```sql
+insert into private._app_config (key, value)
+values ('cron_secret', encode(gen_random_bytes(32), 'hex'))
+on conflict (key) do update
+  set value = excluded.value, updated_at = now()
+returning value;
 ```
 
-The Edge Function picks up the new secret on its next cold start
-(could be up to a few minutes). The DB setting is read on every
-tick. Worst-case window of 401-ing ticks: ~1-2 minutes. No data
-loss — the worker is idempotent on in-flight rows, so the next
-successful tick picks up everything that the failed ticks would
-have processed.
+**Edge Function side** (within ~60s of the above to minimize the
+401 window): Dashboard → Project Settings → Edge Functions →
+Secrets → edit `CRON_SECRET` → paste the value returned above →
+save.
+
+The cron job reads `private._app_config` on every tick (no
+caching), so the DB side flips instantly. The Edge Function
+picks up the new secret on its next cold start (could be up to
+a few minutes). Worst-case window of 401-ing ticks: ~1-2
+minutes. No data loss — the worker is idempotent on in-flight
+rows, so the next successful tick picks up everything that the
+failed ticks would have processed.
 
 ---
 
@@ -339,24 +375,33 @@ generation for any reason:
 SELECT cron.unschedule('poll-meshy');
 ```
 
-To resume, re-apply migration `0017` (it's idempotent):
+To resume, re-apply migration `0018` (it's idempotent — it
+overwrites the cron job by jobname, supersedes `0017`'s
+schedule):
 
 ```bash
 npx supabase db push
 ```
 
-Or run the `cron.schedule(...)` block directly via SQL Editor.
+Or run the `cron.schedule('poll-meshy', ...)` block from `0018`
+directly via SQL Editor. (`0017`'s schedule reads from the
+abandoned GUC and would 401 every tick — don't re-apply it.)
 
 ---
 
 ## Troubleshooting
 
-**Symptom: every tick returns 401, and `app.cron_secret` looks set.**
-→ The cron job runs as the database owner role. `ALTER DATABASE
-postgres SET ...` only takes effect for new connections to that
-database. pg_cron's worker pool may have a stale connection. Wait
-~60 seconds, or `SELECT pg_reload_conf();` to force a config
-reload.
+**Symptom: every tick returns 401.**
+→ One of three things:
+  1. No row in `private._app_config` with `key = 'cron_secret'`
+     (the cron job's `coalesce(..., '')` sends an empty header).
+     Run the INSERT from Step 4b.
+  2. The Edge Function `CRON_SECRET` secret doesn't match the
+     value in `private._app_config`. Re-paste the table value
+     into Dashboard → Settings → Edge Functions → Secrets.
+  3. You re-applied `0017` after `0018` and the cron is back to
+     reading the dead GUC. Re-apply `0018` (idempotent) to
+     restore the table-based lookup.
 
 **Symptom: function logs say `MESHY_API_KEY not set in function env`.**
 → You set the Vercel env var (Step 1) but skipped Step 5. Edge
