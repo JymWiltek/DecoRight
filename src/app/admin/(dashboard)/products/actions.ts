@@ -13,6 +13,7 @@ import { inferProductFields } from "@/lib/ai/infer";
 import { requireAdmin } from "@/lib/auth/require-admin";
 import { invalidatePublishedCountsCache } from "@/lib/products";
 import { runRembgForImage } from "@/lib/rembg/pipeline";
+import { kickOffMeshyForProduct } from "@/lib/meshy-kickoff";
 import {
   PRICE_TIERS,
   PRODUCT_STATUSES,
@@ -358,6 +359,14 @@ export async function createProduct(fd: FormData): Promise<void> {
   let glb_size_kb: number | null = null;
   let thumbnail_url: string | null = null;
 
+  // Manual-upload provenance (mirrors updateProduct). createProduct
+  // doesn't currently kick off Meshy (the /new form has no images
+  // attached, kickOff would just fail no_cutouts) — but if the form
+  // ever grows a GLB upload, the provenance fields keep the "Meshy
+  // only runs once" gate honest.
+  let glb_source: "manual_upload" | null = null;
+  let glb_generated_at: string | null = null;
+
   try {
     const glbPath = str(fd, "glb_path");
     if (glbPath) {
@@ -368,6 +377,8 @@ export async function createProduct(fd: FormData): Promise<void> {
       }
       glb_url = glbPublicUrl(id);
       glb_size_kb = num(fd, "glb_size_kb");
+      glb_source = "manual_upload";
+      glb_generated_at = new Date().toISOString();
     }
     const thumb = fileOrNull(fd, "thumbnail_file");
     if (thumb) {
@@ -393,7 +404,15 @@ export async function createProduct(fd: FormData): Promise<void> {
 
   const { error } = await supabase
     .from("products")
-    .insert({ id, ...payload, glb_url, glb_size_kb, thumbnail_url });
+    .insert({
+      id,
+      ...payload,
+      glb_url,
+      glb_size_kb,
+      thumbnail_url,
+      glb_source,
+      glb_generated_at,
+    });
   if (error) {
     redirect(
       `/admin/products/new?err=db&msg=${encodeURIComponent(error.message)}`,
@@ -440,6 +459,12 @@ export async function createProduct(fd: FormData): Promise<void> {
 export async function updateProduct(id: string, fd: FormData): Promise<void> {
   const payload = await parsePayload(fd);
   const supabase = createServiceRoleClient();
+  // intent is what the operator pressed (draft / publish / save).
+  // parsePayload already rolled it into payload.status, but Meshy
+  // kick-off branches need to distinguish "press Publish" from
+  // "save with status pre-set to published" — only the former
+  // should invoke Meshy.
+  const intent = str(fd, "intent");
 
   // Friendly guard for Migration 0013's products_check_rooms_required
   // trigger: "published ⇒ room_slugs non-empty". Without this pre-check
@@ -448,6 +473,9 @@ export async function updateProduct(id: string, fd: FormData): Promise<void> {
   // Repro path for caf09f7d: its item_type had no room_slug pre-0013,
   // the backfill left room_slugs empty, and hitting Save with status
   // still "published" bounced off the trigger.
+  // Note: even when we're about to held-back to draft for a Meshy
+  // run (below), the operator's *intent* is publish, so we still
+  // require rooms. Forces the operator to pick rooms at Publish click.
   if (payload.status === "published" && (payload.room_slugs?.length ?? 0) === 0) {
     redirect(
       `/admin/products/${id}/edit?err=publish_needs_rooms&msg=${encodeURIComponent(
@@ -456,20 +484,66 @@ export async function updateProduct(id: string, fd: FormData): Promise<void> {
     );
   }
 
+  // ── M3 held-back-status pattern (no GLB, no publish — 铁律) ─────
+  //
+  // When the operator clicks Publish on a product that has no GLB
+  // (neither uploaded in this request nor pre-existing), we DON'T
+  // let it land at status='published'. Instead:
+  //   1. Override status → 'draft' for this save.
+  //   2. Save the row + run rembg + attach staged images normally.
+  //   3. Kick off Meshy. The polling worker (Commit 5) flips status
+  //      to 'published' when the GLB lands.
+  //
+  // The branch fires only when ALL of:
+  //   - intent='publish'                      (operator pressed Publish)
+  //   - no glb_path uploaded this request     (manual upload would
+  //                                            satisfy "has GLB" already)
+  //   - existing row has no glb_url           (Meshy never overwrites
+  //                                            a successful GLB; that's
+  //                                            the "Meshy only runs once"
+  //                                            rule)
+  //
+  // The "manual GLB this request" check comes from validating glb_path
+  // again later in the upload block — we pre-compute it here so the
+  // branch decision happens before any DB write.
+  const glbPathInRequest = str(fd, "glb_path");
+  const { data: existingForGlb } = await supabase
+    .from("products")
+    .select("glb_url")
+    .eq("id", id)
+    .maybeSingle();
+  const hasManualGlbThisRequest = Boolean(glbPathInRequest);
+  const hasExistingGlb = Boolean(existingForGlb?.glb_url);
+  const willKickOffMeshy =
+    intent === "publish" && !hasManualGlbThisRequest && !hasExistingGlb;
+
   const updates: ProductUpdate = { ...payload };
+  if (willKickOffMeshy) {
+    // Held-back: row stays at draft until polling worker promotes it.
+    // payload.status was 'published' (from intent=publish); override.
+    updates.status = "draft";
+  }
 
   try {
-    const glbPath = str(fd, "glb_path");
-    if (glbPath) {
+    if (glbPathInRequest) {
       // Same validation as createProduct — the signed-URL mint used
       // this exact path, so anything else is a crafted request.
-      if (!validGlbPath(glbPath, id)) {
+      if (!validGlbPath(glbPathInRequest, id)) {
         redirect(
           `/admin/products/${id}/edit?err=upload&msg=${encodeURIComponent("invalid glb path")}`,
         );
       }
       updates.glb_url = glbPublicUrl(id);
       updates.glb_size_kb = num(fd, "glb_size_kb");
+      // Manual upload → mark provenance + generated time so the
+      // "Meshy only runs once" gate trips correctly even if the
+      // operator clears glb_url and re-Publishes later.
+      updates.glb_source = "manual_upload";
+      updates.glb_generated_at = new Date().toISOString();
+      // Manual upload IS the GLB — no Meshy run, no generating
+      // status. If the row had a stale failed Meshy state from a
+      // prior attempt, leave it alone (audit trail) rather than
+      // wipe it; admin can read the history.
     }
     const thumb = fileOrNull(fd, "thumbnail_file");
     if (thumb) {
@@ -490,7 +564,9 @@ export async function updateProduct(id: string, fd: FormData): Promise<void> {
 
   // Attach staged raw images (PUT already happened client-side via
   // signed URL). Rows go in at state='raw' — rembg only runs iff
-  // the product ends up published (below).
+  // the product ends up published OR we're about to kick off Meshy
+  // (Meshy needs cutouts, so we have to run rembg first even though
+  // the row will sit at draft).
   const stagedEntries = parseRawImageEntries(fd);
   if (stagedEntries.length > 0) {
     const attach = await attachStagedRawImages(id, stagedEntries);
@@ -510,12 +586,23 @@ export async function updateProduct(id: string, fd: FormData): Promise<void> {
   //     any raw / cutout_failed rows. This is the "operator edited
   //     a published product, added a new photo, clicked Save" case
   //     Jym flagged in test 3.
-  //   - Publish (intent=publish) → status=published → rembg runs.
-  // We key off the *final* payload.status so the single rule covers
-  // all three intents without branching on intent name.
+  //   - Publish (intent=publish) → status=published OR (held-back
+  //     to draft for Meshy) → rembg runs in BOTH cases. The
+  //     held-back path needs cutouts ready before Meshy can fetch
+  //     them.
+  // We key off `payload.status === 'published' || willKickOffMeshy`
+  // — both branches require fresh cutouts.
   let rembgCounts = { approved: 0, failed: 0, ran: 0 };
-  if (payload.status === "published") {
+  if (payload.status === "published" || willKickOffMeshy) {
     rembgCounts = await processPendingImagesForPublish(id);
+  }
+
+  // Held-back Meshy kick-off. Runs AFTER rembg so cutouts are ready.
+  // Does its own DB write to stamp meshy_task_id / status='generating'.
+  let meshyKick: Awaited<ReturnType<typeof kickOffMeshyForProduct>> | null =
+    null;
+  if (willKickOffMeshy) {
+    meshyKick = await kickOffMeshyForProduct(id);
   }
 
   revalidatePath("/admin");
@@ -528,6 +615,16 @@ export async function updateProduct(id: string, fd: FormData): Promise<void> {
   if (rembgCounts.ran > 0) {
     qs.set("approved", String(rembgCounts.approved));
     qs.set("failed", String(rembgCounts.failed));
+  }
+  if (meshyKick) {
+    if (meshyKick.ok) {
+      // Banner reads `meshy=started` — Commit 2's UI work shows
+      // "3D 生成中..." until the polling worker flips status.
+      qs.set("meshy", "started");
+    } else {
+      qs.set("err", `meshy_${meshyKick.error}`);
+      if (meshyKick.detail) qs.set("msg", meshyKick.detail);
+    }
   }
   redirect(`/admin/products/${id}/edit?${qs.toString()}`);
 }

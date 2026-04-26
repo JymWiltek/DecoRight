@@ -53,9 +53,39 @@ export type ProductRow = {
   status: ProductStatus;
   ai_filled_fields: string[];
   link_reported_broken_count: number;
-  meshy_job_id: string | null;
-  meshy_status: string | null;
-  meshy_requested_at: string | null;
+  // ── Meshy / GLB pipeline fields (post-0014) ─────────────────
+  // meshy_task_id: Meshy's task id from createMeshyTask. Renamed
+  //   from meshy_job_id in 0014 to match Meshy's own vocabulary.
+  // meshy_status: lifecycle of the GLB generation.
+  //   NULL              → never went through Meshy (e.g. seeded
+  //                       row, manual upload, or hasn't been
+  //                       Published yet)
+  //   'pending'         → reserved but not yet kicked off (unused
+  //                       in Phase A — we kick off synchronously)
+  //   'generating'      → POST'd to Meshy, polling worker watches
+  //                       this row
+  //   'succeeded'       → GLB uploaded to our bucket
+  //   'failed'          → all retries exhausted (max 3)
+  // meshy_attempts: retry counter (0..3). Bumped by the polling
+  //   worker on FAILED before re-kickoff.
+  // meshy_error: last failure reason — surfaced in admin so the
+  //   operator decides whether to swap photos and re-publish.
+  // glb_generated_at: timestamp of when the GLB landed in Storage
+  //   (whether Meshy-generated or operator-uploaded).
+  // glb_source: 'meshy' (auto) | 'manual_upload' (operator hand-
+  //   uploaded). Audit trail for "Meshy only runs once".
+  meshy_task_id: string | null;
+  meshy_status: "pending" | "generating" | "succeeded" | "failed" | null;
+  meshy_attempts: number;
+  meshy_error: string | null;
+  glb_generated_at: string | null;
+  glb_source: "meshy" | "manual_upload" | null;
+  // Legacy columns from migration 0003 STEP 7 — never written to
+  // by current code, kept in the type so a stray select * that
+  // catches them still type-checks. Schedule for removal in a
+  // future cleanup migration.
+  meshy_model_url: string | null;
+  meshy_cost_usd: number | null;
   created_at: string;
   updated_at: string;
 };
@@ -85,9 +115,14 @@ export type ProductInsert = {
   status?: ProductStatus;
   ai_filled_fields?: string[];
   link_reported_broken_count?: number;
-  meshy_job_id?: string | null;
-  meshy_status?: string | null;
-  meshy_requested_at?: string | null;
+  meshy_task_id?: string | null;
+  meshy_status?: "pending" | "generating" | "succeeded" | "failed" | null;
+  meshy_attempts?: number;
+  meshy_error?: string | null;
+  glb_generated_at?: string | null;
+  glb_source?: "meshy" | "manual_upload" | null;
+  meshy_model_url?: string | null;
+  meshy_cost_usd?: number | null;
   created_at?: string;
   updated_at?: string;
 };
