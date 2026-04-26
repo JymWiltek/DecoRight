@@ -67,6 +67,10 @@ type Props = {
   /** ?msg=… message accompanying errCode. */
   errMsg?: string;
   imagesSection?: React.ReactNode;
+  /** Optional Meshy generation status banner (Edit page only). When
+   *  provided, renders at the very top of the form so the operator
+   *  sees Meshy progress before scrolling. /new doesn't pass this. */
+  meshyBanner?: React.ReactNode;
 };
 
 const FORM_ID = "product-form";
@@ -82,6 +86,7 @@ export default function ProductForm({
   errCode,
   errMsg,
   imagesSection,
+  meshyBanner,
 }: Props) {
   const p = product;
   const isEdit = Boolean(p);
@@ -290,6 +295,8 @@ export default function ProductForm({
             <SubmitButtons isEdit={isEdit} busy={busy} />
           </div>
         </header>
+
+        {meshyBanner}
 
         <SubmitPhaseBanner phase={phase} />
 

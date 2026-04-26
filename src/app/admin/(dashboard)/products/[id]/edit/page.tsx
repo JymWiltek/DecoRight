@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import ProductForm from "@/components/admin/ProductForm";
 import ProductImagesSection from "@/components/admin/ProductImagesSection";
+import MeshyStatusBanner from "@/components/admin/MeshyStatusBanner";
 import { getProductById } from "@/lib/admin/products";
 import { loadTaxonomy } from "@/lib/taxonomy";
 import { createServiceRoleClient } from "@/lib/supabase/service";
@@ -27,6 +28,11 @@ type PageProps = {
     processed?: string;
     err?: string;
     msg?: string;
+    /** Set by updateProduct after a held-back Publish kicks off Meshy.
+     *  Forces MeshyStatusBanner to render on the very next paint even
+     *  if the kick-off DB write hasn't propagated to the next read
+     *  yet (rare race; the banner self-corrects on its first 5s tick). */
+    meshy?: string;
   }>;
 };
 
@@ -73,6 +79,19 @@ export default async function EditProductPage({
       freshlyCreated={sp.fresh === "1"}
       errCode={sp.err}
       errMsg={sp.msg}
+      meshyBanner={
+        <MeshyStatusBanner
+          productId={id}
+          initial={{
+            status: product.meshy_status,
+            error: product.meshy_error,
+            glbUrl: product.glb_url,
+            productStatus: product.status,
+            attempts: product.meshy_attempts,
+          }}
+          justKickedOff={sp.meshy === "started"}
+        />
+      }
       imagesSection={
         <ProductImagesSection
           productId={id}

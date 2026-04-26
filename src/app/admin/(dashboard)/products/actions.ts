@@ -942,3 +942,82 @@ export async function setProductThumbnail(
 
   return { ok: true, url };
 }
+
+// ─── M3 · Commit 2: client-side soft polling ───────────────────
+//
+// Read-only "what's the Meshy job up to" probe. The Edit page's
+// MeshyStatusBanner client component calls this every 5s while the
+// status is 'generating' so the operator sees the banner flip to
+// green ("Live now") or red ("failed") without a page refresh.
+//
+// Why a server action and not an API route:
+//   - Same admin auth gate as the rest of the page (requireAdmin()
+//     uses cookies); an /api route would need its own gate.
+//   - Server actions return JSON-serializable values directly to the
+//     client component — no fetch/JSON.parse boilerplate.
+//
+// What it deliberately DOESN'T do:
+//   - Call Meshy. The polling worker (Commit 5, server-side cron)
+//     owns the Meshy GET + GLB download. This action just reads our
+//     own DB row, so it costs nothing and stays fast even at 5s
+//     cadence.
+//   - Mutate. It's a pure read — no rate limiting needed, no CSRF
+//     concerns beyond what the server action runtime already gives.
+//
+// Returned shape includes everything the banner needs to render
+// without a follow-up roundtrip:
+//   - status: the 4-value enum (or null if never went through Meshy)
+//   - error:  meshy_error text for the red-banner detail
+//   - glbUrl: when status='succeeded', the banner shows "Refresh"
+//             so the operator sees the GLB on the form. The URL
+//             itself isn't displayed; presence is just a sanity
+//             check that the worker actually wrote it.
+//   - productStatus: for cross-checking — when meshy succeeds the
+//             worker promotes the row to 'published'. The banner
+//             can use this to say "published & live" vs. just
+//             "GLB ready".
+
+export type MeshyStatusSnapshot = {
+  status: "pending" | "generating" | "succeeded" | "failed" | null;
+  error: string | null;
+  glbUrl: string | null;
+  productStatus: ProductStatus;
+  attempts: number;
+};
+
+export async function getMeshyStatus(
+  productId: string,
+): Promise<{ ok: true; snapshot: MeshyStatusSnapshot } | { ok: false; error: string }> {
+  // Admin gate — even though this only reads, we don't want
+  // unauthenticated callers polling the table.
+  try {
+    await requireAdmin();
+  } catch {
+    return { ok: false, error: "Not signed in." };
+  }
+
+  if (!UUID_RE.test(productId)) {
+    return { ok: false, error: "invalid product id" };
+  }
+
+  const supabase = createServiceRoleClient();
+  const { data, error } = await supabase
+    .from("products")
+    .select("meshy_status, meshy_error, meshy_attempts, glb_url, status")
+    .eq("id", productId)
+    .maybeSingle();
+
+  if (error) return { ok: false, error: error.message };
+  if (!data) return { ok: false, error: "product not found" };
+
+  return {
+    ok: true,
+    snapshot: {
+      status: data.meshy_status,
+      error: data.meshy_error,
+      glbUrl: data.glb_url,
+      productStatus: data.status,
+      attempts: data.meshy_attempts,
+    },
+  };
+}
