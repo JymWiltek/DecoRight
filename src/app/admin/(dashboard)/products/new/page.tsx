@@ -1,71 +1,80 @@
-import Link from "next/link";
-import { createProduct } from "../actions";
+import "server-only";
+import { redirect } from "next/navigation";
+import { revalidatePath } from "next/cache";
+import { after } from "next/server";
+import { createServiceRoleClient } from "@/lib/supabase/service";
+import { invalidatePublishedCountsCache } from "@/lib/products";
 
 export const dynamic = "force-dynamic";
 
 /**
- * Minimal "start a new product" screen. We only ask for a name here
- * because image management lives on the edit workbench — and the
- * workbench needs a product id to hang images off. So: name →
- * createProduct (inserts a `status='draft'` row) → redirect to
- * /admin/products/[id]/edit where the operator fills in everything
- * else + uploads photos + flips status to 'published' via the Status
- * radio when they save.
+ * /admin/products/new — used to be a name-only stub form: type a
+ * product name → POST → redirect to /edit. That meant the operator
+ * saw "Name" first on /new but "Photos" first on /edit (Phase 1 收尾
+ * F5 reordered the workbench to put Photos at the top). Two flows,
+ * two orderings. Confusing.
  *
- * No image uploader here. No taxonomy pills. No nothing else. The
- * whole point is to get to the workbench as fast as possible.
+ * Phase 1 收尾 P0 #4 fix: there is now exactly ONE form layout (the
+ * /edit workbench). Clicking "+ New" creates an "Untitled product"
+ * draft inline and redirects straight to /edit, so the operator
+ * lands in the same form whether they're starting fresh or
+ * reopening a saved row.
+ *
+ * Trade-off acknowledged: refreshing /new in the browser creates
+ * another orphan "Untitled" draft. Phase 1 is a closed-team admin
+ * tool with low traffic, drafts are filterable on the list page,
+ * and a "delete drafts > N days old with no images + no rooms"
+ * cleanup is a separate task if it ever becomes painful.
+ *
+ * Why this lives in a Server Component (not a Server Action) — we
+ * only mutate per *navigation*, not per click. A Server Component
+ * runs on every GET, which matches "click + New → land in /edit".
+ * Putting this in actions.ts would leak a second URL-addressable
+ * mutation (Server Actions are URL endpoints) for no reason.
  */
-export default function NewProductPage() {
-  return (
-    <div className="mx-auto max-w-xl px-6 py-12">
-      <header className="mb-6">
-        <div className="text-xs text-neutral-500">
-          <Link href="/admin" className="hover:text-black">
-            ← Products
-          </Link>
-        </div>
-        <h1 className="mt-2 text-2xl font-semibold">New product</h1>
-        <p className="mt-1 text-sm text-neutral-600">
-          Give it a name to get started. You&rsquo;ll fill in the rest —
-          images, taxonomy, price, 3D model — on the next screen.
-        </p>
-      </header>
+export default async function NewProductPage() {
+  const id = crypto.randomUUID();
+  const supabase = createServiceRoleClient();
 
-      <form
-        action={createProduct}
-        className="space-y-4 rounded-lg border border-neutral-200 bg-white p-5"
-      >
-        <label className="flex flex-col gap-1.5">
-          <span className="text-xs font-medium text-neutral-600">Name *</span>
-          <input
-            name="name"
-            required
-            autoFocus
-            placeholder="e.g. Walnut Coffee Table"
-            className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm focus:border-black focus:outline-none"
-          />
-        </label>
-        <p className="text-xs text-neutral-500">
-          The product is saved as a draft. It won&rsquo;t appear on the
-          public catalog until you flip Status to &ldquo;Published&rdquo;
-          on the edit screen.
-        </p>
+  // Match Migration 0013's NOT NULL columns and let parsePayload-style
+  // defaults take care of the rest. Empty arrays for the multi-select
+  // tags so the row is consistent with what /edit's Save would produce
+  // for a brand-new product (vs. a NULL hole that'd surprise downstream
+  // queries). Status='draft' so the row never accidentally goes public
+  // before the operator gets to /edit.
+  const { error } = await supabase.from("products").insert({
+    id,
+    name: "Untitled product",
+    status: "draft",
+    room_slugs: [],
+    styles: [],
+    colors: [],
+    materials: [],
+    store_locations: [],
+    ai_filled_fields: [],
+  });
 
-        <div className="flex items-center justify-end gap-3 border-t border-neutral-100 pt-4">
-          <Link
-            href="/admin"
-            className="rounded-md border border-neutral-300 px-4 py-2 text-sm hover:border-black"
-          >
-            Cancel
-          </Link>
-          <button
-            type="submit"
-            className="rounded-md bg-black px-4 py-2 text-sm font-medium text-white hover:bg-neutral-800"
-          >
-            Create draft →
-          </button>
-        </div>
-      </form>
-    </div>
-  );
+  if (error) {
+    // Surface the DB rejection on the next /edit visit (the page reads
+    // ?err= / ?msg= and renders a banner). Redirecting to a dummy id
+    // would 404, so route the operator back to the products list with
+    // the error attached.
+    redirect(
+      `/admin?err=db&msg=${encodeURIComponent(`Failed to start a new draft: ${error.message}`)}`,
+    );
+  }
+
+  // Next.js 16 forbids cache invalidation during a Server Component
+  // render — has to happen *after* the response is committed. `after()`
+  // schedules these for post-render so the redirect below isn't
+  // blocked. (Both calls also run if redirect throws — that's the
+  // documented behaviour of `after`.)
+  after(() => {
+    revalidatePath("/admin");
+    invalidatePublishedCountsCache();
+  });
+
+  // ?fresh=1 triggers the post-create toast in /edit (the one with
+  // "+ Another" / "View" actions) — same UX as the old name-only flow.
+  redirect(`/admin/products/${id}/edit?fresh=1`);
 }

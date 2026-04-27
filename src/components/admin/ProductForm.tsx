@@ -315,6 +315,46 @@ export default function ProductForm({
           </div>
         )}
 
+        {/*
+          Section order locked by Phase 1 收尾 F5 (Notion table). Top-
+          to-bottom mirrors the operator's natural workflow:
+            1. Drop photos & 3D first (visual anchor — this is what AI
+               classifies against, what the storefront shows).
+            2. Click AI assist next so the auto-picks land before the
+               operator manually edits anything.
+            3. Basics — name/brand/status/description (manual fields).
+            4. Rooms ✱ → Item type ✱ → Subtype. Rooms is intentionally
+               above Item type per F5: rooms are a stronger product
+               organizer in our catalog (faucets live in Kitchen AND
+               Bathroom — picking rooms first keeps that intuitive).
+               RoomsPicker handles itemType=null gracefully (no ★
+               recommendations until item_type is set; live updates
+               via 100ms poll once it is).
+            5. Styles / Colors / Materials — all multi-selects.
+            6. Price & dimensions, then Purchase link + Store locations
+               (logically grouped: where to buy + where it's stocked).
+            7. AI-filled display chip row (review trail, isEdit only).
+          Don't reorder without updating the matching docs in Notion.
+        */}
+
+        {imagesSection}
+
+        <Section
+          title="3D model"
+          hint="Optional. .glb file (60 MB max). Staged for upload — nothing uploads until you click Save."
+        >
+          <Field label=".glb model">
+            <FileDropzone
+              accept=".glb,model/gltf-binary"
+              maxFileMb={60}
+              productId={p?.id ?? null}
+              currentUrl={p?.glb_url ?? null}
+              currentMeta={p?.glb_size_kb != null ? `${p.glb_size_kb} KB` : null}
+              hint="Drop .glb here, or click to pick"
+            />
+          </Field>
+        </Section>
+
         <Section title="AI assist">
           <AIInferButton productId={p?.id ?? null} form={FORM_ID} />
         </Section>
@@ -371,22 +411,17 @@ export default function ProductForm({
           </Grid>
         </Section>
 
-        {imagesSection}
-
         <Section
-          title="3D model"
-          hint="Optional. .glb file (60 MB max). Staged for upload — nothing uploads until you click Save."
+          title="Rooms *"
+          hint="Which room(s) this product belongs in. Multi-select — a faucet can live in Kitchen AND Bathroom."
         >
-          <Field label=".glb model">
-            <FileDropzone
-              accept=".glb,model/gltf-binary"
-              maxFileMb={60}
-              productId={p?.id ?? null}
-              currentUrl={p?.glb_url ?? null}
-              currentMeta={p?.glb_size_kb != null ? `${p.glb_size_kb} KB` : null}
-              hint="Drop .glb here, or click to pick"
-            />
-          </Field>
+          <RoomsPicker
+            form={FORM_ID}
+            rooms={taxonomy.rooms}
+            itemTypeRooms={taxonomy.itemTypeRooms}
+            initial={p?.room_slugs ?? []}
+            initialItemType={p?.item_type ?? null}
+          />
         </Section>
 
         <Section
@@ -410,30 +445,6 @@ export default function ProductForm({
             subtypes={taxonomy.itemSubtypes}
             initial={p?.subtype_slug ?? null}
             initialItemType={p?.item_type ?? null}
-          />
-        </Section>
-
-        <Section
-          title="Rooms *"
-          hint="Which room(s) this product belongs in. Multi-select — a faucet can live in Kitchen AND Bathroom."
-        >
-          <RoomsPicker
-            form={FORM_ID}
-            rooms={taxonomy.rooms}
-            itemTypeRooms={taxonomy.itemTypeRooms}
-            initial={p?.room_slugs ?? []}
-            initialItemType={p?.item_type ?? null}
-          />
-        </Section>
-
-        <Section
-          title="Store locations · 供应商门店所在地"
-          hint="Which Wiltek showrooms physically stock this. Display-only — does NOT restrict who can buy it."
-        >
-          <RegionsPicker
-            form={FORM_ID}
-            regions={taxonomy.regions}
-            initial={p?.store_locations ?? []}
           />
         </Section>
 
@@ -573,6 +584,17 @@ export default function ProductForm({
               />
             </Field>
           </Grid>
+        </Section>
+
+        <Section
+          title="Store locations · 供应商门店所在地"
+          hint="Which Wiltek showrooms physically stock this. Display-only — does NOT restrict who can buy it."
+        >
+          <RegionsPicker
+            form={FORM_ID}
+            regions={taxonomy.regions}
+            initial={p?.store_locations ?? []}
+          />
         </Section>
 
         {isEdit && p?.ai_filled_fields && p.ai_filled_fields.length > 0 && (
