@@ -62,11 +62,28 @@ type Props = {
    *  Meshy. Forces the banner to show even if the snapshot is still
    *  null (the kick-off DB write may not have propagated yet, rare). */
   justKickedOff: boolean;
+  /** Phase 1 收尾 P0-4: pre-flight refusal that didn't make it as
+   *  far as a DB write. updateProduct/kickOffMeshyForProduct redirect
+   *  here with `?err=meshy_<reason>&msg=<detail>`; the page extracts
+   *  the suffix and passes it in. One-shot banner — no DB lifecycle,
+   *  reloading the page (no err= in URL) clears it.
+   *
+   *  `no_cutouts` is intentionally not handled here: the rembg failure
+   *  banner already covers that case ("3 images failed background
+   *  removal"). Surfacing both would just nag the operator twice. */
+  blockedReason?: string;
+  blockedDetail?: string;
 };
 
 const POLL_INTERVAL_MS = 5_000;
 
-export default function MeshyStatusBanner({ productId, initial, justKickedOff }: Props) {
+export default function MeshyStatusBanner({
+  productId,
+  initial,
+  justKickedOff,
+  blockedReason,
+  blockedDetail,
+}: Props) {
   const router = useRouter();
   const [snap, setSnap] = useState<MeshyStatusSnapshot>(initial);
   // Track whether the LAST observed status was 'generating'. When it
@@ -117,6 +134,28 @@ export default function MeshyStatusBanner({ productId, initial, justKickedOff }:
     // 'failed' → (manual SQL fix) → 'generating' transition picks
     // back up. snap.status is the right dependency.
   }, [snap.status, tick]);
+
+  // P0-4: pre-flight refusal banner. Sits ABOVE the lifecycle-status
+  // checks because a refusal means the lifecycle didn't even start
+  // (no DB write happened); without this branch the operator gets
+  // zero visual feedback that Publish silently bypassed Meshy.
+  // `no_cutouts` is filtered upstream at the page level — see Props
+  // doc — so we don't have to special-case it here.
+  if (blockedReason && !snap.status) {
+    return (
+      <Banner tone="amber">
+        <WarnIcon />
+        <div className="flex-1">
+          <div className="font-semibold">
+            {meshyBlockedTitle(blockedReason)}
+          </div>
+          <div className="text-xs opacity-80">
+            {meshyBlockedDetail(blockedReason, blockedDetail)}
+          </div>
+        </div>
+      </Banner>
+    );
+  }
 
   // Quiet steady state: no banner if we're not in any Meshy lifecycle.
   if (!snap.status && !justKickedOff) return null;
@@ -192,7 +231,7 @@ function Banner({
   tone,
   children,
 }: {
-  tone: "blue" | "green" | "red";
+  tone: "blue" | "green" | "red" | "amber";
   children: React.ReactNode;
 }) {
   const cls =
@@ -200,12 +239,59 @@ function Banner({
       ? "border-blue-200 bg-blue-50 text-blue-800"
       : tone === "green"
         ? "border-emerald-200 bg-emerald-50 text-emerald-800"
-        : "border-rose-200 bg-rose-50 text-rose-800";
+        : tone === "amber"
+          ? "border-amber-200 bg-amber-50 text-amber-800"
+          : "border-rose-200 bg-rose-50 text-rose-800";
   return (
     <div className={`flex items-start gap-3 rounded-md border px-4 py-3 text-sm ${cls}`}>
       {children}
     </div>
   );
+}
+
+/** Pre-flight refusal headline. The reason values mirror
+ *  `KickOffErrorCode` in src/lib/meshy-kickoff.ts; updateProduct
+ *  redirects with `?err=meshy_<reason>` so the page sees them
+ *  prefix-stripped. Default falls back to a generic warning so an
+ *  unknown future reason still produces a banner instead of silence. */
+function meshyBlockedTitle(reason: string): string {
+  switch (reason) {
+    case "already_has_glb":
+      return "3D model already attached";
+    case "already_in_flight":
+      return "3D generation already running";
+    case "meshy_not_configured":
+      return "Meshy not configured";
+    case "quota_exceeded":
+      return "Meshy daily quota reached";
+    case "meshy_api_error":
+      return "Meshy API error";
+    case "product_missing":
+    case "db_error":
+      return "3D generation skipped";
+    default:
+      return "3D generation skipped";
+  }
+}
+
+function meshyBlockedDetail(reason: string, detail: string | undefined): string {
+  switch (reason) {
+    case "already_has_glb":
+      return "This product already has a GLB. Delete it first if you want to regenerate.";
+    case "already_in_flight":
+      return "Wait for the current Meshy task to finish before re-publishing.";
+    case "meshy_not_configured":
+      return "Set MESHY_API_KEY in Vercel env vars and redeploy.";
+    case "quota_exceeded":
+      return "Try again tomorrow or raise the daily cap in app_config.";
+    case "meshy_api_error":
+      return detail ? detail.slice(0, 200) : "Try again in a few minutes.";
+    case "product_missing":
+    case "db_error":
+      return "Internal pre-flight check failed. Refresh and try Publish again.";
+    default:
+      return detail ? detail.slice(0, 200) : "See logs for details.";
+  }
 }
 
 function Spinner() {
@@ -236,6 +322,30 @@ function CheckIcon() {
         strokeWidth="2.5"
         strokeLinecap="round"
         strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function WarnIcon() {
+  return (
+    <svg
+      className="mt-0.5 h-5 w-5 shrink-0"
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden
+    >
+      <path
+        d="M12 3l10 18H2L12 3z"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M12 10v5M12 18.5v.5"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
       />
     </svg>
   );

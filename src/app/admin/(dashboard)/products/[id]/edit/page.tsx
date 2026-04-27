@@ -74,6 +74,21 @@ export default async function EditProductPage({
 
   const action = updateProduct.bind(null, id);
 
+  // P0-4: split rembg-bound and meshy-bound err codes so each lands
+  // in the right banner. updateProduct redirects with
+  // `?err=meshy_<reason>&msg=<detail>` for Meshy pre-flight refusals;
+  // anything else is rembg/upload territory and stays with the images
+  // section. `meshy_no_cutouts` is dropped here per spec — the
+  // operator's already looking at the rembg failure banner.
+  const rawErr = sp.err ?? "";
+  const isMeshyErr = rawErr.startsWith("meshy_");
+  const meshyBlockedReason =
+    isMeshyErr && rawErr !== "meshy_no_cutouts"
+      ? rawErr.replace(/^meshy_/, "")
+      : undefined;
+  const rembgErrCode = isMeshyErr ? undefined : sp.err;
+  const rembgErrMsg = isMeshyErr ? undefined : sp.msg;
+
   return (
     <ProductForm
       product={product}
@@ -81,8 +96,8 @@ export default async function EditProductPage({
       action={action}
       saved={sp.saved === "1"}
       freshlyCreated={sp.fresh === "1"}
-      errCode={sp.err}
-      errMsg={sp.msg}
+      errCode={rembgErrCode}
+      errMsg={rembgErrMsg}
       meshyBanner={
         <MeshyStatusBanner
           productId={id}
@@ -94,6 +109,8 @@ export default async function EditProductPage({
             attempts: product.meshy_attempts,
           }}
           justKickedOff={sp.meshy === "started"}
+          blockedReason={meshyBlockedReason}
+          blockedDetail={meshyBlockedReason ? sp.msg : undefined}
         />
       }
       imagesSection={
@@ -108,8 +125,8 @@ export default async function EditProductPage({
           deletedCount={sp.deleted ? Number(sp.deleted) : undefined}
           unsatisfied={sp.unsatisfied === "1"}
           retried={sp.retried === "1"}
-          errCode={sp.err}
-          errMsg={sp.msg}
+          errCode={rembgErrCode}
+          errMsg={rembgErrMsg}
           rembgUsage={rembgUsage}
         />
       }
