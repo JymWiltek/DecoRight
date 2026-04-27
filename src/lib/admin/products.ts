@@ -31,6 +31,15 @@ export type AdminProductListOptions = {
    *  itself just trusts the value. */
   itemType?: string;
   sort?: AdminProductSort;
+  /** Phase 1 收尾 P1 fix: hide "empty draft" rows (status='draft'
+   *  AND no images AND no rooms). The /admin/products/new flow
+   *  inserts an Untitled draft on every navigation, so refreshing
+   *  /new or hitting "+ New" then closing without filling fields
+   *  leaves orphans. The page defaults this to true and surfaces
+   *  a "Show empty drafts" chip to override. Filter applies AFTER
+   *  the DB fetch — we already have imageCounts loaded for the
+   *  rendered set, so re-using that costs nothing. */
+  hideEmptyDrafts?: boolean;
 };
 
 export type AdminProductListResult = {
@@ -106,7 +115,7 @@ export async function listAllProducts(
   const { data, error } = await query.limit(500);
   if (error) throw error;
 
-  const products = data ?? [];
+  let products = data ?? [];
   const ids = products.map((p) => p.id);
   let imageCounts: Record<string, number> = {};
   const stuckImageIds: Record<string, string[]> = {};
@@ -130,6 +139,27 @@ export async function listAllProducts(
         stuckImageIds[r.product_id] = list;
       }
     }
+  }
+
+  // Empty-draft filter runs AFTER imageCounts is built so the rule
+  // "no images" can read straight from the loaded map. Applying it in
+  // SQL would require a join + group_by + filter on count(*) — doable
+  // but uglier and harder to keep in sync with the "stuck images"
+  // bookkeeping above. JS filter at ≤500 rows is essentially free.
+  //
+  // Definition: status='draft' AND zero product_images rows AND
+  // empty room_slugs[]. All three conditions together — a draft with
+  // even one photo or one tagged room is "in progress", not orphan
+  // garbage. Operator can re-surface them via ?show_drafts=1 toggle
+  // (handled in the page).
+  if (opts.hideEmptyDrafts) {
+    products = products.filter((p) => {
+      const isEmptyDraft =
+        p.status === "draft" &&
+        (imageCounts[p.id] ?? 0) === 0 &&
+        (!p.room_slugs || p.room_slugs.length === 0);
+      return !isEmptyDraft;
+    });
   }
 
   return { products, imageCounts, stuckImageIds };

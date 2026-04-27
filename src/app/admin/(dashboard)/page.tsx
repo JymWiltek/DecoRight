@@ -55,6 +55,12 @@ type SearchParams = Promise<{
   deleted?: string;
   err?: string;
   msg?: string;
+  /** "1" = include empty drafts in the listing (overrides the default
+   *  hide). Empty drafts = status='draft' AND no images AND no rooms,
+   *  the orphan rows the /admin/products/new auto-create flow leaves
+   *  behind when the operator clicks +New and then closes without
+   *  filling anything. Off by default so the list stays clean. */
+  show_drafts?: string;
 }>;
 
 export default async function AdminProductsPage({
@@ -98,11 +104,24 @@ export default async function AdminProductsPage({
         ? sp.type
         : undefined;
 
+  // Empty-draft hide is the DEFAULT — only toggled off when the
+  // operator explicitly asks. ?show_drafts=1 is the override; any
+  // other value (or absence) keeps the filter on. Applying the
+  // filter when status='draft' is explicitly selected would hide
+  // every draft the operator just clicked into, so honor the
+  // explicit status filter by leaving the show_drafts default
+  // unchanged but resolve the same way (the empty-draft rule is
+  // "draft + no images + no rooms" — a draft you want to see has at
+  // least one of those, so the filter naturally lets normal drafts
+  // through). The chip below makes the bypass discoverable.
+  const showEmptyDrafts = sp.show_drafts === "1";
+
   const { products, imageCounts, stuckImageIds } = await listAllProducts({
     q: sp.q,
     status: statusFilter,
     itemType: itemTypeParam,
     sort,
+    hideEmptyDrafts: !showEmptyDrafts,
   });
 
   // /admin is hardcoded English; pass "en" explicitly so admin pill
@@ -149,6 +168,7 @@ export default async function AdminProductsPage({
     q: sp.q,
     status: sp.status,
     type: sp.type,
+    show_drafts: sp.show_drafts,
   };
 
   function chipHref(forStatus: ProductStatus | "all"): string {
@@ -156,9 +176,24 @@ export default async function AdminProductsPage({
     if (sp.q) params.set("q", sp.q);
     if (sp.sort) params.set("sort", sp.sort);
     if (sp.type) params.set("type", sp.type);
+    if (sp.show_drafts) params.set("show_drafts", sp.show_drafts);
     if (forStatus !== "all") params.set("status", forStatus);
     return `/admin?${params.toString()}`;
   }
+
+  // Toggle for "Show empty drafts". When the toggle is on, the URL
+  // gets ?show_drafts=1; clicking again drops the param. Preserves
+  // every other filter so the operator doesn't lose context.
+  const showDraftsToggleHref = (() => {
+    const params = new URLSearchParams();
+    if (sp.q) params.set("q", sp.q);
+    if (sp.sort) params.set("sort", sp.sort);
+    if (sp.type) params.set("type", sp.type);
+    if (sp.status) params.set("status", sp.status);
+    if (!showEmptyDrafts) params.set("show_drafts", "1");
+    const qs = params.toString();
+    return qs ? `/admin?${qs}` : "/admin";
+  })();
 
   // Pretty label for the "X shown · type=Faucet" header line. We
   // resolve the slug back to a label so the operator sees a name,
@@ -247,6 +282,26 @@ export default async function AdminProductsPage({
           current={itemTypeParam}
           counts={itemTypeCounts}
         />
+        {/* Empty-draft toggle (Phase 1 收尾 P1).
+            ON state = orphans hidden (default + cleaner list).
+            OFF state = "Show empty drafts" CTA visible to bring them back.
+            Lives next to the item-type filter so it reads as a list-shaping
+            control, not a status badge. */}
+        <Link
+          href={showDraftsToggleHref}
+          className={`rounded-full px-3 py-1 text-xs transition ${
+            showEmptyDrafts
+              ? "bg-amber-100 text-amber-800 ring-1 ring-amber-400"
+              : "bg-neutral-100 text-neutral-700 hover:bg-neutral-200"
+          }`}
+          title={
+            showEmptyDrafts
+              ? "Currently showing empty drafts (no images + no rooms). Click to hide them."
+              : "Empty drafts (no images + no rooms) are hidden. Click to reveal them."
+          }
+        >
+          {showEmptyDrafts ? "✓ Empty drafts shown" : "Show empty drafts"}
+        </Link>
       </div>
 
       {/* The bulk form wraps the table so per-row checkboxes belong

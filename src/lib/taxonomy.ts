@@ -52,13 +52,37 @@ export async function loadTaxonomy(): Promise<Taxonomy> {
   return unstable_cache(
     async (): Promise<Taxonomy> => {
       const supabase = createAnonClient();
+      // Sort discipline (Phase 1 收尾 P1 #2):
+      //
+      //   • itemTypes / itemSubtypes / rooms / styles / materials →
+      //     ORDER BY label_en. The operator predominantly works in
+      //     English on /admin and a stable A-Z layout means muscle
+      //     memory survives "did Jane add a new room slug last week?"
+      //     scans. The old sort_order was a curated list maintained
+      //     by hand and drifted out of sync as taxonomy grew.
+      //
+      //   • colors → KEEP sort_order. Color sort_order encodes the
+      //     hue ramp (white → yellow → orange → red → … → black)
+      //     so the front-end FilterPanel swatches look like a real
+      //     color picker, not "Beige, Black, Blue, Brown" alphabet
+      //     soup.
+      //
+      //   • regions → KEEP sort_order. RegionsBlock buckets these
+      //     into geographical groups (north / central / south / …)
+      //     and within a group sort_order matches the geographical
+      //     reading order (Penang → KL → Johor). Alpha would jumble
+      //     "Selangor" between "Sabah" and "Sarawak".
+      //
+      //   • itemTypeRooms → KEEP sort_order. It's a join table with
+      //     no label_en column. Order doesn't matter for membership
+      //     checks, but the column is in the schema, so leave it.
       const [it, sub, itr, rm, st, mt, co, rg] = await Promise.all([
-        supabase.from("item_types").select("*").order("sort_order"),
-        supabase.from("item_subtypes").select("*").order("sort_order"),
+        supabase.from("item_types").select("*").order("label_en"),
+        supabase.from("item_subtypes").select("*").order("label_en"),
         supabase.from("item_type_rooms").select("*").order("sort_order"),
-        supabase.from("rooms").select("*").order("sort_order"),
-        supabase.from("styles").select("*").order("sort_order"),
-        supabase.from("materials").select("*").order("sort_order"),
+        supabase.from("rooms").select("*").order("label_en"),
+        supabase.from("styles").select("*").order("label_en"),
+        supabase.from("materials").select("*").order("label_en"),
         supabase.from("colors").select("*").order("sort_order"),
         supabase.from("regions").select("*").order("sort_order"),
       ]);
@@ -73,9 +97,10 @@ export async function loadTaxonomy(): Promise<Taxonomy> {
         regions: rg.data ?? [],
       };
     },
-    // v3 — Migration 0013 drops deriveRoomSlug, adds
-    // itemTypeRooms, removes room_slug from item_types + item_subtypes.
-    ["taxonomy-v3"],
+    // v4 — P1 #2: 5 tables flipped to label_en sort. Bump the cache
+    // key so prod/staging fetches don't serve a stale sort_order
+    // payload from the old tag.
+    ["taxonomy-v4"],
     { tags: [TAG], revalidate: 300 },
   )();
 }
