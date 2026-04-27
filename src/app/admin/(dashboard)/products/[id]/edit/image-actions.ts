@@ -278,6 +278,14 @@ export async function processImage(
         redirect(
           withQuery(withQuery(base, "err", "quota"), "msg", e.cause),
         );
+      case "image_too_large":
+        redirect(
+          withQuery(
+            withQuery(base, "err", "image_too_large"),
+            "msg",
+            `${e.bytes} bytes`,
+          ),
+        );
       case "rembg":
         redirect(withQuery(withQuery(base, "err", "rembg"), "msg", e.msg));
       case "db":

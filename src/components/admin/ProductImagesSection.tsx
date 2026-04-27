@@ -299,6 +299,14 @@ function ImageCard({
       <div className="mt-2 space-y-1.5">
         {image.state === "cutout_failed" && (
           <>
+            {/* Categorized failure sentence (P0-2 commit 2). Sits
+                above the Retry buttons so the operator reads the
+                reason BEFORE deciding whether retry will help — e.g.
+                no_provider can't be fixed by retrying, image_too_large
+                requires re-exporting locally first. */}
+            <p className="rounded bg-rose-50 px-2 py-1 text-[11px] leading-snug text-rose-700">
+              {errorMessageFor(image.last_error_kind)}
+            </p>
             <ActionForm
               action={retryFailedImage}
               label="↻ Retry (Replicate)"
@@ -426,6 +434,37 @@ function ActionForm({
   );
 }
 
+/** Phase 1 收尾 P0-2 commit 2: human-readable sentence for the four
+ *  failure categories pipeline.ts can emit. Shown beneath the failed
+ *  thumbnail so the operator's next action is unambiguous —
+ *  "Provider not configured" (env issue, ping admin) is very different
+ *  from "Provider error" (transient, retry) and from "Image too large"
+ *  (operator action: re-export at smaller dimensions).
+ *
+ *  Fallback for null kind covers two cases:
+ *   1) Pre-migration-0019 cutout_failed rows that never carried a kind.
+ *   2) Race where state flipped to cutout_failed but the kind write
+ *      lost the round-trip (would be a pipeline bug — but we'd rather
+ *      show "Try again" than crash on a missing key).
+ *
+ *  Module-level so commit 3 (cost section) can reuse it for tooltips
+ *  if we surface aggregated last_error_kind there. */
+function errorMessageFor(kind: ImageErrorKind | null): string {
+  switch (kind) {
+    case "no_provider":
+      return "Provider not configured. Check Vercel env vars.";
+    case "quota_exhausted":
+      return "Provider quota exhausted. Wait or upgrade plan.";
+    case "provider_error":
+      return "Provider error. Try again in a moment.";
+    case "image_too_large":
+      return "Image too large. Max 8 MB per file.";
+    case null:
+    default:
+      return "Background removal failed. Try again.";
+  }
+}
+
 function StateTag({ state }: { state: ImageState }) {
   const map: Record<ImageState, { label: string; cls: string }> = {
     raw: { label: "Processing", cls: "bg-neutral-100 text-neutral-600" },
@@ -508,7 +547,13 @@ function Banner({
   );
 }
 
-/** Map opaque action error codes to operator-readable phrases. */
+/** Map opaque action error codes to operator-readable phrases. The
+ *  rembg-failure subset (no_provider / quota / rembg) intentionally
+ *  uses the SAME copy as `errorMessageFor` above so the per-image
+ *  inline sentence and the section banner read identically. Don't let
+ *  these drift — change both or neither. The quota+rembg synonyms
+ *  here match `quota_exhausted` and `provider_error` respectively
+ *  (URL codes are still the legacy short forms, see flattenRembgError). */
 function humanizeError(code: string): string {
   switch (code) {
     case "no_files":
@@ -520,11 +565,13 @@ function humanizeError(code: string): string {
     case "missing_raw":
       return "Raw image is missing — re-upload.";
     case "no_provider":
-      return "No background-removal provider is configured.";
+      return "Provider not configured. Check Vercel env vars.";
     case "quota":
-      return "Daily background-removal quota reached — try again tomorrow or use Remove.bg.";
+      return "Provider quota exhausted. Wait or upgrade plan.";
     case "rembg":
-      return "Background removal failed.";
+      return "Provider error. Try again in a moment.";
+    case "image_too_large":
+      return "Image too large. Max 8 MB per file.";
     case "wrong_state":
       return "Image is not in the expected state for this action.";
     case "not_found":

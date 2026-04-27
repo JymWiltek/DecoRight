@@ -36,6 +36,10 @@ export type RembgError =
   | { kind: "missing_raw" }
   | { kind: "no_provider"; providerId?: string }
   | { kind: "quota"; cause: string }
+  /** Raw bytes exceeded MAX_RAW_BYTES at HEAD pre-check. Distinct
+   *  from `rembg` so callers (URL banner, image-actions redirect)
+   *  can surface a specific "Max 8 MB per file" sentence. */
+  | { kind: "image_too_large"; bytes: number }
   | { kind: "rembg"; msg: string }
   | { kind: "db"; msg: string };
 
@@ -129,7 +133,7 @@ export async function runRembgForImage(
         await markFailed("image_too_large");
         return {
           ok: false,
-          error: { kind: "rembg", msg: `image too large: ${bytes} bytes` },
+          error: { kind: "image_too_large", bytes },
         };
       }
     }
@@ -223,7 +227,9 @@ export function runRembgAuto(
   return runRembgForImage(productId, imageId, providerId, "auto");
 }
 
-/** Flatten a RembgError to an err-code / msg pair for ?err=&msg= URLs. */
+/** Flatten a RembgError to an err-code / msg pair for ?err=&msg= URLs.
+ *  Codes match `humanizeError` in ProductImagesSection.tsx — keep the
+ *  two synced or banners drift out of sync with inline failure copy. */
 export function flattenRembgError(
   e: RembgError,
 ): { code: string; msg: string } {
@@ -234,6 +240,8 @@ export function flattenRembgError(
       return { code: "no_provider", msg: e.providerId ?? "no default provider" };
     case "quota":
       return { code: "quota", msg: e.cause };
+    case "image_too_large":
+      return { code: "image_too_large", msg: `${e.bytes} bytes` };
     case "rembg":
       return { code: "rembg", msg: e.msg };
     case "db":
