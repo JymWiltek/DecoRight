@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useTranslations } from "next-intl";
 import ProductGallery from "./ProductGallery";
 import ColorSwitcher, { type ColorOption } from "./ColorSwitcher";
-import { formatMYR } from "@/lib/format";
+import { buildGlbDownload, formatMYR } from "@/lib/format";
 import type { ProductRow } from "@/lib/supabase/types";
 
 type Props = {
@@ -37,6 +37,7 @@ export default function ProductDetail({
   const [variantIndex, setVariantIndex] = useState(0);
   const active = colors[variantIndex];
   const overrideColorHex = active?.hex ?? null;
+  const glbDownload = buildGlbDownload(product);
 
   return (
     <div className="grid gap-8 md:grid-cols-[1.2fr_1fr]">
@@ -147,17 +148,18 @@ export default function ProductDetail({
         )}
 
         {/* Download .glb — surfaced only when a model exists. The
-            anchor's `download` attr without a value lets the browser
-            use the URL's filename ("model.glb"); commit 3 swaps that
-            for a slug-based name so SketchUp / Blender libraries
-            don't fill up with files all named "model.glb". The link
-            opens in a new tab as a safety net for browsers that
-            ignore the download hint on cross-origin URLs (Supabase
-            Storage is a different origin in dev). */}
-        {product.glb_url && (
+            href carries `?download=<slug>.glb` so Supabase Storage
+            replies with `Content-Disposition: attachment; filename=…`
+            and the file lands on a designer's disk under a useful
+            name; without that, browsers ignore the cross-origin
+            `download` attr and the file is saved as plain
+            "model.glb" — collides for every product they keep. See
+            buildGlbDownload() for slug rules + UUID fallback for
+            all-CJK names. */}
+        {glbDownload && (
           <a
-            href={product.glb_url}
-            download
+            href={glbDownload.href}
+            download={glbDownload.filename}
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex items-center justify-center rounded-md bg-neutral-100 px-5 py-3 text-sm font-medium text-neutral-800 transition hover:bg-neutral-200"
