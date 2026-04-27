@@ -93,6 +93,9 @@ export async function retryFailedImage(fd: FormData): Promise<void> {
       cutout_image_url: null,
       rembg_provider: null,
       rembg_cost_usd: null,
+      // P0-2: clear last_error_kind so a successful retry doesn't
+      // leave the previous failure category dangling on the row.
+      last_error_kind: null,
     })
     .eq("id", imageId)
     .eq("product_id", productId);

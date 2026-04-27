@@ -163,6 +163,28 @@ export const IMAGE_STATES = [
 ] as const;
 export type ImageState = (typeof IMAGE_STATES)[number];
 
+/** Vocabulary for `product_images.last_error_kind`. Pinned by a CHECK
+ *  constraint in migration 0019; expand only via a follow-up migration.
+ *
+ *   no_provider       — REPLICATE_API_TOKEN / REMOVE_BG_API_KEY missing
+ *                       at attempt time. Admin/env issue.
+ *   quota_exhausted   — internal api_usage cap (advisory-locked) hit.
+ *                       Operator must wait for window reset or raise the
+ *                       cap in app_config.
+ *   provider_error    — Replicate / Remove.bg returned 5xx, network
+ *                       blew up, or any other error inside the provider
+ *                       call. Usually transient; retry helps.
+ *   image_too_large   — Raw bytes > 8 MB. Rembg providers reject those
+ *                       with cryptic errors; we short-circuit before
+ *                       burning the API call. */
+export const IMAGE_ERROR_KINDS = [
+  "no_provider",
+  "quota_exhausted",
+  "provider_error",
+  "image_too_large",
+] as const;
+export type ImageErrorKind = (typeof IMAGE_ERROR_KINDS)[number];
+
 export type ProductImageRow = {
   id: string;
   product_id: string;
@@ -172,6 +194,10 @@ export type ProductImageRow = {
   is_primary: boolean;
   rembg_provider: string | null;
   rembg_cost_usd: number | null;
+  /** Populated when state is cutout_failed; cleared on success. See
+   *  ImageErrorKind for the closed vocabulary. NULL on a row that has
+   *  never been attempted (e.g. just-saved Save-as-Draft uploads). */
+  last_error_kind: ImageErrorKind | null;
   sort_order: number;
   created_at: string;
   updated_at: string;
@@ -186,6 +212,7 @@ export type ProductImageInsert = {
   is_primary?: boolean;
   rembg_provider?: string | null;
   rembg_cost_usd?: number | null;
+  last_error_kind?: ImageErrorKind | null;
   sort_order?: number;
 };
 

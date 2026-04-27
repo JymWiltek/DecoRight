@@ -9,6 +9,15 @@ import {
   type RemBgProviderId,
 } from "@/lib/rembg";
 import { QuotaExceededError } from "@/lib/api-usage";
+import type { ImageErrorKind } from "@/lib/supabase/types";
+
+/** Hard ceiling fed to providers. Replicate's rembg model and
+ *  Remove.bg both accept up to ~10 MB; we stop at 8 MB so the upload
+ *  fails fast with a clear category instead of a 30-second download
+ *  followed by a cryptic provider error. Tuned by prod telemetry —
+ *  in 6 months of operator photos nothing legitimate has crossed 5 MB
+ *  (raw iPhone HEIC → JPEG conversions land around 2-3 MB). */
+const MAX_RAW_BYTES = 8 * 1024 * 1024;
 
 /**
  * Shared rembg pipeline. Historically lived inside
@@ -60,12 +69,34 @@ export async function runRembgForImage(
   mode: RembgMode,
 ): Promise<RembgResult> {
   const supabase = createServiceRoleClient();
+
+  /** Park the row at cutout_failed with the categorized reason.
+   *  Centralized so every failure path writes the same shape:
+   *  state + last_error_kind together, never one without the other.
+   *  Skipped in review mode — the legacy queue UI doesn't read
+   *  last_error_kind and we don't want to disturb that flow.
+   *
+   *  Phase 1 收尾 P0-2: previously the no_provider branch returned
+   *  without writing the row, leaving the UI stuck on "Processing…"
+   *  forever. Now every error path lands here. */
+  async function markFailed(kind: ImageErrorKind) {
+    if (mode !== "auto") return;
+    await supabase
+      .from("product_images")
+      .update({ state: "cutout_failed", last_error_kind: kind })
+      .eq("id", imageId);
+  }
+
   const { data: row, error: readErr } = await supabase
     .from("product_images")
     .select("raw_image_url")
     .eq("id", imageId)
     .single();
   if (readErr || !row?.raw_image_url) {
+    // Don't tag last_error_kind here — missing_raw is a programmer
+    // error (caller should never invoke this without a raw_image_url
+    // populated), not a categorized end-user failure. Leave the row
+    // untouched so the operator sees the row's existing state.
     return { ok: false, error: { kind: "missing_raw" } };
   }
 
@@ -74,11 +105,42 @@ export async function runRembgForImage(
     signedUrl = await getSignedRawUrl(row.raw_image_url);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
+    await markFailed("provider_error");
     return { ok: false, error: { kind: "rembg", msg } };
+  }
+
+  // Size pre-check via HEAD on the signed URL. Replicate downloads
+  // the bytes itself, so we'd otherwise pay for a failed call when
+  // the file is over its limit. 1.5s timeout — if Storage is slow
+  // we let the provider call proceed rather than block the whole
+  // pipeline waiting on a HEAD. Failure to determine size is treated
+  // as "size OK, try the provider" — better than spurious blocks.
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 1500);
+    const head = await fetch(signedUrl, {
+      method: "HEAD",
+      signal: ctrl.signal,
+    }).finally(() => clearTimeout(timer));
+    const len = head.headers.get("content-length");
+    if (len) {
+      const bytes = Number.parseInt(len, 10);
+      if (Number.isFinite(bytes) && bytes > MAX_RAW_BYTES) {
+        await markFailed("image_too_large");
+        return {
+          ok: false,
+          error: { kind: "rembg", msg: `image too large: ${bytes} bytes` },
+        };
+      }
+    }
+  } catch {
+    // Network blip / abort — fall through and let the provider
+    // attempt the download. If it fails there we'll catch it below.
   }
 
   const provider = providerId ? getProvider(providerId) : getDefaultProvider();
   if (!provider) {
+    await markFailed("no_provider");
     return { ok: false, error: { kind: "no_provider" } };
   }
 
@@ -98,6 +160,8 @@ export async function runRembgForImage(
           state: "cutout_pending",
           rembg_provider: result.provider,
           rembg_cost_usd: result.costUsd,
+          // Clear any prior failure tag — the row is healthy again.
+          last_error_kind: null,
         })
         .eq("id", imageId);
       if (updErr) return { ok: false, error: { kind: "db", msg: updErr.message } };
@@ -117,12 +181,15 @@ export async function runRembgForImage(
       state: "cutout_approved";
       rembg_provider: string;
       rembg_cost_usd: number | null;
+      last_error_kind: null;
       is_primary?: boolean;
     } = {
       cutout_image_url: cutoutUrl,
       state: "cutout_approved",
       rembg_provider: result.provider,
       rembg_cost_usd: result.costUsd,
+      // Clear any prior failure tag — the row is healthy again.
+      last_error_kind: null,
     };
     if (!existingPrimary) patch.is_primary = true;
 
@@ -134,30 +201,15 @@ export async function runRembgForImage(
     return { ok: true };
   } catch (err) {
     if (err instanceof QuotaExceededError) {
-      if (mode === "auto") {
-        await supabase
-          .from("product_images")
-          .update({ state: "cutout_failed" })
-          .eq("id", imageId);
-      }
+      await markFailed("quota_exhausted");
       return { ok: false, error: { kind: "quota", cause: err.cause } };
     }
     if (err instanceof RemBgProviderUnavailableError) {
-      if (mode === "auto") {
-        await supabase
-          .from("product_images")
-          .update({ state: "cutout_failed" })
-          .eq("id", imageId);
-      }
+      await markFailed("no_provider");
       return { ok: false, error: { kind: "no_provider", providerId: err.providerId } };
     }
     const msg = err instanceof Error ? err.message : String(err);
-    if (mode === "auto") {
-      await supabase
-        .from("product_images")
-        .update({ state: "cutout_failed" })
-        .eq("id", imageId);
-    }
+    await markFailed("provider_error");
     return { ok: false, error: { kind: "rembg", msg } };
   }
 }

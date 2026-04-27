@@ -205,6 +205,11 @@ export async function retryRembgOne(
       cutout_image_url: null,
       rembg_provider: null,
       rembg_cost_usd: null,
+      // Clear the prior failure tag — pipeline.ts will re-tag on the
+      // new attempt if it fails again. Leaving the old kind in place
+      // would mislead the operator after a successful retry (badge
+      // says "image too large" even though the swap-fix worked).
+      last_error_kind: null,
     })
     .eq("id", imageId)
     .eq("product_id", productId);

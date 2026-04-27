@@ -327,6 +327,11 @@ async function processPendingImagesForPublish(
       cutout_image_url: null,
       rembg_provider: null,
       rembg_cost_usd: null,
+      // Clear stale failure tag from a previous Publish attempt; the
+      // worker will re-tag if this run also fails. Without this the
+      // UI would carry forward an obsolete "no_provider" sentence
+      // even after the env var is fixed and the retry succeeds.
+      last_error_kind: null,
     })
     .in("id", ids);
 

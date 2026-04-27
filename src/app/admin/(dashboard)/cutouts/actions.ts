@@ -139,6 +139,10 @@ export async function rejectCutout(fd: FormData): Promise<void> {
         cutout_image_url: null,
         rembg_provider: null,
         rembg_cost_usd: null,
+        // P0-2: clear last_error_kind alongside the other per-attempt
+        // bookkeeping so a successful Remove.bg fallback doesn't leave
+        // a stale "no_provider" tag on the row.
+        last_error_kind: null,
       })
       .eq("id", imageId);
     if (resetErr) {

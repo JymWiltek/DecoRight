@@ -4,7 +4,7 @@ import {
   markImageUnsatisfied,
   retryFailedImage,
 } from "@/app/admin/(dashboard)/products/[id]/edit/image-actions";
-import type { ImageState } from "@/lib/supabase/types";
+import type { ImageErrorKind, ImageState } from "@/lib/supabase/types";
 
 /**
  * Inline image management on the product edit workbench. Post-0010 the
@@ -49,6 +49,10 @@ type ImageWithPreview = {
   is_primary: boolean;
   rembg_provider: string | null;
   rembg_cost_usd: number | null;
+  /** Phase 1 收尾 P0-2: categorized failure reason. Populated by
+   *  pipeline.ts whenever a row lands at cutout_failed. Wired through
+   *  here so commit 2 can render a specific sentence per category. */
+  last_error_kind: ImageErrorKind | null;
   created_at: string;
   raw_preview_url: string | null;
 };
