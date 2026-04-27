@@ -73,8 +73,13 @@ async function main() {
   const bytes = new Uint8Array(await imgRes.arrayBuffer());
   log("fetch", `${bytes.byteLength} bytes`);
 
-  // 2. Create product. Match what /admin/products/new's createProduct
-  // writes — name + item_type + status. No brand/price/description.
+  // 2. Create product directly via service-role insert. We bypass
+  // updateProduct on purpose — this script is a *pipeline* test
+  // (raw→rembg→cutout→thumb→storefront), not a form-submission test.
+  // The columns we set match what the /admin/products/new server
+  // component writes for a fresh draft (name, item_type, status,
+  // empty multi-pick arrays, empty ai_filled_fields), so any DB
+  // trigger that depends on shape sees a realistic row.
   log("product", `INSERT id=${PRODUCT_ID}`);
   const { error: prodErr } = await supabase.from("products").insert({
     id: PRODUCT_ID,

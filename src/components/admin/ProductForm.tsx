@@ -411,8 +411,27 @@ export default function ProductForm({
           </Grid>
         </Section>
 
+        {/*
+          Title-suffix discipline (Phase 1 收尾 P2 #3):
+            • "(A-Z)" annotates pickers whose options are sorted by
+              label_en (loadTaxonomy v4 — see src/lib/taxonomy.ts).
+              Operator can scan top-to-bottom alphabetically without
+              second-guessing the layout.
+            • Colors does NOT get the marker — its sort_order is the
+              hue ramp (white → grey → gold → red → … → black), not
+              alpha. Adding "(A-Z)" there would be a lie.
+            • Store locations does NOT get the marker — RegionsPicker
+              groups by geography (north / central / south / …) and
+              orders by reading-order within group, not alpha.
+            • Subtype gets "(A-Z)" because the SubtypePicker scopes
+              its options to the current item_type, and within that
+              scope the rows come out of taxonomy.itemSubtypes in
+              alpha order. If no item_type is picked yet, the picker
+              shows nothing — the marker stays accurate either way.
+        */}
+
         <Section
-          title="Rooms *"
+          title="Rooms * (A-Z)"
           hint="Which room(s) this product belongs in. Multi-select — a faucet can live in Kitchen AND Bathroom."
         >
           <RoomsPicker
@@ -425,8 +444,8 @@ export default function ProductForm({
         </Section>
 
         <Section
-          title="Item type *"
-          hint="Pick one — what kind of thing this is. Alpha-sorted."
+          title="Item type * (A-Z)"
+          hint="Pick one — what kind of thing this is."
         >
           <PillGrid
             form={FORM_ID}
@@ -437,7 +456,7 @@ export default function ProductForm({
         </Section>
 
         <Section
-          title="Subtype"
+          title="Subtype (A-Z)"
           hint="Optional shape/style variant of the picked item type (e.g. Faucet → Pull-out / Sensor)."
         >
           <SubtypePicker
@@ -448,7 +467,7 @@ export default function ProductForm({
           />
         </Section>
 
-        <Section title="Styles (multi)">
+        <Section title="Styles (multi · A-Z)">
           <PillGrid
             form={FORM_ID}
             name="styles"
@@ -464,8 +483,9 @@ export default function ProductForm({
         </Section>
 
         <Section title="Colors (multi)">
-          {/* Colors stay single-line under each swatch — the dot IS
-              the meaning, the label is a hint. Stacking 3 lines of
+          {/* No "(A-Z)" — sort_order encodes the hue ramp. Colors
+              stay single-line under each swatch — the dot IS the
+              meaning, the label is a hint. Stacking 3 lines of
               text under a 36px swatch wastes vertical space without
               improving comprehension. ZH/MS still editable on the
               taxonomy page chip. */}
@@ -483,7 +503,7 @@ export default function ProductForm({
           />
         </Section>
 
-        <Section title="Materials (multi)">
+        <Section title="Materials (multi · A-Z)">
           <PillGrid
             form={FORM_ID}
             name="materials"
