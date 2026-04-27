@@ -3,15 +3,27 @@
 /**
  * AI autofill button (Phase 3).
  *
- * On click:
- *   1. Calls the `runAiInfer(productId)` server action, which fetches
- *      up to 3 product images, asks GPT-4o Vision to classify against
- *      the live taxonomy, and returns slug picks + confidence.
- *   2. Publishes the picks via `emitAutofillApply` → each picker
+ * On click, two paths:
+ *
+ *   A. Staged photos exist in the dropzone (`peekFiles("raw_images")`
+ *      returns ≥ 1 File). We downscale + JPEG-encode each to a base64
+ *      data URL client-side, then call `runAiInferStaged(dataUrls)`.
+ *      This is the path that fixes the "AI fails because Storage is
+ *      empty until Save" bug — Phase 1's commit-on-Save flow means
+ *      bytes only live in the browser until the operator clicks Save,
+ *      so the AI button has to read from there too.
+ *
+ *   B. No staged photos but a productId is set. Falls back to
+ *      `runAiInfer(productId)` which signs Storage URLs for the
+ *      already-saved `product_images` rows. This is the "re-run on
+ *      an existing product without re-uploading" case.
+ *
+ * Either path returns the same shape; the button:
+ *   1. Publishes the picks via `emitAutofillApply` → each picker
  *      (PillGrid / RoomsPicker / SubtypePicker) listens and updates
  *      its internal selected-state. Hidden inputs follow automatically
  *      so the normal Save flow persists the AI picks.
- *   3. Renders a per-field confidence badge row:
+ *   2. Renders a per-field confidence badge row:
  *        ≥ 0.7 → green ("high")
  *        0.3-0.7 → amber ("medium, verify")
  *        < 0.3 → red ("low, human review")
@@ -30,16 +42,22 @@
  */
 
 import { useEffect, useState, useTransition } from "react";
-import { runAiInfer, type RunAiInferResult } from "@/app/admin/(dashboard)/products/actions";
+import {
+  runAiInfer,
+  runAiInferStaged,
+  type RunAiInferResult,
+} from "@/app/admin/(dashboard)/products/actions";
 import {
   emitAutofillApply,
   type AutofillFieldName,
 } from "@/lib/ai/autofill-bus";
+import { useStagedUploads } from "./product-form-staging";
 
 type Props = {
-  /** Product id the AI should classify. Null on /products/new
-   *  (before the first Save redirect) — button renders a hint
-   *  instead of firing. */
+  /** Product id, used only by the Storage-fallback path
+   *  (`runAiInfer`). Null on /products/new — the staged-photos path
+   *  doesn't need it, so the button is fully usable on a fresh
+   *  product as long as a photo has been dropped. */
   productId: string | null;
   /** id of the main <form> so the hidden `ai_filled_fields` inputs
    *  we render after a run submit with the rest of ProductForm
@@ -83,6 +101,7 @@ export default function AIInferButton({ productId, form }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [lastRun, setLastRun] = useState<LastRun | null>(null);
   const [todayCount, setTodayCount] = useState<number>(0);
+  const { peekFiles } = useStagedUploads();
 
   // Rehydrate today's counter on mount so the button immediately
   // shows "N / 100 today" instead of 0 → N after first click.
@@ -90,7 +109,13 @@ export default function AIInferButton({ productId, form }: Props) {
     setTodayCount(getTodayCount().count);
   }, []);
 
-  const disabled = pending || !productId || todayCount >= RATE_LIMIT_MAX;
+  // The button is enabled whenever there's *anywhere* to read images
+  // from — either fresh staged photos in the dropzone, or saved
+  // images attached to a productId. We don't try to be smart about
+  // peekFiles().length here because that runs in render and would
+  // need a re-render on every dropzone state change (and the bottom
+  // hint already covers the empty case via the click handler).
+  const disabled = pending || todayCount >= RATE_LIMIT_MAX;
 
   function onClick() {
     setError(null);
@@ -101,8 +126,35 @@ export default function AIInferButton({ productId, form }: Props) {
       );
       return;
     }
+
     startTransition(async () => {
-      const res = await runAiInfer(productId);
+      // Staged photos (if any) win over Storage. They reflect the
+      // operator's *current* intent: even on an existing product,
+      // dragging a fresh batch onto the dropzone implies "classify
+      // these, not the old ones". Storage is only consulted as the
+      // fallback path when nothing is staged but a productId exists.
+      const stagedFiles = peekFiles("raw_images");
+
+      let res: RunAiInferResult;
+
+      if (stagedFiles.length > 0) {
+        try {
+          const dataUrls = await encodeStagedPhotos(stagedFiles);
+          res = await runAiInferStaged(dataUrls);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          setError(`Failed to encode staged photos: ${msg}`);
+          return;
+        }
+      } else if (productId) {
+        res = await runAiInfer(productId);
+      } else {
+        setError(
+          "Drop a photo into the Photos section first, then click AI autofill.",
+        );
+        return;
+      }
+
       const count = bumpTodayCount();
       setTodayCount(count);
       if (!res.ok) {
@@ -149,16 +201,9 @@ export default function AIInferButton({ productId, form }: Props) {
               ? "Re-run AI autofill"
               : "AI autofill"}
         </button>
-        {!productId && (
-          <span className="text-xs text-neutral-500">
-            Save the product and upload a photo first.
-          </span>
-        )}
-        {productId && (
-          <span className="text-xs text-neutral-400">
-            {todayCount} / {RATE_LIMIT_MAX} runs today · GPT-4o Vision
-          </span>
-        )}
+        <span className="text-xs text-neutral-400">
+          {todayCount} / {RATE_LIMIT_MAX} runs today · GPT-4o Vision
+        </span>
       </div>
 
       {error && (
@@ -250,4 +295,95 @@ function prettyFieldName(key: string): string {
     default:
       return key;
   }
+}
+
+/**
+ * Downscale + JPEG-encode a batch of staged photos into base64 data
+ * URLs that fit Vercel's 10 MB Server Action body cap and the OpenAI
+ * Vision sweet spot.
+ *
+ * Why downscale instead of sending the originals: phone shots are
+ * routinely 8 MB / 4032×3024. Three of them base64-encoded would be
+ * ~33 MB — over the action body limit AND wasted on Vision, which
+ * downscales internally to ≤768×2048 anyway. Re-encoding to ≤2048 px
+ * longest side at q=0.85 lands each image at 200-500 KB.
+ *
+ * Cap input batch at MAX_AI_IMAGES so a 20-photo dropzone doesn't
+ * try to encode them all only for the server to drop the tail.
+ *
+ * Errors here surface as a user-facing banner — no silent fallback,
+ * because a corrupted/unsupported file would otherwise produce
+ * confusing OpenAI 4xx errors a few seconds later.
+ */
+const MAX_AI_IMAGES = 3;
+const MAX_DIMENSION = 2048;
+const JPEG_QUALITY = 0.85;
+
+async function encodeStagedPhotos(files: File[]): Promise<string[]> {
+  const subset = files.slice(0, MAX_AI_IMAGES);
+  const encoded: string[] = [];
+  for (const file of subset) {
+    encoded.push(await encodeOne(file));
+  }
+  return encoded;
+}
+
+async function encodeOne(file: File): Promise<string> {
+  // createImageBitmap handles JPEG/PNG/WebP and respects EXIF
+  // orientation when imageOrientation: "from-image" is set —
+  // important so portrait phone shots arrive upright instead of
+  // sideways (which Vision still classifies, but worse).
+  const bitmap = await createImageBitmap(file, {
+    imageOrientation: "from-image",
+  });
+  try {
+    const { width, height } = scaleToFit(
+      bitmap.width,
+      bitmap.height,
+      MAX_DIMENSION,
+    );
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("canvas 2D context unavailable");
+    ctx.drawImage(bitmap, 0, 0, width, height);
+    const blob: Blob = await new Promise((resolve, reject) =>
+      canvas.toBlob(
+        (b) =>
+          b ? resolve(b) : reject(new Error("canvas.toBlob returned null")),
+        "image/jpeg",
+        JPEG_QUALITY,
+      ),
+    );
+    return await blobToDataUrl(blob);
+  } finally {
+    bitmap.close();
+  }
+}
+
+function scaleToFit(
+  w: number,
+  h: number,
+  max: number,
+): { width: number; height: number } {
+  if (w <= max && h <= max) return { width: w, height: h };
+  const ratio = w >= h ? max / w : max / h;
+  return { width: Math.round(w * ratio), height: Math.round(h * ratio) };
+}
+
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const r = reader.result;
+      if (typeof r !== "string") {
+        reject(new Error("FileReader returned non-string result"));
+        return;
+      }
+      resolve(r);
+    };
+    reader.onerror = () => reject(reader.error ?? new Error("FileReader error"));
+    reader.readAsDataURL(blob);
+  });
 }

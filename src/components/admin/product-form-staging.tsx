@@ -66,6 +66,13 @@ export type StagedUploader = {
   run: (onProgress: UploaderProgress) => Promise<StagedField[]>;
   /** Short human label for the progress banner ("images", "3D model"). */
   label: string;
+  /** Optional: surface the staged File objects so siblings (e.g.
+   *  AIInferButton) can read them BEFORE Save commits them to
+   *  Storage. Without this hook, AI autofill would have to wait for
+   *  a round-trip to Storage that hasn't happened yet — exactly the
+   *  bug we're fixing. Only the photo dropzone needs to expose
+   *  this; the GLB dropzone has no AI consumer. */
+  peekFiles?: () => File[];
 };
 
 type Ctx = {
@@ -73,6 +80,12 @@ type Ctx = {
   /** True while ProductForm is uploading + submitting. Dropzones
    *  read this to disable their controls. */
   busy: boolean;
+  /** Read currently-staged File objects from the named uploader,
+   *  without uploading them. Returns [] if no uploader is registered
+   *  under that id, or if the uploader doesn't expose peekFiles.
+   *  Used by AIInferButton to base64-encode staged photos and feed
+   *  them straight into Vision before Save. */
+  peekFiles: (id: string) => File[];
 };
 
 const StagedCtx = createContext<Ctx | null>(null);
@@ -105,7 +118,18 @@ export function StagedUploadsProvider({
     [registryRef],
   );
 
-  const value = useMemo<Ctx>(() => ({ register, busy }), [register, busy]);
+  const peekFiles = useCallback<Ctx["peekFiles"]>(
+    (id) => {
+      const u = registryRef.current.get(id);
+      return u?.peekFiles?.() ?? [];
+    },
+    [registryRef],
+  );
+
+  const value = useMemo<Ctx>(
+    () => ({ register, busy, peekFiles }),
+    [register, busy, peekFiles],
+  );
   return <StagedCtx.Provider value={value}>{children}</StagedCtx.Provider>;
 }
 
@@ -153,6 +177,10 @@ export function useRegisterStagedUploader(
       label: uploaderRef.current.label,
       pendingCount: () => uploaderRef.current.pendingCount(),
       run: (p) => uploaderRef.current.run(p),
+      // Forward through the ref so the latest closure (which has
+      // the live previews list) is what siblings see — same
+      // pattern as pendingCount.
+      peekFiles: () => uploaderRef.current.peekFiles?.() ?? [],
     };
     return register(id, stable);
     // eslint-disable-next-line react-hooks/exhaustive-deps

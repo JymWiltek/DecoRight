@@ -883,6 +883,88 @@ export async function runAiInfer(
 }
 
 /**
+ * Variant: AI infer driven by client-staged photos (data URLs).
+ *
+ * Why two paths instead of always reading from Storage:
+ *   - Phase 1's "审批式上传" (approval-based upload) defers Storage
+ *     writes until the operator clicks Save. So on /products/new (or
+ *     after dragging fresh photos onto an existing product), the
+ *     `product_images` table is empty AND the bytes only live in the
+ *     browser's File handles. The Storage-lookup path returned
+ *     "Upload at least one product photo before running AI autofill."
+ *     even when 5 photos were sitting in the dropzone preview grid.
+ *   - Forcing the operator to Save first violates the natural flow:
+ *     they came here to pick item-type/rooms/etc. — Save shouldn't
+ *     be a precondition for the assist that helps them PICK those.
+ *
+ * The client (AIInferButton) downscales each staged File to ≤2048px
+ * JPEG @ q=0.85 in a canvas, base64-encodes it as a data URL, and
+ * passes the array here. We pipe those straight into
+ * inferProductFields — OpenAI accepts data URLs in image_url just
+ * like fetchable URLs.
+ *
+ * Size budget: Vercel's Server Actions body limit is 10MB
+ * (next.config.ts). 3 × downscaled JPEGs (each ~200-500KB base64)
+ * fits with comfortable headroom.
+ */
+const STAGED_DATA_URL_PREFIX = "data:image/";
+const STAGED_TOTAL_BUDGET_BYTES = 9 * 1024 * 1024; // 9 MB safety margin under the 10 MB action limit
+
+export async function runAiInferStaged(
+  stagedImages: string[],
+): Promise<RunAiInferResult> {
+  try {
+    await requireAdmin();
+  } catch {
+    return { ok: false, error: "Not signed in." };
+  }
+
+  if (!stagedImages || stagedImages.length === 0) {
+    return { ok: false, error: "Drop a photo first, then click AI autofill." };
+  }
+
+  // Defensive shape check — malformed payloads should fail fast with
+  // a useful message, not surface as an OpenAI 4xx.
+  let totalBytes = 0;
+  for (const url of stagedImages) {
+    if (!url.startsWith(STAGED_DATA_URL_PREFIX)) {
+      return {
+        ok: false,
+        error:
+          "Internal: staged image is not a data URL — try removing and re-adding the photo.",
+      };
+    }
+    // Rough byte count — data URL length × ¾ approximates the
+    // decoded blob, plus the header. Good enough for a budget check.
+    totalBytes += url.length;
+  }
+  if (totalBytes > STAGED_TOTAL_BUDGET_BYTES) {
+    const mb = (totalBytes / 1024 / 1024).toFixed(1);
+    return {
+      ok: false,
+      error: `Staged photos total ${mb} MB after encoding, over the 9 MB AI ingest limit. Remove a photo and try again.`,
+    };
+  }
+
+  const limited = stagedImages.slice(0, AI_MAX_IMAGES);
+  const result = await inferProductFields({ imageUrls: limited });
+
+  return {
+    ok: true,
+    fields: result.fields as Record<string, unknown>,
+    inferredKeys: result.inferredKeys,
+    confidence: result.confidence,
+    model: result.model,
+    note: result.note,
+    debug: {
+      latency_ms: result.debug.latency_ms,
+      imageCount: limited.length,
+      usage: result.debug.usage,
+    },
+  };
+}
+
+/**
  * Finalize an inline thumbnail swap. The browser already PUT the bytes
  * direct to Storage via a signed URL minted by `getSignedUploadUrl`;
  * this action just reconstructs the public URL (with cache-bust),

@@ -90,6 +90,11 @@ export function UploadDropzone({
   useRegisterStagedUploader("raw_images", {
     label: "images",
     pendingCount: () => previewsRef.current.length,
+    // Surface raw File handles for AIInferButton — it base64-encodes
+    // staged photos so AI autofill works BEFORE the Save click that
+    // would otherwise commit them to Storage. Reading from the ref
+    // (not the closure) so siblings always see the current list.
+    peekFiles: () => previewsRef.current.map((p) => p.file),
     run: async (onProgress) => {
       const files = previewsRef.current;
       if (files.length === 0) return [];
