@@ -146,6 +146,26 @@ export default function ProductDetail({
           </button>
         )}
 
+        {/* Download .glb — surfaced only when a model exists. The
+            anchor's `download` attr without a value lets the browser
+            use the URL's filename ("model.glb"); commit 3 swaps that
+            for a slug-based name so SketchUp / Blender libraries
+            don't fill up with files all named "model.glb". The link
+            opens in a new tab as a safety net for browsers that
+            ignore the download hint on cross-origin URLs (Supabase
+            Storage is a different origin in dev). */}
+        {product.glb_url && (
+          <a
+            href={product.glb_url}
+            download
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center justify-center rounded-md bg-neutral-100 px-5 py-3 text-sm font-medium text-neutral-800 transition hover:bg-neutral-200"
+          >
+            {t("downloadGlb")}
+          </a>
+        )}
+
         <div className="text-xs text-neutral-500">
           {t("arHintLine1")}
           <br />

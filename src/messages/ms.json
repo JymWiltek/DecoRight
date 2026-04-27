@@ -54,6 +54,7 @@
     "color": "Warna",
     "buyNow": "Beli sekarang →",
     "noPurchaseLink": "Pautan beli belum ada",
+    "downloadGlb": "Muat turun model 3D (.glb)",
     "arHintLine1": "Tekan ikon AR di kanan bawah model untuk pratonton produk saiz sebenar dengan kamera telefon.",
     "arHintLine2": "iOS perlukan USDZ (Fasa 3); Android Scene Viewer sudah boleh guna."
   }

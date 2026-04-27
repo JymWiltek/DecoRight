@@ -54,6 +54,7 @@
     "color": "颜色",
     "buyNow": "前往购买 →",
     "noPurchaseLink": "暂无购买链接",
+    "downloadGlb": "下载 3D 模型 (.glb)",
     "arHintLine1": "点击模型右下角 AR 图标，用手机摄像头 1:1 预览该产品。",
     "arHintLine2": "iOS 需要 USDZ（Phase 3 开放），当前 Android Scene Viewer 可用。"
   }

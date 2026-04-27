@@ -54,6 +54,7 @@
     "availableIn": "Store locations",
     "buyNow": "Buy now →",
     "noPurchaseLink": "No purchase link yet",
+    "downloadGlb": "Download 3D model (.glb)",
     "arHintLine1": "Tap the AR icon at the bottom-right of the model to preview this product life-size with your phone camera.",
     "arHintLine2": "iOS needs USDZ (Phase 3); Android Scene Viewer is live now."
   }
