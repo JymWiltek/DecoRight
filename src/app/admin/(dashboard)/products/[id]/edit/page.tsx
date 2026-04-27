@@ -2,7 +2,7 @@ import { notFound } from "next/navigation";
 import ProductForm from "@/components/admin/ProductForm";
 import ProductImagesSection from "@/components/admin/ProductImagesSection";
 import MeshyStatusBanner from "@/components/admin/MeshyStatusBanner";
-import { getProductById } from "@/lib/admin/products";
+import { getProductById, getProductRembgUsage } from "@/lib/admin/products";
 import { loadTaxonomy } from "@/lib/taxonomy";
 import { createServiceRoleClient } from "@/lib/supabase/service";
 import { getSignedRawUrl } from "@/lib/storage";
@@ -44,7 +44,7 @@ export default async function EditProductPage({
   const sp = await searchParams;
 
   const supabase = createServiceRoleClient();
-  const [product, taxonomy, imagesResp] = await Promise.all([
+  const [product, taxonomy, imagesResp, rembgUsage] = await Promise.all([
     getProductById(id),
     loadTaxonomy(),
     supabase
@@ -52,6 +52,10 @@ export default async function EditProductPage({
       .select("*")
       .eq("product_id", id)
       .order("created_at", { ascending: true }),
+    // P0-3: lifetime rembg cost rollup so the UI can show
+    // per-image attempt counts and a section-level total instead of
+    // last-attempt-only data on product_images.rembg_cost_usd.
+    getProductRembgUsage(id),
   ]);
   if (!product) notFound();
 
@@ -106,6 +110,7 @@ export default async function EditProductPage({
           retried={sp.retried === "1"}
           errCode={sp.err}
           errMsg={sp.msg}
+          rembgUsage={rembgUsage}
         />
       }
     />

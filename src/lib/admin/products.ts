@@ -175,3 +175,66 @@ export async function getProductById(id: string): Promise<ProductRow | null> {
   if (error) throw error;
   return data;
 }
+
+export type ProductRembgUsage = {
+  /** Net USD across all rembg services (replicate_rembg + removebg).
+   *  Refunded charges already net to zero via the compensating
+   *  status='refund' entry inserted by `refundSlot`, so summing
+   *  raw cost_usd is the right "money actually spent" number. */
+  productSpentUsd: number;
+  /** How many real attempts were issued. Refunded attempts still
+   *  count — they consumed a slot at reservation time and the
+   *  operator pressed Retry to get there. The cost_usd > 0 filter
+   *  excludes the negative refund-compensation entries (status='refund'
+   *  inserts cost = -original) so we don't double-count. */
+  productAttempts: number;
+  /** Per-image breakdown. Keyed by product_image_id. Images that
+   *  have never been attempted (just-uploaded raw, never published)
+   *  are absent from the map — the caller can default to {0,0}. */
+  perImage: Record<string, { spentUsd: number; attempts: number }>;
+};
+
+/** Phase 1 收尾 P0-3: aggregate rembg spend on the workbench. The
+ *  per-row `rembg_cost_usd` column on product_images only records the
+ *  most-recent attempt; if the operator hit Retry three times the prior
+ *  charges are invisible. We rebuild the lifetime view from api_usage,
+ *  which is the audit trail the api-usage refund flow keeps in sync.
+ *
+ *  One round-trip — selects all rembg/removebg rows for the product,
+ *  buckets them in JS. Indexed by `api_usage_product_idx` (migration
+ *  0006) so this is a few rows even on long-lived products. */
+export async function getProductRembgUsage(
+  productId: string,
+): Promise<ProductRembgUsage> {
+  const supabase = createServiceRoleClient();
+  const { data, error } = await supabase
+    .from("api_usage")
+    .select("product_image_id,cost_usd,status")
+    .eq("product_id", productId)
+    .in("service", ["replicate_rembg", "removebg"]);
+  if (error) throw error;
+
+  const rows = data ?? [];
+
+  // Net spend = raw sum (refund entries are already negative).
+  const productSpentUsd = rows.reduce(
+    (acc, r) => acc + Number(r.cost_usd ?? 0),
+    0,
+  );
+  // Attempt count = positive-cost rows only. Refund entries are
+  // bookkeeping, not user-visible attempts.
+  const productAttempts = rows.filter((r) => Number(r.cost_usd ?? 0) > 0)
+    .length;
+
+  const perImage: Record<string, { spentUsd: number; attempts: number }> = {};
+  for (const r of rows) {
+    if (!r.product_image_id) continue;
+    const cost = Number(r.cost_usd ?? 0);
+    const slot = perImage[r.product_image_id] ?? { spentUsd: 0, attempts: 0 };
+    slot.spentUsd += cost;
+    if (cost > 0) slot.attempts += 1;
+    perImage[r.product_image_id] = slot;
+  }
+
+  return { productSpentUsd, productAttempts, perImage };
+}

@@ -5,6 +5,7 @@ import {
   retryFailedImage,
 } from "@/app/admin/(dashboard)/products/[id]/edit/image-actions";
 import type { ImageErrorKind, ImageState } from "@/lib/supabase/types";
+import type { ProductRembgUsage } from "@/lib/admin/products";
 
 /**
  * Inline image management on the product edit workbench. Post-0010 the
@@ -73,6 +74,10 @@ type Props = {
   retried?: boolean;
   errCode?: string;
   errMsg?: string;
+  /** P0-3: lifetime rembg cost rollup. Lets the section header show
+   *  a product-wide total and each card a per-image attempt count
+   *  instead of just the most-recent attempt's cost. */
+  rembgUsage?: ProductRembgUsage;
 };
 
 export default function ProductImagesSection({
@@ -88,6 +93,7 @@ export default function ProductImagesSection({
   retried,
   errCode,
   errMsg,
+  rembgUsage,
 }: Props) {
   const returnTo = `/admin/products/${productId}/edit`;
   const counts = images.reduce<Record<ImageState, number>>(
@@ -128,6 +134,38 @@ export default function ProductImagesSection({
           )}
         </div>
       </div>
+
+      {/* P0-3: lifetime rembg spend — sums all replicate / removebg
+          api_usage rows for this product. Refunded attempts already
+          net to zero in the source, so this is "money actually spent
+          on this product's photos" and not a gross-of-refunds figure.
+          Only render once we have at least one positive-cost attempt;
+          otherwise it'd be a noisy "$0.00 across 0 attempts" line on
+          every fresh draft. */}
+      {rembgUsage && rembgUsage.productAttempts > 0 && (
+        <div className="mb-4 rounded-md bg-neutral-50 px-3 py-2 text-[11px] text-neutral-600">
+          <strong className="text-neutral-700">rembg spend:</strong>{" "}
+          ${rembgUsage.productSpentUsd.toFixed(3)}
+          {" · "}
+          {rembgUsage.productAttempts}{" "}
+          {rembgUsage.productAttempts === 1 ? "attempt" : "attempts"}
+          {/* Add "on N images" only when attempts ≠ image count —
+              otherwise redundant ("3 attempts on 3 images") since
+              that's the 1:1 happy path. The diff signal is "this
+              product had retries somewhere". */}
+          {Object.keys(rembgUsage.perImage).length > 0 &&
+            Object.keys(rembgUsage.perImage).length !==
+              rembgUsage.productAttempts && (
+              <>
+                {" "}on {Object.keys(rembgUsage.perImage).length}{" "}
+                {Object.keys(rembgUsage.perImage).length === 1
+                  ? "image"
+                  : "images"}
+              </>
+            )}
+          .
+        </div>
+      )}
 
       {/* Sticky warning when no rembg provider is configured. Sits
           ABOVE the action banners because it's a precondition the
@@ -212,6 +250,7 @@ export default function ProductImagesSection({
               image={img}
               returnTo={returnTo}
               canRerunRemoveBg={canRerunRemoveBg}
+              usage={rembgUsage?.perImage[img.id]}
             />
           ))}
         </div>
@@ -224,10 +263,14 @@ function ImageCard({
   image,
   returnTo,
   canRerunRemoveBg,
+  usage,
 }: {
   image: ImageWithPreview;
   returnTo: string;
   canRerunRemoveBg: boolean;
+  /** Lifetime rembg cost for THIS image. Undefined for rows that
+   *  never went through the pipeline (just-uploaded raw). */
+  usage?: { spentUsd: number; attempts: number };
 }) {
   const showCutout =
     image.cutout_image_url &&
@@ -283,13 +326,35 @@ function ImageCard({
       </div>
       <div className="mt-2 flex items-center justify-between">
         <StateTag state={image.state} />
-        {image.rembg_provider && (
-          <span className="text-[10px] text-neutral-500">
-            {image.rembg_provider}
-            {image.rembg_cost_usd != null && (
-              <> · ${image.rembg_cost_usd.toFixed(3)}</>
-            )}
+        {/* P0-3: lifetime cost + attempt count (from api_usage rollup)
+            replaces the legacy "last attempt cost" rendering. Falls
+            back to per-row rembg_cost_usd when the api_usage path
+            hasn't been wired (older rows pre-migration 0006 had no
+            product_image_id linkage; harmless because those don't
+            roll up into `usage` either). */}
+        {usage && usage.attempts > 0 ? (
+          <span
+            className="text-[10px] text-neutral-500"
+            title={
+              image.rembg_provider
+                ? `last attempt via ${image.rembg_provider}`
+                : undefined
+            }
+          >
+            ${usage.spentUsd.toFixed(3)} ·{" "}
+            {usage.attempts === 1
+              ? "1 attempt"
+              : `${usage.attempts} attempts`}
           </span>
+        ) : (
+          image.rembg_provider && (
+            <span className="text-[10px] text-neutral-500">
+              {image.rembg_provider}
+              {image.rembg_cost_usd != null && (
+                <> · ${image.rembg_cost_usd.toFixed(3)}</>
+              )}
+            </span>
+          )
         )}
       </div>
 
