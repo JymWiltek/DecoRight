@@ -62,7 +62,14 @@ export type InferResult = {
   inferredKeys: string[];
   /** Per-field confidence in [0,1] so the UI can color-code. */
   confidence: Partial<Record<
-    "item_type" | "subtype_slug" | "room_slugs" | "styles" | "colors" | "materials",
+    | "item_type"
+    | "subtype_slug"
+    | "room_slugs"
+    | "styles"
+    | "colors"
+    | "materials"
+    | "name"
+    | "description",
     number
   >>;
   model: string;
@@ -174,6 +181,16 @@ export async function inferProductFields(
   const fields: Partial<ProductInsert> = {};
   const inferredKeys: string[] = [];
 
+  // Free-text fields first — name/description carry their own
+  // confidence and are independent of the taxonomy enums.
+  if (validated.name) {
+    fields.name = validated.name;
+    inferredKeys.push("name");
+  }
+  if (validated.description) {
+    fields.description = validated.description;
+    inferredKeys.push("description");
+  }
   if (validated.item_type) {
     fields.item_type = validated.item_type;
     inferredKeys.push("item_type");
@@ -276,6 +293,11 @@ function buildSchema(t: Taxonomy): Record<string, unknown> {
   return {
     type: "object",
     properties: {
+      // Free-text fields. Strict mode requires every property be in
+      // `required` and `additionalProperties:false`; we allow null so
+      // the model can opt out instead of inventing copy.
+      name: { type: ["string", "null"] },
+      description: { type: ["string", "null"] },
       item_type: { type: ["string", "null"], enum: itemTypeEnum },
       subtype_slug: { type: ["string", "null"], enum: subtypeEnum },
       room_slugs: {
@@ -297,6 +319,8 @@ function buildSchema(t: Taxonomy): Record<string, unknown> {
       confidence: {
         type: "object",
         properties: {
+          name: { type: "number" },
+          description: { type: "number" },
           item_type: { type: "number" },
           subtype_slug: { type: "number" },
           room_slugs: { type: "number" },
@@ -305,6 +329,8 @@ function buildSchema(t: Taxonomy): Record<string, unknown> {
           materials: { type: "number" },
         },
         required: [
+          "name",
+          "description",
           "item_type",
           "subtype_slug",
           "room_slugs",
@@ -316,6 +342,8 @@ function buildSchema(t: Taxonomy): Record<string, unknown> {
       },
     },
     required: [
+      "name",
+      "description",
       "item_type",
       "subtype_slug",
       "room_slugs",
@@ -353,8 +381,21 @@ function buildSystemPrompt(t: Taxonomy): string {
       .join("\n");
 
   return [
-    "You are a home-furnishing product classifier for DecoRight (a Malaysia-market bathroom / home catalog).",
-    "Look at the product photos and classify against the TAXONOMY below. Return slugs only — never free text.",
+    "You are a home-furnishing product classifier + copywriter for DecoRight (a Malaysia-market bathroom / home catalog).",
+    "Look at the product photos and classify against the TAXONOMY below. Return slugs only — never free text — for taxonomy fields.",
+    "Also write a short product NAME and DESCRIPTION (free text).",
+    "",
+    "NAME (string, ≤30 characters, English):",
+    "  - Concise, retail-style. e.g. 'Pull-out Kitchen Faucet', 'Modern Oak Console'.",
+    "  - Avoid brand names unless they're clearly visible on the product itself.",
+    "  - No marketing fluff ('Stunning!', 'Must-have!'). Plain noun phrase.",
+    "  - Return null only if the image is unclassifiable.",
+    "",
+    "DESCRIPTION (string, 1–2 sentences, English):",
+    "  - Plain factual blurb. e.g. 'Pull-out spray faucet in matte black, suitable for modern kitchen sinks. Single-handle mixer with 360° swivel.'",
+    "  - Mention key visible features (material, finish, shape, mounting style) without inventing dimensions or specs you can't see.",
+    "  - No marketing exclamations.",
+    "  - Return null only if you returned null for name.",
     "",
     "ITEM TYPES (pick exactly one, or null):",
     fmt(t.itemTypes),
@@ -374,21 +415,23 @@ function buildSystemPrompt(t: Taxonomy): string {
     "MATERIALS (pick zero or more — visible materials; guess from surface appearance):",
     fmt(t.materials),
     "",
-    "CONFIDENCE: for each of the six fields, return a number in [0,1]:",
+    "CONFIDENCE: for each of the eight fields (name, description, item_type, subtype_slug, room_slugs, styles, colors, materials) return a number in [0,1]:",
     "  - 0.9+ : unambiguous (clear single object in focus, obvious material)",
     "  - 0.5-0.9: reasonably confident",
     "  - below 0.5: low-confidence guess, reviewer should double-check",
-    "  - 0.0 : you did not pick anything (null or empty array)",
+    "  - 0.0 : you did not produce anything (null / empty array / empty string)",
     "",
     "RULES:",
     "- Never invent a slug. Only use slugs listed above.",
     "- subtype_slug must belong to the chosen item_type. If none fits, return null.",
-    "- If you cannot identify the object at all (blurry / blank / non-product image), return null for item_type, null for subtype_slug, and empty arrays for the others, with confidence 0 across the board.",
+    "- If you cannot identify the object at all (blurry / blank / non-product image), return null for name, description, item_type, subtype_slug, and empty arrays for the rest, with confidence 0 across the board.",
     "- Prefer fewer, higher-confidence picks over many low-confidence ones. For multi-selects, only pick values you'd score ≥ 0.5.",
   ].join("\n");
 }
 
 type RawOutput = {
+  name: string | null;
+  description: string | null;
   item_type: string | null;
   subtype_slug: string | null;
   room_slugs: string[];
@@ -396,6 +439,8 @@ type RawOutput = {
   colors: string[];
   materials: string[];
   confidence: {
+    name: number;
+    description: number;
     item_type: number;
     subtype_slug: number;
     room_slugs: number;
@@ -406,6 +451,8 @@ type RawOutput = {
 };
 
 type Validated = {
+  name: string | null;
+  description: string | null;
   item_type: string | null;
   subtype_slug: string | null;
   room_slugs: string[];
@@ -439,7 +486,20 @@ function applyTaxonomyGuards(raw: RawOutput, t: Taxonomy): Validated {
   const keep = (input: string[], set: Set<string>) =>
     [...new Set(input.filter((s) => set.has(s)))];
 
+  // Free-text fields: trim + treat empty string as null. Cap name at
+  // 30 chars (the prompt says ≤30 but the model occasionally cheats —
+  // truncate rather than reject the whole run). Description gets a
+  // generous 500-char cap to keep a runaway response from blowing
+  // the products.description column.
+  const trimName = typeof raw.name === "string" ? raw.name.trim() : "";
+  const trimDesc =
+    typeof raw.description === "string" ? raw.description.trim() : "";
+  const name = trimName.length > 0 ? trimName.slice(0, 30) : null;
+  const description = trimDesc.length > 0 ? trimDesc.slice(0, 500) : null;
+
   return {
+    name,
+    description,
     item_type,
     subtype_slug,
     room_slugs: keep(raw.room_slugs, roomSet),
@@ -447,6 +507,8 @@ function applyTaxonomyGuards(raw: RawOutput, t: Taxonomy): Validated {
     colors: keep(raw.colors, colorSet),
     materials: keep(raw.materials, materialSet),
     confidence: {
+      name: clamp01(raw.confidence.name),
+      description: clamp01(raw.confidence.description),
       item_type: clamp01(raw.confidence.item_type),
       subtype_slug: clamp01(raw.confidence.subtype_slug),
       room_slugs: clamp01(raw.confidence.room_slugs),

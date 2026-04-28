@@ -163,6 +163,18 @@ export default function AIInferButton({ productId, form }: Props) {
       }
       setLastRun(res);
       emitAutofillApply({
+        // Free-text outputs (Commit 8): undefined when the AI returned
+        // null so AutofillTextInput keeps the operator's existing value
+        // instead of clobbering it with empty string.
+        name:
+          typeof res.fields.name === "string" && res.fields.name.length > 0
+            ? (res.fields.name as string)
+            : undefined,
+        description:
+          typeof res.fields.description === "string" &&
+          res.fields.description.length > 0
+            ? (res.fields.description as string)
+            : undefined,
         item_type: (res.fields.item_type as string | undefined) ?? null,
         subtype_slug: (res.fields.subtype_slug as string | undefined) ?? null,
         room_slugs: (res.fields.room_slugs as string[] | undefined) ?? [],
@@ -292,6 +304,10 @@ function prettyFieldName(key: string): string {
       return "subtype";
     case "room_slugs":
       return "rooms";
+    case "name":
+      return "name";
+    case "description":
+      return "description";
     default:
       return key;
   }

@@ -20,6 +20,11 @@
  */
 
 export type AutofillApplyDetail = {
+  /** Free-text fields. AutofillTextInput / AutofillTextarea listen
+   *  for these and overwrite their value when present (undefined
+   *  = "AI didn't try this field, leave alone"). */
+  name?: string | null;
+  description?: string | null;
   /** Single-select taxonomy. */
   item_type?: string | null;
   subtype_slug?: string | null;
@@ -34,6 +39,8 @@ export type AutofillApplyDetail = {
 };
 
 export type AutofillFieldName =
+  | "name"
+  | "description"
   | "item_type"
   | "subtype_slug"
   | "room_slugs"

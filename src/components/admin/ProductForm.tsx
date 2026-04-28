@@ -41,6 +41,7 @@ import RoomsPicker from "./RoomsPicker";
 import RegionsPicker from "./RegionsPicker";
 import FileDropzone from "./FileDropzone";
 import AIInferButton from "./AIInferButton";
+import { AutofillTextInput, AutofillTextarea } from "./AutofillTextInput";
 import DeleteButton from "./DeleteButton";
 import SavedToast from "./SavedToast";
 import {
@@ -362,7 +363,11 @@ export default function ProductForm({
         <Section title="Basics">
           <Grid>
             <Field label="Name *">
-              <input
+              {/* Wave 2A · Commit 8: name is now AI-fillable. The
+                  AutofillTextInput listens to ai-autofill-apply and
+                  overwrites its value when the model returns a string;
+                  null / undefined keeps whatever the operator typed. */}
+              <AutofillTextInput
                 form={FORM_ID}
                 name="name"
                 required
@@ -400,7 +405,9 @@ export default function ProductForm({
               />
             </Field>
             <Field label="Description" wide>
-              <textarea
+              {/* Wave 2A · Commit 8: AI-fillable. See AutofillTextInput
+                  rationale above; same pattern, multi-line shape. */}
+              <AutofillTextarea
                 form={FORM_ID}
                 name="description"
                 rows={4}
