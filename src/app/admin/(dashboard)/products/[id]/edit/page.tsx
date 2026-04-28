@@ -28,10 +28,15 @@ type PageProps = {
     processed?: string;
     err?: string;
     msg?: string;
-    /** Set by updateProduct after a held-back Publish kicks off Meshy.
-     *  Forces MeshyStatusBanner to render on the very next paint even
-     *  if the kick-off DB write hasn't propagated to the next read
-     *  yet (rare race; the banner self-corrects on its first 5s tick). */
+    /** Wave 2B · Commit 7: when err='publish_blocked', this names the
+     *  first failing gate (rooms · cutouts · glb) so the form banner
+     *  can render a targeted fix-this-next message. */
+    reason?: string;
+    /** Wave 2A · Commit 6 set this when the held-back-Publish path
+     *  kicked off Meshy. Wave 2B · Commit 7 retires that path —
+     *  updateProduct never sets `meshy=started` anymore. The flag is
+     *  kept in the schema so MeshyStatusBanner's existing handling
+     *  doesn't churn; it's just unreachable today. */
     meshy?: string;
   }>;
 };
@@ -83,20 +88,37 @@ export default async function EditProductPage({
 
   const action = updateProduct.bind(null, id);
 
-  // P0-4: split rembg-bound and meshy-bound err codes so each lands
-  // in the right banner. updateProduct redirects with
-  // `?err=meshy_<reason>&msg=<detail>` for Meshy pre-flight refusals;
-  // anything else is rembg/upload territory and stays with the images
-  // section. `meshy_no_cutouts` is dropped here per spec — the
-  // operator's already looking at the rembg failure banner.
+  // Route err codes to the right banner.
+  //   - `meshy_*` → MeshyStatusBanner (Meshy pre-flight refusals)
+  //   - `publish_blocked` → ProductForm (Wave 2B · Commit 7's 3-gate)
+  //   - everything else (upload, db, rembg) → ProductImagesSection
+  // `meshy_no_cutouts` is intentionally dropped — the rembg failure
+  // banner already covers the same ground.
   const rawErr = sp.err ?? "";
   const isMeshyErr = rawErr.startsWith("meshy_");
+  const isPublishErr = rawErr === "publish_blocked";
   const meshyBlockedReason =
     isMeshyErr && rawErr !== "meshy_no_cutouts"
       ? rawErr.replace(/^meshy_/, "")
       : undefined;
-  const rembgErrCode = isMeshyErr ? undefined : sp.err;
-  const rembgErrMsg = isMeshyErr ? undefined : sp.msg;
+  // Translate the gate reason into a fix-this-next message that maps
+  // to a button on this page. Centralized here so ProductForm stays a
+  // dumb renderer.
+  const PUBLISH_BLOCKED_MESSAGES: Record<string, string> = {
+    rooms:
+      "Pick at least one room in the Rooms picker below before publishing.",
+    cutouts:
+      "Click \"Run Background Removal\" so at least one cutout is approved before publishing.",
+    glb:
+      "Click \"Generate 3D model\" (or upload a .glb) so the product has a 3D model before publishing.",
+  };
+  const productErrCode = isPublishErr ? "publish_blocked" : undefined;
+  const productErrMsg = isPublishErr
+    ? (PUBLISH_BLOCKED_MESSAGES[sp.reason ?? ""] ??
+        "This product is missing something required for Publish.")
+    : undefined;
+  const rembgErrCode = isMeshyErr || isPublishErr ? undefined : sp.err;
+  const rembgErrMsg = isMeshyErr || isPublishErr ? undefined : sp.msg;
 
   return (
     <ProductForm
@@ -105,8 +127,8 @@ export default async function EditProductPage({
       action={action}
       saved={sp.saved === "1"}
       freshlyCreated={sp.fresh === "1"}
-      errCode={rembgErrCode}
-      errMsg={rembgErrMsg}
+      errCode={productErrCode}
+      errMsg={productErrMsg}
       meshyBanner={
         <MeshyStatusBanner
           productId={id}

@@ -308,8 +308,8 @@ export default function ProductForm({
                 ? "Upload failed"
                 : errCode === "db"
                   ? "Database rejected the save"
-                  : errCode === "publish_needs_rooms"
-                    ? "Can't publish without rooms"
+                  : errCode === "publish_blocked"
+                    ? "Can't publish yet"
                     : `Error (${errCode})`}
             </div>
             {errMsg && <div className="mt-1 text-xs">{errMsg}</div>}

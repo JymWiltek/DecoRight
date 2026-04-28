@@ -13,6 +13,11 @@ import { inferProductFields } from "@/lib/ai/infer";
 import { requireAdmin } from "@/lib/auth/require-admin";
 import { invalidatePublishedCountsCache } from "@/lib/products";
 import { runRembgForImage } from "@/lib/rembg/pipeline";
+// Wave 2B · Commit 7 retired the held-back-status pattern: updateProduct
+// no longer auto-kicks Meshy as a side effect of Publish. The kickoff
+// helper is still imported because `generate3DForProduct` (the explicit
+// operator-driven button surface from Wave 2A · Commit 6) lives in this
+// file and wraps it.
 import { kickOffMeshyForProduct } from "@/lib/meshy-kickoff";
 import { retryMeshyForProductCore } from "@/lib/meshy-retry";
 import {
@@ -440,6 +445,71 @@ export async function getRembgProgress(
   return { ok: true, snapshot: snap };
 }
 
+// ─── Wave 2B · Commit 7: Publish gate enforcement ─────────────
+//
+// Three gates a product must satisfy before status='published' is
+// allowed. Shared between updateProduct (form save), bulkUpdateStatusAction
+// (list bulk action), and setProductStatusAction (URL-addressable inline
+// status flip — Commit 9 retires the dropdown UI but keeps the action
+// gated for defense-in-depth).
+//
+// Gates in fail-order — we surface the FIRST failing one to the
+// operator. Earlier gates are cheaper to fix (rooms = a few clicks
+// in a picker), later ones spend money (GLB = run Meshy ~$0.20).
+// Reporting them in cost order lets the operator fix the cheap
+// blockers first instead of paying for Meshy then discovering they
+// also forgot to pick rooms.
+
+export type PublishGateInput = {
+  rooms: string[];
+  glbUrl: string | null;
+  cutoutApprovedCount: number;
+};
+
+export type PublishGateReason = "rooms" | "cutouts" | "glb";
+
+export function checkPublishGates(input: PublishGateInput):
+  | { ok: true }
+  | { ok: false; reason: PublishGateReason } {
+  if (input.rooms.length === 0) return { ok: false, reason: "rooms" };
+  if (input.cutoutApprovedCount < 1) return { ok: false, reason: "cutouts" };
+  if (!input.glbUrl) return { ok: false, reason: "glb" };
+  return { ok: true };
+}
+
+/**
+ * Read the three gate-relevant facts for a product in one round-trip
+ * pair (parallel queries). Pure read — safe to call from any caller.
+ *
+ * Callers that have FRESH values from the current request (e.g.
+ * updateProduct knows the form's room_slugs and any just-uploaded
+ * glb_url) should override those fields when constructing the
+ * checkPublishGates input — DB values may be stale within the same
+ * server action.
+ */
+async function loadPublishGateFacts(
+  productId: string,
+): Promise<PublishGateInput> {
+  const supabase = createServiceRoleClient();
+  const [rowRes, cutCountRes] = await Promise.all([
+    supabase
+      .from("products")
+      .select("room_slugs, glb_url")
+      .eq("id", productId)
+      .maybeSingle(),
+    supabase
+      .from("product_images")
+      .select("id", { count: "exact", head: true })
+      .eq("product_id", productId)
+      .eq("state", "cutout_approved"),
+  ]);
+  return {
+    rooms: rowRes.data?.room_slugs ?? [],
+    glbUrl: rowRes.data?.glb_url ?? null,
+    cutoutApprovedCount: cutCountRes.count ?? 0,
+  };
+}
+
 // `createProduct` removed in Phase 1 收尾 P0 #4 (commit 2). The
 // /admin/products/new flow no longer POSTs a name-only form here —
 // it's a Server Component that inserts an "Untitled product" draft
@@ -449,71 +519,45 @@ export async function getRembgProgress(
 export async function updateProduct(id: string, fd: FormData): Promise<void> {
   const payload = await parsePayload(fd);
   const supabase = createServiceRoleClient();
-  // intent is what the operator pressed (draft / publish / save).
-  // parsePayload already rolled it into payload.status, but Meshy
-  // kick-off branches need to distinguish "press Publish" from
-  // "save with status pre-set to published" — only the former
-  // should invoke Meshy.
-  const intent = str(fd, "intent");
 
-  // Friendly guard for Migration 0013's products_check_rooms_required
-  // trigger: "published ⇒ room_slugs non-empty". Without this pre-check
-  // the operator just gets a raw Postgres error string. Applies to
-  // status transitions to `published` — draft is always allowed.
-  // Repro path for caf09f7d: its item_type had no room_slug pre-0013,
-  // the backfill left room_slugs empty, and hitting Save with status
-  // still "published" bounced off the trigger.
-  // Note: even when we're about to held-back to draft for a Meshy
-  // run (below), the operator's *intent* is publish, so we still
-  // require rooms. Forces the operator to pick rooms at Publish click.
-  if (payload.status === "published" && (payload.room_slugs?.length ?? 0) === 0) {
-    redirect(
-      `/admin/products/${id}/edit?err=publish_needs_rooms&msg=${encodeURIComponent(
-        "Pick at least one room before publishing. Draft is still fine with no rooms.",
-      )}`,
-    );
-  }
+  // ── Wave 2B · Commit 7: strict updateProduct ─────────────────
+  //
+  //   What changed (vs. Wave 2A): the entire "save kicks off the
+  //   pipeline" coupling is gone. updateProduct now:
+  //
+  //     - DOES NOT run rembg as a side effect of Save / Publish.
+  //       (Operator clicks "Run Background Removal" — the standalone
+  //       button from Commit 5 — when they want to spend rembg quota.)
+  //     - DOES NOT kick off Meshy as a side effect of Publish.
+  //       (Operator clicks "Generate 3D" — Commit 6 — when ready to
+  //       spend Meshy budget.)
+  //     - DOES NOT held-back-stash status='draft' to wait for Meshy.
+  //       (Held-back-status pattern is retired; no GLB → no Publish.)
+  //     - ENFORCES three Publish gates (rooms · cutouts · GLB) on
+  //       any save that ends at status='published', regardless of
+  //       which submit button the operator pressed (Bug A fix —
+  //       Save with PillGrid='Published' was previously a back door
+  //       around the Publish-only rooms gate and didn't gate cutouts
+  //       or GLB at all).
+  //
+  //   Why: the legacy auto-pipeline conflated "save the row I edited"
+  //   with "spend money on rembg and Meshy and surface the result
+  //   when ready". Operators couldn't preview cutouts before paying,
+  //   couldn't separate copy edits from regeneration, and Bug A let
+  //   GLB-less rows go live whenever the PillGrid happened to be
+  //   on Published at Save time. Splitting the three operations into
+  //   three explicit buttons (Run BG Removal / Generate 3D / Publish)
+  //   each with their own gates makes the cost and effect visible.
+  //
+  //   What still happens here:
+  //     - Manual GLB upload (operator dropped a .glb in the dropzone)
+  //     - Thumbnail upload
+  //     - Form parse + validate + UPDATE products
+  //     - Attach staged raw image rows (no rembg run)
 
-  // ── M3 held-back-status pattern (no GLB, no publish — 铁律) ─────
-  //
-  // When the operator clicks Publish on a product that has no GLB
-  // (neither uploaded in this request nor pre-existing), we DON'T
-  // let it land at status='published'. Instead:
-  //   1. Override status → 'draft' for this save.
-  //   2. Save the row + run rembg + attach staged images normally.
-  //   3. Kick off Meshy. The polling worker (Commit 5) flips status
-  //      to 'published' when the GLB lands.
-  //
-  // The branch fires only when ALL of:
-  //   - intent='publish'                      (operator pressed Publish)
-  //   - no glb_path uploaded this request     (manual upload would
-  //                                            satisfy "has GLB" already)
-  //   - existing row has no glb_url           (Meshy never overwrites
-  //                                            a successful GLB; that's
-  //                                            the "Meshy only runs once"
-  //                                            rule)
-  //
-  // The "manual GLB this request" check comes from validating glb_path
-  // again later in the upload block — we pre-compute it here so the
-  // branch decision happens before any DB write.
+  // ── Manual GLB upload (validate path, set fields) ────────────
   const glbPathInRequest = str(fd, "glb_path");
-  const { data: existingForGlb } = await supabase
-    .from("products")
-    .select("glb_url")
-    .eq("id", id)
-    .maybeSingle();
-  const hasManualGlbThisRequest = Boolean(glbPathInRequest);
-  const hasExistingGlb = Boolean(existingForGlb?.glb_url);
-  const willKickOffMeshy =
-    intent === "publish" && !hasManualGlbThisRequest && !hasExistingGlb;
-
   const updates: ProductUpdate = { ...payload };
-  if (willKickOffMeshy) {
-    // Held-back: row stays at draft until polling worker promotes it.
-    // payload.status was 'published' (from intent=publish); override.
-    updates.status = "draft";
-  }
-
   try {
     if (glbPathInRequest) {
       // Same validation as createProduct — the signed-URL mint used
@@ -527,13 +571,9 @@ export async function updateProduct(id: string, fd: FormData): Promise<void> {
       updates.glb_size_kb = num(fd, "glb_size_kb");
       // Manual upload → mark provenance + generated time so the
       // "Meshy only runs once" gate trips correctly even if the
-      // operator clears glb_url and re-Publishes later.
+      // operator clears glb_url and re-runs Generate 3D later.
       updates.glb_source = "manual_upload";
       updates.glb_generated_at = new Date().toISOString();
-      // Manual upload IS the GLB — no Meshy run, no generating
-      // status. If the row had a stale failed Meshy state from a
-      // prior attempt, leave it alone (audit trail) rather than
-      // wipe it; admin can read the history.
     }
     const thumb = fileOrNull(fd, "thumbnail_file");
     if (thumb) {
@@ -545,6 +585,40 @@ export async function updateProduct(id: string, fd: FormData): Promise<void> {
     );
   }
 
+  // ── Publish gates (Wave 2B · Commit 7) ──────────────────────
+  //
+  // Three gates in spec order. ANY save landing at status='published'
+  // — whether via the Publish button (intent='publish') OR via Save
+  // with PillGrid pre-set to Published (intent='save', Bug A path) —
+  // must satisfy ALL three. Each gate failure redirects with an
+  // explicit reason so the edit page can render a targeted nudge.
+  //
+  //   gate 1: room_slugs non-empty
+  //   gate 2: cutout_approved count >= 1
+  //   gate 3: glb_url non-empty (existing OR uploaded this request)
+  //
+  // Order matters for the redirect: we report the FIRST failing gate
+  // in the order rooms → cutouts → glb. Operator fixes one at a
+  // time and re-clicks Publish. Earlier gates (rooms) are usually
+  // faster fixes (one click in a picker) so they fail first; later
+  // gates (GLB) require running Generate 3D which takes minutes.
+  if (payload.status === "published") {
+    const facts = await loadPublishGateFacts(id);
+    // Fresh values from this save override stale DB values:
+    //  - rooms came from the form payload
+    //  - glb_url may have just been set by the manual upload above
+    const gate = checkPublishGates({
+      rooms: payload.room_slugs ?? [],
+      glbUrl: updates.glb_url ?? facts.glbUrl,
+      cutoutApprovedCount: facts.cutoutApprovedCount,
+    });
+    if (!gate.ok) {
+      redirect(
+        `/admin/products/${id}/edit?err=publish_blocked&reason=${gate.reason}`,
+      );
+    }
+  }
+
   const { error } = await supabase.from("products").update(updates).eq("id", id);
   if (error) {
     redirect(
@@ -552,11 +626,9 @@ export async function updateProduct(id: string, fd: FormData): Promise<void> {
     );
   }
 
-  // Attach staged raw images (PUT already happened client-side via
-  // signed URL). Rows go in at state='raw' — rembg only runs iff
-  // the product ends up published OR we're about to kick off Meshy
-  // (Meshy needs cutouts, so we have to run rembg first even though
-  // the row will sit at draft).
+  // Attach staged raw images (bytes already PUT client-side via signed
+  // URL). Rows go in at state='raw'. NO rembg run — operator clicks
+  // "Run Background Removal" when they're ready (Commit 5).
   const stagedEntries = parseRawImageEntries(fd);
   if (stagedEntries.length > 0) {
     const attach = await attachStagedRawImages(id, stagedEntries);
@@ -569,32 +641,6 @@ export async function updateProduct(id: string, fd: FormData): Promise<void> {
     }
   }
 
-  // The core of the "commit on Save" rule:
-  //   - Save-as-Draft (intent=draft) → status=draft → skip rembg.
-  //   - Save (intent=save) → respects PillGrid; if user left it on
-  //     'published' the product stays published → rembg runs on
-  //     any raw / cutout_failed rows. This is the "operator edited
-  //     a published product, added a new photo, clicked Save" case
-  //     Jym flagged in test 3.
-  //   - Publish (intent=publish) → status=published OR (held-back
-  //     to draft for Meshy) → rembg runs in BOTH cases. The
-  //     held-back path needs cutouts ready before Meshy can fetch
-  //     them.
-  // We key off `payload.status === 'published' || willKickOffMeshy`
-  // — both branches require fresh cutouts.
-  let rembgCounts = { approved: 0, failed: 0, ran: 0 };
-  if (payload.status === "published" || willKickOffMeshy) {
-    rembgCounts = await processPendingImagesForPublish(id);
-  }
-
-  // Held-back Meshy kick-off. Runs AFTER rembg so cutouts are ready.
-  // Does its own DB write to stamp meshy_task_id / status='generating'.
-  let meshyKick: Awaited<ReturnType<typeof kickOffMeshyForProduct>> | null =
-    null;
-  if (willKickOffMeshy) {
-    meshyKick = await kickOffMeshyForProduct(id);
-  }
-
   revalidatePath("/admin");
   revalidatePath("/");
   revalidatePath(`/product/${id}`);
@@ -602,20 +648,6 @@ export async function updateProduct(id: string, fd: FormData): Promise<void> {
 
   const qs = new URLSearchParams({ saved: "1" });
   if (stagedEntries.length > 0) qs.set("uploaded", String(stagedEntries.length));
-  if (rembgCounts.ran > 0) {
-    qs.set("approved", String(rembgCounts.approved));
-    qs.set("failed", String(rembgCounts.failed));
-  }
-  if (meshyKick) {
-    if (meshyKick.ok) {
-      // Banner reads `meshy=started` — Commit 2's UI work shows
-      // "3D 生成中..." until the polling worker flips status.
-      qs.set("meshy", "started");
-    } else {
-      qs.set("err", `meshy_${meshyKick.error}`);
-      if (meshyKick.detail) qs.set("msg", meshyKick.detail);
-    }
-  }
   redirect(`/admin/products/${id}/edit?${qs.toString()}`);
 }
 
@@ -642,6 +674,25 @@ export async function setProductStatusAction(fd: FormData): Promise<void> {
     | ProductStatus
     | null;
   if (!id || !next) return;
+
+  // Wave 2B · Commit 7: same 3-gate enforcement updateProduct uses.
+  // Wave 2B · Commit 9 takes the inline status dropdown UI off the
+  // /admin list (StatusCell becomes a read-only badge), so in
+  // practice this action no longer has a UI caller. But it's a
+  // server action — URL-addressable forever — so defense-in-depth
+  // gates the published transition here too. Without this, anyone
+  // who knew the action's name could POST a published flip on a
+  // GLB-less row and skip the redesigned Publish flow entirely.
+  if (next === "published") {
+    const facts = await loadPublishGateFacts(id);
+    const gate = checkPublishGates(facts);
+    if (!gate.ok) {
+      redirect(
+        `/admin?err=publish_blocked&reason=${gate.reason}&id=${encodeURIComponent(id)}`,
+      );
+    }
+  }
+
   const supabase = createServiceRoleClient();
   const { error } = await supabase
     .from("products")
