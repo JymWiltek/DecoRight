@@ -55,6 +55,14 @@ type SearchParams = Promise<{
   deleted?: string;
   err?: string;
   msg?: string;
+  /** Wave 2B · Commit 9: bulkUpdateStatusAction reports how many rows
+   *  it skipped because they failed the 3-gate Publish check. Surfaced
+   *  in the toast as "Updated N · K skipped (missing <reason>)". */
+  blocked?: string;
+  /** Wave 2B · Commit 9: the first failing gate reason from a bulk
+   *  Publish (rooms · cutouts · glb). Used together with `blocked` so
+   *  the toast names a likely fix. */
+  reason?: string;
   /** "1" = include empty drafts in the listing (overrides the default
    *  hide). Empty drafts = status='draft' AND no images AND no rooms,
    *  the orphan rows the /admin/products/new auto-create flow leaves
@@ -226,25 +234,44 @@ export default async function AdminProductsPage({
       </div>
 
       {/* Toasts for bulk action results */}
-      {(sp.bulk || sp.bulk_deleted || sp.deleted || sp.err) && (
-        <div
-          className={`mb-4 rounded-md px-4 py-2 text-sm ${
-            sp.err
-              ? "bg-rose-50 text-rose-700"
-              : "bg-emerald-50 text-emerald-700"
-          }`}
-        >
-          {sp.err
-            ? `Error (${sp.err}): ${sp.msg ?? ""}`
-            : sp.bulk_deleted
-              ? `Deleted ${sp.bulk_deleted} product(s).`
-              : sp.bulk
-                ? `Updated ${sp.bulk} product(s).`
-                : sp.deleted
-                  ? `Deleted.`
-                  : null}
-        </div>
-      )}
+      {(sp.bulk || sp.bulk_deleted || sp.deleted || sp.err) && (() => {
+        // Wave 2B · Commit 9: split logic so partial-success bulks
+        // (some rows updated, some blocked by 3-gate Publish) render
+        // a green "Updated N" with an amber "K skipped" sub-line.
+        // The amber sub-line names the FIRST failing gate so the
+        // operator gets a likely fix without opening every blocked
+        // row.
+        const blocked = sp.blocked ? Number(sp.blocked) : 0;
+        const reasonLabel =
+          sp.reason === "rooms"
+            ? "no rooms picked"
+            : sp.reason === "cutouts"
+              ? "no approved cutouts"
+              : sp.reason === "glb"
+                ? "no GLB attached"
+                : "missing publish requirements";
+        const tone = sp.err
+          ? "bg-rose-50 text-rose-700"
+          : "bg-emerald-50 text-emerald-700";
+        return (
+          <div className={`mb-4 rounded-md px-4 py-2 text-sm ${tone}`}>
+            {sp.err
+              ? `Error (${sp.err}): ${sp.msg ?? ""}`
+              : sp.bulk_deleted
+                ? `Deleted ${sp.bulk_deleted} product(s).`
+                : sp.bulk
+                  ? `Updated ${sp.bulk} product(s).`
+                  : sp.deleted
+                    ? `Deleted.`
+                    : null}
+            {!sp.err && blocked > 0 && (
+              <span className="ml-2 rounded-md bg-amber-100 px-2 py-0.5 text-xs text-amber-800">
+                {blocked} skipped ({reasonLabel})
+              </span>
+            )}
+          </div>
+        );
+      })()}
 
       {/* Search + status chips + item type dropdown */}
       <div className="mb-4 flex flex-wrap items-center gap-3">

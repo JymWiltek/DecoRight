@@ -768,17 +768,67 @@ export async function bulkUpdateStatusAction(fd: FormData): Promise<void> {
     redirect("/admin");
   }
   const supabase = createServiceRoleClient();
+
+  // Wave 2B · Commit 9: per-row 3-gate enforcement when next='published'.
+  //
+  // Bulk Publish was the loudest remaining back door — one click could
+  // flip 50 GLB-less rows live. Each row goes through the same gates
+  // updateProduct uses; failures are skipped (the bulk continues), and
+  // the redirect carries back a `blocked=K` count so the operator
+  // sees what got rejected without losing the rows that did succeed.
+  //
+  // Sequential queries on purpose: per-row gate facts are cheap (two
+  // small queries each), and Phase 1's typical bulk size is ~10-20.
+  // If the operator routinely bulk-publishes 200+ rows the loop can
+  // be vectorized — for now sequential keeps the code straightforward
+  // and the failure mode obvious if a single row's query throws.
+  let targetIds = ids;
+  let blockedCount = 0;
+  let firstBlockedReason: PublishGateReason | null = null;
+  if (next === "published") {
+    const passed: string[] = [];
+    for (const id of ids) {
+      const facts = await loadPublishGateFacts(id);
+      const result = checkPublishGates(facts);
+      if (result.ok) {
+        passed.push(id);
+      } else {
+        blockedCount++;
+        if (!firstBlockedReason) firstBlockedReason = result.reason;
+      }
+    }
+    if (passed.length === 0) {
+      // Nothing to update — every selected row failed at least one
+      // gate. Redirect with err so the dashboard's red toast renders.
+      redirect(
+        `/admin?err=publish_blocked&msg=${encodeURIComponent(
+          `All ${ids.length} selected products are missing rooms, cutouts, or a GLB. Open each one to fix.`,
+        )}`,
+      );
+    }
+    targetIds = passed;
+  }
+
   const { error } = await supabase
     .from("products")
     .update({ status: next })
-    .in("id", ids);
+    .in("id", targetIds);
   if (error) {
     redirect(`/admin?err=bulk&msg=${encodeURIComponent(error.message)}`);
   }
   revalidatePath("/admin");
   revalidatePath("/");
   invalidatePublishedCountsCache();
-  redirect(`/admin?bulk=${ids.length}&status=${next}`);
+
+  const qs = new URLSearchParams({
+    bulk: String(targetIds.length),
+    status: next,
+  });
+  if (blockedCount > 0) {
+    qs.set("blocked", String(blockedCount));
+    if (firstBlockedReason) qs.set("reason", firstBlockedReason);
+  }
+  redirect(`/admin?${qs.toString()}`);
 }
 
 export async function bulkDeleteAction(fd: FormData): Promise<void> {
