@@ -31,9 +31,9 @@
  *                                succeeded with promoted=true
  *   [2] SUCCEEDED but no GLB   → terminal failed, no download
  *   [3] SUCCEEDED bad magic    → terminal failed, no upload
- *   [4] SUCCEEDED + room trigger blocks promote
- *                              → succeeded but promoted=false,
- *                                partialErrorMsg captured
+ *   [4] SUCCEEDED, no auto-promote (Wave 2A · Commit 6)
+ *                              → succeeded with promoted=false;
+ *                                operator clicks Publish manually
  *   [5] FAILED                  → marked failed with reason
  *   [6] CANCELED                → marked failed with "canceled"
  *   [7] PENDING                 → still_running, no writes
@@ -98,7 +98,7 @@ function makeDeps(opts: {
   markSucceeded?: (
     productId: string,
     glbUrl: string,
-  ) => Promise<{ promoted: boolean; partialErrorMsg?: string }>;
+  ) => Promise<{ promoted: boolean }>;
   markFailed?: (productId: string, reason: string) => Promise<void>;
   listInFlightThrows?: Error;
 }): { deps: WorkerDeps; calls: RecordedCall[]; logs: string[] } {
@@ -243,8 +243,11 @@ async function main() {
     assert(calls.some((c) => c.kind === "markFailed"), "markFailed called with magic-bytes reason");
   }
 
-  // ── Case 4: SUCCEEDED but room_slugs trigger blocks promote ──
-  console.log("\n[4] SUCCEEDED + room trigger blocks promote → succeeded with promoted=false");
+  // ── Case 4: SUCCEEDED, no auto-promote (Wave 2A · Commit 6) ──
+  //  The held-back-status auto-promote was retired — markSucceeded
+  //  now always returns promoted=false. The worker just stamps the
+  //  GLB; the operator clicks Publish on the edit page.
+  console.log("\n[4] SUCCEEDED → succeeded with promoted=false (no auto-promote)");
   {
     const { deps, calls } = makeDeps({
       fetchTask: async () => ({
@@ -254,16 +257,13 @@ async function main() {
       }),
       downloadGlb: async () => VALID_GLB_BYTES,
       uploadGlb: async () => "https://example.com/uploaded.glb?v=1",
-      markSucceeded: async () => ({
-        promoted: false,
-        partialErrorMsg: "Published product must have at least one room_slug",
-      }),
+      markSucceeded: async () => ({ promoted: false }),
     });
     const out = await processOne(ROW_A, deps);
     assert(out.ok && out.outcome === "succeeded", "outcome = succeeded");
     assert(
       out.ok && out.outcome === "succeeded" && out.promoted === false,
-      "promoted = false (kept at draft)",
+      "promoted = false (operator clicks Publish manually)",
     );
     assert(calls.some((c) => c.kind === "markSucceeded"), "markSucceeded called");
   }

@@ -51,6 +51,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { getMeshyStatus, type MeshyStatusSnapshot } from "@/app/admin/(dashboard)/products/actions";
 import RetryMeshyButton from "./RetryMeshyButton";
+import Generate3DButton from "./Generate3DButton";
 
 type Props = {
   productId: string;
@@ -73,6 +74,11 @@ type Props = {
    *  removal"). Surfacing both would just nag the operator twice. */
   blockedReason?: string;
   blockedDetail?: string;
+  /** Wave 2A · Commit 6: number of cutout_approved images on this
+   *  product. Drives the new "ready to generate" branch — when
+   *  meshy_status is null and there's at least one cutout, we render
+   *  the violet "Generate 3D model" CTA instead of staying silent. */
+  cutoutApprovedCount: number;
 };
 
 const POLL_INTERVAL_MS = 5_000;
@@ -83,6 +89,7 @@ export default function MeshyStatusBanner({
   justKickedOff,
   blockedReason,
   blockedDetail,
+  cutoutApprovedCount,
 }: Props) {
   const router = useRouter();
   const [snap, setSnap] = useState<MeshyStatusSnapshot>(initial);
@@ -157,6 +164,43 @@ export default function MeshyStatusBanner({
     );
   }
 
+  // ── Wave 2A · Commit 6: "ready to generate" branch ────────────
+  //
+  // No Meshy run in flight, no GLB attached, but the operator has
+  // at least one cutout_approved image — i.e. everything Meshy
+  // needs is in place and nothing is currently happening. Surface
+  // an explicit CTA. This replaces the legacy "click Publish to
+  // implicitly kick off Meshy" path (Wave 2B will retire that
+  // entirely).
+  //
+  // Hidden when justKickedOff is true — the upstream save just
+  // fired Meshy and the row update may not have propagated yet;
+  // we'd rather show the generating banner below than briefly
+  // flash this CTA.
+  if (
+    !snap.status &&
+    !justKickedOff &&
+    !snap.glbUrl &&
+    cutoutApprovedCount >= 1
+  ) {
+    return (
+      <Banner tone="violet">
+        <SparkleIcon />
+        <div className="flex-1">
+          <div className="font-semibold">Ready to generate 3D model</div>
+          <div className="text-xs opacity-80">
+            {cutoutApprovedCount === 1
+              ? "1 cutout approved"
+              : `${cutoutApprovedCount} cutouts approved`}
+            . Meshy will use up to 4 of them. Run takes ~2–3 min and
+            costs ~$0.20.
+          </div>
+          <Generate3DButton productId={productId} />
+        </div>
+      </Banner>
+    );
+  }
+
   // Quiet steady state: no banner if we're not in any Meshy lifecycle.
   if (!snap.status && !justKickedOff) return null;
 
@@ -179,17 +223,22 @@ export default function MeshyStatusBanner({
 
   if (snap.status === "succeeded") {
     const isLive = snap.productStatus === "published";
+    // Wave 2A · Commit 6: auto-promote is being killed (poll-meshy
+    // worker no longer flips status='published' on success). When
+    // the row is still draft after a successful Meshy run, the
+    // operator needs to click Publish manually — make that the
+    // headline copy instead of the legacy "正在更新…" wait state.
     return (
       <Banner tone="green">
         <CheckIcon />
         <div className="flex-1">
           <div className="font-semibold">
-            ✓ 3D 模型已生成{isLive ? " — Live now" : ""}
+            ✓ 3D 模型已生成{isLive ? " — Live now" : " — 等待发布"}
           </div>
           <div className="text-xs opacity-80">
             {isLive
-              ? "产品已自动上线，前台可见。"
-              : "GLB 已就绪，产品状态正在更新…"}
+              ? "产品已上线，前台可见。"
+              : "GLB 已就绪。点击上方 Publish 让产品上线。"}
           </div>
         </div>
       </Banner>
@@ -231,7 +280,7 @@ function Banner({
   tone,
   children,
 }: {
-  tone: "blue" | "green" | "red" | "amber";
+  tone: "blue" | "green" | "red" | "amber" | "violet";
   children: React.ReactNode;
 }) {
   const cls =
@@ -241,7 +290,9 @@ function Banner({
         ? "border-emerald-200 bg-emerald-50 text-emerald-800"
         : tone === "amber"
           ? "border-amber-200 bg-amber-50 text-amber-800"
-          : "border-rose-200 bg-rose-50 text-rose-800";
+          : tone === "violet"
+            ? "border-violet-200 bg-violet-50 text-violet-800"
+            : "border-rose-200 bg-rose-50 text-rose-800";
   return (
     <div className={`flex items-start gap-3 rounded-md border px-4 py-3 text-sm ${cls}`}>
       {children}
@@ -343,6 +394,24 @@ function WarnIcon() {
       />
       <path
         d="M12 10v5M12 18.5v.5"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+function SparkleIcon() {
+  return (
+    <svg
+      className="mt-0.5 h-5 w-5 shrink-0"
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden
+    >
+      <path
+        d="M12 3v4M12 17v4M3 12h4M17 12h4M5.6 5.6l2.8 2.8M15.6 15.6l2.8 2.8M5.6 18.4l2.8-2.8M15.6 8.4l2.8-2.8"
         stroke="currentColor"
         strokeWidth="2"
         strokeLinecap="round"

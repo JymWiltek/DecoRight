@@ -70,6 +70,15 @@ export default async function EditProductPage({
     })),
   );
 
+  // Wave 2A · Commit 6: MeshyStatusBanner needs the cutout count to
+  // decide whether to render the new "Ready to generate" CTA. Counted
+  // here (the rows are already loaded) instead of inside the banner
+  // so the server-rendered first paint is correct without a client
+  // fetch.
+  const cutoutApprovedCount = imagesWithPreviews.filter(
+    (i) => i.state === "cutout_approved",
+  ).length;
+
   const avail = providerAvailability();
 
   const action = updateProduct.bind(null, id);
@@ -111,6 +120,7 @@ export default async function EditProductPage({
           justKickedOff={sp.meshy === "started"}
           blockedReason={meshyBlockedReason}
           blockedDetail={meshyBlockedReason ? sp.msg : undefined}
+          cutoutApprovedCount={cutoutApprovedCount}
         />
       }
       imagesSection={

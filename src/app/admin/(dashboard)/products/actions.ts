@@ -1133,3 +1133,48 @@ export async function retryMeshyForProduct(
 
   return result;
 }
+
+// ─── Wave 2A · Commit 6: standalone "Generate 3D" ──────────────
+//
+// Publish-flow γ redesign — the held-back-status pattern (Publish
+// silently kicks off Meshy then auto-promotes when the worker lands
+// the GLB) is being retired in Wave 2B. This action is the explicit
+// surface that replaces it: the operator clicks "Generate 3D" from
+// MeshyStatusBanner when they're ready to spend the Meshy budget,
+// independently of Save/Publish.
+//
+// Thin wrapper around kickOffMeshyForProduct (same shape as
+// retryMeshyForProduct above): admin gate + UUID validation +
+// revalidatePath. The kickoff helper already enforces the pre-flight
+// gates (already_has_glb, already_in_flight, no_cutouts, etc.) so
+// we just surface them through.
+//
+// On success, MeshyStatusBanner's polling loop picks up the new
+// 'generating' status on the next 5s tick and flips the banner to
+// the blue "3D 模型生成中" state — same UX as the legacy held-back
+// path, just driven by an explicit click.
+
+export async function generate3DForProduct(
+  productId: string,
+): Promise<
+  | { ok: true; taskId: string }
+  | { ok: false; error: string; code?: string }
+> {
+  try {
+    await requireAdmin();
+  } catch {
+    return { ok: false, error: "Not signed in.", code: "unauthenticated" };
+  }
+  if (!UUID_RE.test(productId)) {
+    return { ok: false, error: "invalid product id", code: "bad_request" };
+  }
+
+  const result = await kickOffMeshyForProduct(productId);
+  if (!result.ok) {
+    return { ok: false, error: result.detail ?? result.error, code: result.error };
+  }
+
+  revalidatePath(`/admin/products/${productId}/edit`);
+  revalidatePath("/admin");
+  return { ok: true, taskId: result.taskId };
+}

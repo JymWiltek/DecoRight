@@ -154,8 +154,18 @@ const deps: WorkerDeps = {
 
   async markSucceeded(productId: string, glbUrl: string) {
     const nowIso = new Date().toISOString();
-    // ── 1. Try the full update — including status='published'.
-    const { error: fullErr } = await supabase
+    // Wave 2A · Commit 6: auto-promote to status='published' is
+    // RETIRED. The Publish-flow γ redesign moves Publish back into
+    // the operator's hands — Meshy success is no longer a backdoor
+    // around the rooms / GLB / cutouts gating that lives in
+    // updateProduct. The worker stamps Meshy fields and the GLB; the
+    // operator clicks Publish on the edit page when ready.
+    //
+    // Why one update path now: we no longer need the "fall back to
+    // partial when the rooms_required trigger fires" branch — the
+    // status flip that would have triggered it is gone, so a single
+    // update without `status` is unconditionally safe.
+    const { error } = await supabase
       .from("products")
       .update({
         meshy_status: "succeeded",
@@ -163,31 +173,15 @@ const deps: WorkerDeps = {
         glb_generated_at: nowIso,
         glb_source: "meshy",
         meshy_error: null,
-        status: "published",
       })
       .eq("id", productId);
-    if (!fullErr) return { promoted: true };
-
-    // ── 2. Trigger likely fired (room_slugs missing on a row that
-    //    somehow got into 'generating' without rooms — operator
-    //    edited the row mid-flight, or migration backfill weirdness).
-    //    Stamp the meshy success without the status flip.
-    const { error: partialErr } = await supabase
-      .from("products")
-      .update({
-        meshy_status: "succeeded",
-        glb_url: glbUrl,
-        glb_generated_at: nowIso,
-        glb_source: "meshy",
-        meshy_error: `GLB stored OK, but auto-promote to 'published' blocked: ${fullErr.message}`,
-      })
-      .eq("id", productId);
-    if (partialErr) {
-      throw new Error(
-        `markSucceeded both attempts failed — full: ${fullErr.message}; partial: ${partialErr.message}`,
-      );
+    if (error) {
+      throw new Error(`markSucceeded: ${error.message}`);
     }
-    return { promoted: false, partialErrorMsg: fullErr.message };
+    // `promoted` reports whether we promoted to published. Always
+    // false now — kept on the return shape so worker.ts callers
+    // (logging / outcome reporter) don't need a code change.
+    return { promoted: false };
   },
 
   async markFailed(productId: string, reason: string) {

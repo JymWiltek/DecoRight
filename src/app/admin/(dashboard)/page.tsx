@@ -421,6 +421,32 @@ export default async function AdminProductsPage({
                       <div>
                         {p.glb_url ? `${p.glb_size_kb ?? "?"} KB` : "—"}
                       </div>
+                      {/* Wave 2A · Commit 6: surface the new "GLB
+                          ready, awaiting Publish" intermediate state
+                          on the list. The held-back-status auto-promote
+                          retired in this commit means a successful
+                          Meshy run leaves the row at status='draft' —
+                          without a hint here the operator has no
+                          easy way to find products that are ready to
+                          ship. The chip points the operator at the
+                          edit page where the Publish button is. Only
+                          fires when meshy says succeeded AND the GLB
+                          actually landed AND the row is still draft —
+                          published rows don't need a nudge. */}
+                      {p.meshy_status === "succeeded" &&
+                        p.glb_url &&
+                        p.status === "draft" && (
+                          <div className="mt-0.5">
+                            <Link
+                              href={`/admin/products/${p.id}/edit`}
+                              className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700 ring-1 ring-emerald-200 hover:bg-emerald-100"
+                              title="3D model is ready. Click to open the edit page and Publish."
+                            >
+                              <span aria-hidden>●</span>
+                              3D ready · awaiting Publish
+                            </Link>
+                          </div>
+                        )}
                       <div
                         className={
                           imgN === 0

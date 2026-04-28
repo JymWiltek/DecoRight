@@ -29,15 +29,20 @@
  *                        `models` bucket at the canonical path,
  *                        UPDATE products SET meshy_status='succeeded',
  *                        glb_url=<our public URL>, glb_generated_at,
- *                        glb_source='meshy', meshy_error=null,
- *                        status='published' (the held-back-status
- *                        promotion from Commit 1's design).
+ *                        glb_source='meshy', meshy_error=null.
+ *                        (Wave 2A · Commit 6: status='published'
+ *                        promotion is RETIRED — the Publish-flow γ
+ *                        redesign moves Publish back into the
+ *                        operator's hands. Meshy success means
+ *                        "GLB is ready"; the operator clicks
+ *                        Publish on the edit page when they're
+ *                        happy with the row.)
  *
  *           FAILED     → UPDATE products SET meshy_status='failed',
  *                        meshy_error=<Meshy's reason>. The row
- *                        sits at status='draft' (held back), and
- *                        the operator gets the red banner with the
- *                        Retry button (Commit 3) to recover.
+ *                        sits at status='draft' and the operator
+ *                        gets the red banner with the Retry button
+ *                        (Commit 3) to recover.
  *
  *           CANCELED   → treated as FAILED with reason "canceled".
  *                        Phase A doesn't expose a cancel UI yet,
@@ -61,13 +66,14 @@
  *   Phase A's small budget. The meshy_attempts column is reserved
  *   for a future "auto-retry up to N times" toggle if we want it.
  *
- * Why we promote draft → published in the worker, not at click time:
- *   Commit 1's "held-back-status" pattern saves the row at draft
- *   when Publish is clicked on a GLB-less product. Without that,
- *   "没 GLB 不上线" (no GLB no publishing) would require either a
- *   blocking wait for Meshy (2-3 minutes!) or letting GLB-less
- *   rows go live. The worker is the async half of that
- *   pattern: it watches for the GLB to land, then promotes.
+ * Why the worker no longer promotes draft → published:
+ *   Wave 2A · Commit 6 retired the held-back-status pattern.
+ *   The new model is: Generate 3D is a standalone operator action
+ *   (kickOffMeshyForProduct via the violet "Generate 3D" button on
+ *   the edit page); Publish is a separate operator action that
+ *   gates on glb_url + rooms + cutouts in updateProduct. The worker
+ *   is now strictly an async file-mover: download GLB, upload to
+ *   our bucket, stamp the row. No status flip.
  *
  * Idempotency:
  *   - GET is naturally idempotent.
@@ -114,7 +120,11 @@ export type InFlightRow = {
   meshyAttempts: number;
 };
 
-/** Outcome reported by processOne — useful for logging + the smoke. */
+/** Outcome reported by processOne — useful for logging + the smoke.
+ *  `promoted` is kept on the shape (always `false` post Wave 2A ·
+ *  Commit 6) so external log scrapers / smoke tests don't break on
+ *  a missing field. The held-back-status auto-promote is retired —
+ *  see the file header for why. */
 export type ProcessOutcome =
   | { ok: true; productId: string; outcome: "succeeded"; promoted: boolean }
   | { ok: true; productId: string; outcome: "failed"; reason: string }
@@ -142,13 +152,14 @@ export type WorkerDeps = {
    *  path. Returns the public URL (with cache-bust). */
   uploadGlb: (productId: string, bytes: Uint8Array) => Promise<string>;
 
-  /** Stamp the row meshy_status='succeeded' + glb fields, and
-   *  attempt to promote status='draft' → 'published'. Returns
-   *  whether the promotion landed. */
+  /** Stamp the row meshy_status='succeeded' + glb fields. Wave 2A ·
+   *  Commit 6 retired the auto-promote to status='published', so
+   *  `promoted` is always `false` now — kept on the return shape
+   *  only so this signature doesn't churn. */
   markSucceeded: (
     productId: string,
     glbUrl: string,
-  ) => Promise<{ promoted: boolean; partialErrorMsg?: string }>;
+  ) => Promise<{ promoted: boolean }>;
 
   /** Stamp the row meshy_status='failed' + meshy_error. */
   markFailed: (productId: string, reason: string) => Promise<void>;
@@ -263,22 +274,18 @@ export async function processOne(
     return { ok: false, productId: row.id, error: msg, transient: true };
   }
 
-  // ── 6. Stamp succeeded + promote to published. The deps layer
-  //      attempts the full UPDATE first (status='published' included);
-  //      if the room_slugs trigger fires (operator forgot to set
-  //      rooms — should've been blocked at click time but defense in
-  //      depth), it falls back to the partial update without status.
+  // ── 6. Stamp succeeded. Wave 2A · Commit 6: the deps layer no
+  //      longer attempts to promote status='draft' → 'published' —
+  //      it just stamps meshy_status + glb fields. The operator
+  //      clicks Publish on the edit page when ready.
   try {
-    const { promoted, partialErrorMsg } = await deps.markSucceeded(row.id, publicUrl);
-    log(
-      `[poll-meshy] product=${row.id} → succeeded${promoted ? " + published" : ` (kept draft: ${partialErrorMsg})`}`,
-    );
+    const { promoted } = await deps.markSucceeded(row.id, publicUrl);
+    log(`[poll-meshy] product=${row.id} → succeeded (awaiting operator Publish)`);
     return { ok: true, productId: row.id, outcome: "succeeded", promoted };
   } catch (err) {
-    // Both the full and partial UPDATE failed. The GLB is uploaded
-    // (we paid the bandwidth) but the row is unchanged. Next tick
-    // will see status='generating' still, re-download, re-upload
-    // (idempotent), and retry the UPDATE.
+    // The UPDATE failed. The GLB is uploaded (we paid the bandwidth)
+    // but the row is unchanged. Next tick will see status='generating'
+    // still, re-download, re-upload (idempotent), and retry the UPDATE.
     const msg = err instanceof Error ? err.message : String(err);
     log(`[poll-meshy] product=${row.id} markSucceeded DB write failed: ${msg}`);
     return { ok: false, productId: row.id, error: msg, transient: true };
