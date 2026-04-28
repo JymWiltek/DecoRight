@@ -345,6 +345,101 @@ async function processPendingImagesForPublish(
   return { approved, failed, ran: ids.length };
 }
 
+// ─── Wave 2A · Commit 5: standalone "Run Background Removal" ───
+//
+// Publish flow γ-redesign moves rembg out from "buried under
+// Save/Publish auto-trigger" to "explicit button the operator
+// clicks when they want to spend rembg quota". This action is the
+// thin admin wrapper around the existing processPendingImagesForPublish
+// helper so the button on ProductImagesSection can fire it without
+// going through updateProduct.
+//
+// Why a separate action instead of reusing setProductStatusAction +
+// publish logic: the operator may want to run rembg on draft rows
+// before they've decided to publish (Q: "how does the cutout look?
+// good enough to use for Meshy / store-front?"). Forcing them
+// through Publish to get cutouts breaks that exploration flow.
+//
+// Returns plain JSON instead of redirecting because the calling
+// component (RunRembgButton) wants to render the count in a banner
+// without a full page reload — there's a separate router.refresh()
+// after success to pick up the new image rows.
+export type RunRembgResult =
+  | { ok: true; approved: number; failed: number; ran: number }
+  | { ok: false; error: string };
+
+export async function runRembgForProduct(
+  productId: string,
+): Promise<RunRembgResult> {
+  try {
+    await requireAdmin();
+  } catch {
+    return { ok: false, error: "Not signed in." };
+  }
+  if (!UUID_RE.test(productId)) {
+    return { ok: false, error: "invalid product id" };
+  }
+
+  // Reuse the same helper updateProduct calls on Publish — no need
+  // to duplicate the "reset cutout_failed → raw, then loop, accrue
+  // approved/failed counts" logic. processPendingImagesForPublish
+  // is already idempotent (operates on raw + cutout_failed only).
+  const counts = await processPendingImagesForPublish(productId);
+
+  // Revalidate so the next render sees the fresh image rows. The
+  // banner does its own router.refresh() too, but this ensures cache
+  // entries on adjacent surfaces (admin list thumbnail) catch up.
+  revalidatePath(`/admin/products/${productId}/edit`);
+  revalidatePath("/admin");
+
+  return { ok: true, ...counts };
+}
+
+// Read-only counter that the progress banner polls every 5s while
+// the action is running. Cheaper than the action's own return — it
+// just counts rows by state. The banner uses
+//   total = raw + cutout_failed + cutout_approved + cutout_pending
+// at the moment the run started; remaining = raw + cutout_failed.
+// done = total - remaining.
+export type RembgProgressSnapshot = {
+  raw: number;
+  cutout_failed: number;
+  cutout_approved: number;
+  cutout_pending: number;
+};
+
+export async function getRembgProgress(
+  productId: string,
+): Promise<{ ok: true; snapshot: RembgProgressSnapshot } | { ok: false; error: string }> {
+  try {
+    await requireAdmin();
+  } catch {
+    return { ok: false, error: "Not signed in." };
+  }
+  if (!UUID_RE.test(productId)) {
+    return { ok: false, error: "invalid product id" };
+  }
+  const supabase = createServiceRoleClient();
+  const { data, error } = await supabase
+    .from("product_images")
+    .select("state")
+    .eq("product_id", productId);
+  if (error) return { ok: false, error: error.message };
+  const snap: RembgProgressSnapshot = {
+    raw: 0,
+    cutout_failed: 0,
+    cutout_approved: 0,
+    cutout_pending: 0,
+  };
+  for (const row of data ?? []) {
+    if (row.state === "raw") snap.raw++;
+    else if (row.state === "cutout_failed") snap.cutout_failed++;
+    else if (row.state === "cutout_approved") snap.cutout_approved++;
+    else if (row.state === "cutout_pending") snap.cutout_pending++;
+  }
+  return { ok: true, snapshot: snap };
+}
+
 // `createProduct` removed in Phase 1 收尾 P0 #4 (commit 2). The
 // /admin/products/new flow no longer POSTs a name-only form here —
 // it's a Server Component that inserts an "Untitled product" draft

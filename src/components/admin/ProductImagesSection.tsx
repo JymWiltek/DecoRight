@@ -1,5 +1,6 @@
 import { UploadDropzone } from "./UploadDropzone";
 import DeleteImageButton from "./DeleteImageButton";
+import RunRembgButton from "./RunRembgButton";
 import {
   markImageUnsatisfied,
   retryFailedImage,
@@ -180,6 +181,23 @@ export default function ProductImagesSection({
           land at <em>cutout_failed</em> and you&rsquo;ll have to retry.
         </Banner>
       )}
+
+      {/* Wave 2A · Commit 5: standalone "Run Background Removal"
+          surface. Hidden when nothing is pending; shows a determinate
+          progress banner while running; shows a result banner after.
+          Replaces the implicit "Save will rembg this for you"
+          behavior — operator now decides explicitly when to spend
+          rembg quota. */}
+      <RunRembgButton
+        productId={productId}
+        initial={{
+          raw: counts.raw,
+          cutout_failed: counts.cutout_failed,
+          cutout_approved: counts.cutout_approved,
+          cutout_pending: counts.cutout_pending,
+        }}
+        hasAnyProvider={hasAnyProvider}
+      />
 
       {/* Banners — surface what just happened in plain language. The
           err banner is rose-tinted and includes both code + message
