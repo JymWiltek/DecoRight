@@ -24,6 +24,7 @@
   "room": {
     "pickItem": "选择物件",
     "pickItemSubtitle": "在{room}里，你想买点什么？",
+    "allProducts": "全部商品",
     "empty": "该房间暂无物件分类。",
     "notFound": "未找到该房间"
   },

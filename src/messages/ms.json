@@ -24,6 +24,7 @@
   "room": {
     "pickItem": "Pilih barang",
     "pickItemSubtitle": "Di {room}, apa yang anda cari?",
+    "allProducts": "Semua produk",
     "empty": "Belum ada jenis barang dalam bilik ini.",
     "notFound": "Bilik tidak dijumpai"
   },

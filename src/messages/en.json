@@ -24,6 +24,7 @@
   "room": {
     "pickItem": "Pick an item",
     "pickItemSubtitle": "Choose what you want to shop for in {room}.",
+    "allProducts": "All products",
     "empty": "No item types in this room yet.",
     "notFound": "Room not found"
   },

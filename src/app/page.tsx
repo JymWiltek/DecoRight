@@ -1,9 +1,9 @@
-import Link from "next/link";
 import { getLocale, getTranslations } from "next-intl/server";
 import type { Locale } from "@/i18n/config";
 import SiteHeader from "@/components/SiteHeader";
 import RoomCard from "@/components/RoomCard";
 import HScrollRail from "@/components/HScrollRail";
+import ItemTypeRailCard from "@/components/ItemTypeRailCard";
 import SectionHeading from "@/components/SectionHeading";
 import { loadTaxonomy, labelFor } from "@/lib/taxonomy";
 import {
@@ -99,47 +99,12 @@ export default async function Home() {
             />
             <HScrollRail ariaLabel={tHome("browseByItem")}>
               {topItemTypes.map((it) => (
-                <li
+                <ItemTypeRailCard
                   key={it.slug}
-                  // Fixed-width card: w-32 mobile (≈128px, fits ~2.7
-                  // cards above the fold on iPhone SE), w-36 sm+
-                  // (slightly larger labels). snap-start lets the
-                  // browser align this card's left edge with the
-                  // rail's scroll-padding when the user releases a
-                  // swipe — that's the IKEA "thunk" feel.
-                  className="w-32 shrink-0 snap-start sm:w-36"
-                >
-                  <Link
-                    href={`/item/${it.slug}`}
-                    className="
-                      group flex h-full flex-col overflow-hidden
-                      rounded-lg border border-neutral-200 bg-white
-                      transition active:scale-[0.98]
-                      hover:border-black hover:shadow-sm
-                    "
-                  >
-                    <div
-                      className="
-                        flex aspect-square w-full items-center
-                        justify-center bg-gradient-to-br
-                        from-neutral-50 to-neutral-100 p-3 text-center
-                      "
-                    >
-                      <span
-                        className="
-                          text-sm font-semibold leading-tight
-                          text-neutral-900
-                          transition group-hover:scale-[1.02]
-                        "
-                      >
-                        {labelFor(it, locale)}
-                      </span>
-                    </div>
-                    <div className="px-2.5 py-1.5 text-[11px] text-neutral-500">
-                      {tHome("itemCount", { count: it.count })}
-                    </div>
-                  </Link>
-                </li>
+                  href={`/item/${it.slug}`}
+                  label={labelFor(it, locale)}
+                  countLabel={tHome("itemCount", { count: it.count })}
+                />
               ))}
             </HScrollRail>
           </section>
