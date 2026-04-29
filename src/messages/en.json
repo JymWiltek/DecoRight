@@ -11,6 +11,8 @@
   "home": {
     "itemCount": "{count, plural, =0 {No items} one {# item} other {# items}}",
     "emptyResults": "No products match your filters. Try adjusting them.",
+    "browseByItem": "Browse by item",
+    "browseByItemSubtitle": "Most-stocked categories — swipe to see more.",
     "pickRoom": "Pick a room",
     "pickRoomSubtitle": "Browse furniture by the room it goes in.",
     "roomEmpty": "No rooms yet."

@@ -11,6 +11,8 @@
   "home": {
     "itemCount": "{count, plural, =0 {Tiada produk} other {# produk}}",
     "emptyResults": "Tiada produk yang sepadan. Cuba laraskan penapis.",
+    "browseByItem": "Lihat ikut jenis",
+    "browseByItemSubtitle": "Kategori paling banyak stok — leret untuk lihat lagi.",
     "pickRoom": "Pilih bilik",
     "pickRoomSubtitle": "Cari perabot mengikut bilik yang dimasukkan.",
     "roomEmpty": "Belum ada bilik."

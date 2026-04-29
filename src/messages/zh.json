@@ -11,6 +11,8 @@
   "home": {
     "itemCount": "{count, plural, =0 {暂无商品} other {# 件商品}}",
     "emptyResults": "没有符合条件的商品，试试调整筛选。",
+    "browseByItem": "按品类浏览",
+    "browseByItemSubtitle": "最热门的品类 —— 左右滑动查看更多。",
     "pickRoom": "选择房间",
     "pickRoomSubtitle": "按摆放的房间浏览家具。",
     "roomEmpty": "暂无房间。"
