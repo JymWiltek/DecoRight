@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useTranslations } from "next-intl";
+import { useTranslations, useLocale } from "next-intl";
 import ProductGallery from "./ProductGallery";
 import ColorSwitcher, { type ColorOption } from "./ColorSwitcher";
 import { buildGlbDownload, formatMYR } from "@/lib/format";
@@ -34,6 +34,15 @@ export default function ProductDetail({
   originalRawUrls,
 }: Props) {
   const t = useTranslations("product");
+  const locale = useLocale();
+  // Locale-correct list joiner — `、` for zh, `, ` for en/ms. Built
+  // into the runtime; no extra i18n key needed. `style: "narrow"`
+  // drops the "and"/"dan" conjunction before the last item to keep
+  // these dense facet lists compact (e.g. "Modern, Minimalist,
+  // Japanese" rather than "Modern, Minimalist, and Japanese").
+  // type: "conjunction" picks the right separator per locale; "unit"
+  // would emit just spaces (it's for "5 ft 3 in" patterns).
+  const listFormatter = new Intl.ListFormat(locale, { style: "narrow", type: "conjunction" });
   const [variantIndex, setVariantIndex] = useState(0);
   const active = colors[variantIndex];
   const overrideColorHex = active?.hex ?? null;
@@ -86,19 +95,19 @@ export default function ProductDetail({
           {roomLabels.length > 0 && (
             <>
               <dt className="text-neutral-500">{t("room")}</dt>
-              <dd>{roomLabels.join("、")}</dd>
+              <dd>{listFormatter.format(roomLabels)}</dd>
             </>
           )}
           {styleLabels.length > 0 && (
             <>
               <dt className="text-neutral-500">{t("style")}</dt>
-              <dd>{styleLabels.join("、")}</dd>
+              <dd>{listFormatter.format(styleLabels)}</dd>
             </>
           )}
           {materialLabels.length > 0 && (
             <>
               <dt className="text-neutral-500">{t("material")}</dt>
-              <dd>{materialLabels.join("、")}</dd>
+              <dd>{listFormatter.format(materialLabels)}</dd>
             </>
           )}
           {product.dimensions_mm && (
@@ -124,7 +133,7 @@ export default function ProductDetail({
           {regionLabels.length > 0 && (
             <>
               <dt className="text-neutral-500">{t("availableIn")}</dt>
-              <dd>{regionLabels.join("、")}</dd>
+              <dd>{listFormatter.format(regionLabels)}</dd>
             </>
           )}
         </dl>

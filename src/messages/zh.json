@@ -3,7 +3,9 @@
     "tagline": "看到什么，就买到什么",
     "viewSite": "查看前台 →",
     "backToCatalog": "← 返回目录",
-    "home": "首页"
+    "home": "首页",
+    "breadcrumb": "面包屑导航",
+    "metaDescription": "DecoRight：3D/AR 看清楚再买的家具商城（马来西亚）。"
   },
   "language": {
     "label": "语言"
@@ -53,6 +55,10 @@
     "notFound": "未找到商品",
     "noModel": "暂无 3D 模型",
     "noImages": "暂未上传图片，请稍后再来。",
+    "galleryViewMain": "查看主图",
+    "galleryViewModel": "查看 3D 模型",
+    "galleryViewScene": "查看场景图 {n}",
+    "gallerySceneAlt": "{name} — 场景",
     "availableIn": "供应商门店",
     "itemType": "物件",
     "room": "适用房间",

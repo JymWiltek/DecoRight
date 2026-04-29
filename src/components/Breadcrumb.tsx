@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { getTranslations } from "next-intl/server";
 
 /**
  * Tiny server breadcrumb for the three-layer catalog nav:
@@ -14,10 +15,11 @@ export type BreadcrumbItem = {
   href?: string;
 };
 
-export default function Breadcrumb({ items }: { items: BreadcrumbItem[] }) {
+export default async function Breadcrumb({ items }: { items: BreadcrumbItem[] }) {
   if (items.length === 0) return null;
+  const tSite = await getTranslations("site");
   return (
-    <nav aria-label="Breadcrumb" className="mb-6 text-sm text-neutral-500">
+    <nav aria-label={tSite("breadcrumb")} className="mb-6 text-sm text-neutral-500">
       <ol className="flex flex-wrap items-center gap-1.5">
         {items.map((it, i) => {
           const isLast = i === items.length - 1;

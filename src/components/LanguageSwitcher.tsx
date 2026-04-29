@@ -2,6 +2,7 @@
 
 import { useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { useTranslations } from "next-intl";
 import { setLocale } from "@/app/actions/locale";
 import { LOCALES, LOCALE_LABELS, type Locale } from "@/i18n/config";
 
@@ -25,12 +26,13 @@ type Props = {
 export default function LanguageSwitcher({ current }: Props) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
+  const tLanguage = useTranslations("language");
 
   return (
     <label className="flex items-center gap-1.5 text-xs text-neutral-500">
       <span aria-hidden="true">🌐</span>
       <select
-        aria-label="Language"
+        aria-label={tLanguage("label")}
         value={current}
         disabled={pending}
         onChange={(e) => {

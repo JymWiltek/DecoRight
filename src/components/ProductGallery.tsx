@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useTranslations } from "next-intl";
 import ModelViewer from "./ModelViewer";
 
 /**
@@ -59,6 +60,7 @@ export default function ProductGallery({
   overrideColorHex,
   emptyLabel,
 }: Props) {
+  const t = useTranslations("product");
   // 3D wins the main slot when present. The styled-thumbnail only
   // appears as the silent fallback when there's no GLB — we never
   // want to show both because the cutout-on-gradient composite is
@@ -130,7 +132,7 @@ export default function ProductGallery({
           // eslint-disable-next-line @next/next/no-img-element
           <img
             src={current.rawUrl}
-            alt={`${productName} — scene`}
+            alt={t("gallerySceneAlt", { name: productName })}
             className="h-full w-full object-cover"
           />
         )}
@@ -151,7 +153,7 @@ export default function ProductGallery({
                 key={i}
                 type="button"
                 onClick={() => setActive(i)}
-                aria-label={`View ${slideLabel(s, i)}`}
+                aria-label={slideAriaLabel(s, i, t)}
                 aria-current={isActive ? "true" : undefined}
                 className={`relative h-16 w-16 flex-none overflow-hidden rounded border-2 transition ${
                   isActive
@@ -169,10 +171,14 @@ export default function ProductGallery({
   );
 }
 
-function slideLabel(s: Slide, i: number): string {
-  if (s.kind === "styled-thumbnail") return "main thumbnail";
-  if (s.kind === "model") return "3D model";
-  return `scene photo ${i}`;
+function slideAriaLabel(
+  s: Slide,
+  i: number,
+  t: (key: string, values?: Record<string, string | number>) => string,
+): string {
+  if (s.kind === "styled-thumbnail") return t("galleryViewMain");
+  if (s.kind === "model") return t("galleryViewModel");
+  return t("galleryViewScene", { n: i });
 }
 
 function ThumbPreview({ slide }: { slide: Slide }) {

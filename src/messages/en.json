@@ -3,7 +3,9 @@
     "tagline": "See it, buy it",
     "viewSite": "View site →",
     "backToCatalog": "← Back to catalog",
-    "home": "Home"
+    "home": "Home",
+    "breadcrumb": "Breadcrumb",
+    "metaDescription": "DecoRight: a see-it, buy-it 3D/AR product catalog for Malaysia."
   },
   "language": {
     "label": "Language"
@@ -53,6 +55,10 @@
     "notFound": "Product not found",
     "noModel": "No 3D model yet",
     "noImages": "No photos uploaded yet — please check back soon.",
+    "galleryViewMain": "View main thumbnail",
+    "galleryViewModel": "View 3D model",
+    "galleryViewScene": "View scene photo {n}",
+    "gallerySceneAlt": "{name} — scene",
     "itemType": "Item",
     "room": "Room",
     "style": "Style",

@@ -3,7 +3,9 @@
     "tagline": "Lihat, terus beli",
     "viewSite": "Lihat laman →",
     "backToCatalog": "← Kembali ke katalog",
-    "home": "Utama"
+    "home": "Utama",
+    "breadcrumb": "Pautan navigasi",
+    "metaDescription": "DecoRight: katalog perabot 3D/AR Malaysia — lihat dulu, beli dengan yakin."
   },
   "language": {
     "label": "Bahasa"
@@ -53,6 +55,10 @@
     "notFound": "Produk tidak dijumpai",
     "noModel": "Tiada model 3D lagi",
     "noImages": "Belum ada gambar dimuat naik — sila kembali tidak lama lagi.",
+    "galleryViewMain": "Lihat imej utama",
+    "galleryViewModel": "Lihat model 3D",
+    "galleryViewScene": "Lihat foto suasana {n}",
+    "gallerySceneAlt": "{name} — suasana",
     "availableIn": "Lokasi kedai",
     "itemType": "Jenis",
     "room": "Bilik",
