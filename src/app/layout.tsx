@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
 import { NextIntlClientProvider } from "next-intl";
 import { getMessages, getLocale } from "next-intl/server";
@@ -27,6 +27,36 @@ export const metadata: Metadata = {
       ...LOCALES.map((l) => [l, "/"]),
     ]),
   },
+};
+
+/**
+ * Mobile-first storefront foundation (Wave UI · Commit 1).
+ *
+ * Without an explicit viewport meta, mobile Safari renders the page at
+ * its desktop default width and scales to fit, which downsizes type and
+ * makes Tailwind's mobile-first breakpoints fire as if the device were
+ * 980px wide. Setting `width: device-width` is the one-line fix that
+ * lets every `sm:`/`md:` breakpoint below behave correctly.
+ *
+ * `initialScale: 1`     — render at 1:1 on first paint (no auto-zoom).
+ * `maximumScale: 5`     — let users pinch-zoom for accessibility (we
+ *                          do NOT lock zoom; some operators / interior
+ *                          designers will want to inspect product
+ *                          photos closely).
+ * `viewportFit: cover`  — extends the layout under iOS safe-area
+ *                          insets (notch / home indicator) so the
+ *                          background color reaches the screen edge.
+ *                          Per-component padding still respects insets
+ *                          via Tailwind's `safe-` utilities where it
+ *                          matters (none used yet — call it out if a
+ *                          fixed CTA bar is added later).
+ */
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 5,
+  viewportFit: "cover",
+  themeColor: "#ffffff",
 };
 
 export default async function RootLayout({
