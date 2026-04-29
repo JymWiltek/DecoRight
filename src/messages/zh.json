@@ -30,7 +30,10 @@
   },
   "itemType": {
     "empty": "该分类下暂无商品，稍后再来看看。",
-    "notFound": "未找到该物件分类"
+    "notFound": "未找到该物件分类",
+    "alsoIn": "{room}里也常配",
+    "subtype": "款式",
+    "subtypeAll": "全部"
   },
   "filters": {
     "search": "搜索",

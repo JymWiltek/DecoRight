@@ -30,7 +30,10 @@
   },
   "itemType": {
     "empty": "Belum ada produk dalam kategori ini. Kembali nanti.",
-    "notFound": "Jenis barang tidak dijumpai"
+    "notFound": "Jenis barang tidak dijumpai",
+    "alsoIn": "Lain-lain di {room}",
+    "subtype": "Jenis",
+    "subtypeAll": "Semua"
   },
   "filters": {
     "search": "Cari",

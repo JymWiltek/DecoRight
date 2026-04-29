@@ -30,7 +30,10 @@
   },
   "itemType": {
     "empty": "No products in this category yet. Check back soon.",
-    "notFound": "Item type not found"
+    "notFound": "Item type not found",
+    "alsoIn": "Also in {room}",
+    "subtype": "Type",
+    "subtypeAll": "All"
   },
   "filters": {
     "search": "Search",

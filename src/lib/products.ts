@@ -11,6 +11,16 @@ export type ProductFilters = {
    * equals X — one .overlaps() call, no pre-resolution needed.
    */
   rooms?: string[];
+  /**
+   * Wave UI · Commit 5: subtype filter on the item-type internal
+   * page. products.subtype_slug is a single nullable column, so this
+   * is an `.in()` set match. Empty array (or undefined) → no filter,
+   * which is the "All" pill. Multiple values are supported because the
+   * URL parser reuses the same comma-list semantics as styles/colors;
+   * the UI only ever picks one at a time but the wire format stays
+   * uniform.
+   */
+  subtypes?: string[];
   styles?: string[];
   colors?: string[];
   materials?: string[];
@@ -35,6 +45,9 @@ export async function listPublishedProducts(
   }
   if (filters.itemTypes?.length) {
     query = query.in("item_type", filters.itemTypes);
+  }
+  if (filters.subtypes?.length) {
+    query = query.in("subtype_slug", filters.subtypes);
   }
 
   // Array columns: overlap = product matches if ANY of the user's

@@ -1,4 +1,5 @@
 import { Suspense } from "react";
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getLocale, getTranslations } from "next-intl/server";
 import type { Locale } from "@/i18n/config";
@@ -6,7 +7,11 @@ import SiteHeader from "@/components/SiteHeader";
 import FilterPanel from "@/components/FilterPanel";
 import ProductCard from "@/components/ProductCard";
 import Breadcrumb from "@/components/Breadcrumb";
+import HScrollRail from "@/components/HScrollRail";
+import SectionHeading from "@/components/SectionHeading";
+import ItemTypeRailCard from "@/components/ItemTypeRailCard";
 import { listPublishedProducts, type ProductFilters } from "@/lib/products";
+import { publishedCountsByItemTypeInRoom } from "@/lib/products";
 import { loadTaxonomy, labelFor, labelMap, colorHexMap } from "@/lib/taxonomy";
 import { BRAND } from "@config/brand";
 
@@ -51,15 +56,35 @@ export async function generateMetadata({ params }: PageProps) {
 }
 
 /**
- * Layer 3: the actual product list, scoped to a single item_type.
- * Style / color / material / price / sort remain available via
- * FilterPanel because those cut across item_types — a "red oak dining
- * chair" and "red oak sofa" answer different shopping questions, but
- * within dining chairs the user still wants to narrow by color.
+ * Layer 3 of the catalog — the item-type internal page.
  *
- * The item_type and its parent room are fixed by the URL, so the
- * filter panel hides those groups — clicking "another room" means
- * navigating back up, not restyling the URL with conflicting picks.
+ * Existing behavior (kept):
+ *   • style / color / material / price / sort filters via FilterPanel.
+ *   • item_type fixed by URL; ?room= scopes the product query so
+ *     /item/faucet?room=kitchen hides bathroom faucets.
+ *
+ * Wave UI · Commit 5 additions:
+ *
+ *   1. Subtype pills — when the item_type owns subtypes (Faucet →
+ *      pull-out / sensor / wall-mounted / …), render a horizontal
+ *      pill row above the product grid. Each pill flips
+ *      `?subtype=<slug>`. "All" clears the subtype filter. Hidden
+ *      entirely when the item_type has zero subtypes — adding a
+ *      single-pill row would be visual noise.
+ *
+ *   2. Sibling rail — when ?room= is present and the same room has
+ *      OTHER item_types with published products, show those siblings
+ *      in an HScrollRail labelled "Also in {room}". Drives the
+ *      "browsing the kitchen, just bought a faucet, also need a
+ *      sink" cross-sell without forcing the visitor back to
+ *      /room/[slug]. Excludes the current item_type — the user is
+ *      already on it. Hidden when no ?room= or no siblings (the
+ *      visitor came in via /item/[slug] without room context, or the
+ *      room only has this one item_type with stock).
+ *
+ * Both new UI pieces sit ABOVE FilterPanel because they're navigation
+ * (jump elsewhere) or coarse filtering (subtype). The fine filters
+ * (style/color/material) stay in FilterPanel where they belong.
  */
 export default async function ItemTypePage({ params, searchParams }: PageProps) {
   const { slug } = await params;
@@ -89,6 +114,20 @@ export default async function ItemTypePage({ params, searchParams }: PageProps) 
     ? taxonomy.rooms.find((r) => r.slug === roomSlugParam) ?? null
     : null;
 
+  // Subtype filter (Wave UI · Commit 5). Subtypes belong to a single
+  // item_type via item_type_slug — clamp the URL pick to subtypes
+  // that actually live under the current item_type. A stray
+  // ?subtype=xxx that doesn't belong here is silently ignored
+  // (defends against hand-typed URLs and old links after a subtype
+  // gets renamed).
+  const subtypesForItemType = taxonomy.itemSubtypes.filter(
+    (s) => s.item_type_slug === itemType.slug,
+  );
+  const subtypeSlug = pickOne(
+    sp.subtype,
+    subtypesForItemType.map((s) => s.slug),
+  );
+
   const styleSlugs = new Set(taxonomy.styles.map((r) => r.slug));
   const colorSlugs = new Set(taxonomy.colors.map((r) => r.slug));
   const materialSlugs = new Set(taxonomy.materials.map((r) => r.slug));
@@ -102,6 +141,7 @@ export default async function ItemTypePage({ params, searchParams }: PageProps) 
     q: typeof sp.q === "string" ? sp.q : undefined,
     itemTypes: [itemType.slug],
     rooms: room ? [room.slug] : undefined,
+    subtypes: subtypeSlug ? [subtypeSlug] : undefined,
     styles: pickMany(sp.styles, styleSlugs),
     colors: pickMany(sp.colors, colorSlugs),
     materials: pickMany(sp.materials, materialSlugs),
@@ -112,6 +152,18 @@ export default async function ItemTypePage({ params, searchParams }: PageProps) 
       | undefined,
   };
 
+  // Sibling rail data — only fetched when ?room= is meaningful.
+  // publishedCountsByItemTypeInRoom is tag-cached per-room so this
+  // is a no-extra-cost call when the room page already warmed it.
+  const siblingCounts = room
+    ? await publishedCountsByItemTypeInRoom(room.slug)
+    : {};
+  const siblingItemTypes = room
+    ? taxonomy.itemTypes
+        .filter((it) => it.slug !== itemType.slug)
+        .filter((it) => (siblingCounts[it.slug] ?? 0) > 0)
+    : [];
+
   const products = await listPublishedProducts(filters);
   const itemTypeLabels = labelMap(taxonomy.itemTypes, locale);
   const styleLabels = labelMap(taxonomy.styles, locale);
@@ -119,6 +171,11 @@ export default async function ItemTypePage({ params, searchParams }: PageProps) 
 
   const itemTypeLabel = labelFor(itemType, locale);
   const roomLabel = room ? labelFor(room, locale) : null;
+
+  // Helper: build a `?room=…` query string preserving room context
+  // for outgoing links from the sibling rail. Subtype pills strip
+  // ?subtype but preserve ?room.
+  const roomQS = room ? `?room=${room.slug}` : "";
 
   return (
     <>
@@ -142,6 +199,96 @@ export default async function ItemTypePage({ params, searchParams }: PageProps) 
             {tHome("itemCount", { count: products.length })}
           </div>
         </div>
+
+        {/* ─── Sibling rail · Also in {room} ──────────────────────
+         *
+         * Cross-sell into other item_types in the same room. Only
+         * renders when ?room= is present AND there's at least one
+         * other stocked item_type in that room. On a /item/faucet
+         * (no room) hit this is hidden — there's no contextual room
+         * to anchor the rail to.
+         */}
+        {room && roomLabel && siblingItemTypes.length > 0 ? (
+          <section className="mb-8 sm:mb-10">
+            <SectionHeading title={tItem("alsoIn", { room: roomLabel })} />
+            <HScrollRail ariaLabel={tItem("alsoIn", { room: roomLabel })}>
+              {siblingItemTypes.map((it) => {
+                const count = siblingCounts[it.slug] ?? 0;
+                return (
+                  <ItemTypeRailCard
+                    key={it.slug}
+                    href={`/item/${it.slug}?room=${room.slug}`}
+                    label={labelFor(it, locale)}
+                    countLabel={tHome("itemCount", { count })}
+                  />
+                );
+              })}
+            </HScrollRail>
+          </section>
+        ) : null}
+
+        {/* ─── Subtype pills · narrow within this item_type ───────
+         *
+         * Hidden when the item_type has no subtypes. When it does,
+         * an "All" pill is always present so the visitor can clear a
+         * subtype pick without retyping the URL. Active pill flips
+         * to filled-dark; inactive stays bordered. Horizontal-scroll
+         * for long subtype lists — on a 375px viewport with 7+
+         * subtypes the row would otherwise wrap into 2-3 untidy
+         * lines. Same overflow trick as HScrollRail (`-mx-4` +
+         * scrollbar hiding) so the row reaches edge-to-edge.
+         */}
+        {subtypesForItemType.length > 0 ? (
+          <div
+            className="
+              -mx-4 mb-6 overflow-x-auto px-4 pb-1
+              [scrollbar-width:none]
+              [&::-webkit-scrollbar]:hidden
+            "
+            role="group"
+            aria-label={tItem("subtype")}
+          >
+            <div className="flex gap-2">
+              <Link
+                href={`/item/${itemType.slug}${roomQS}`}
+                className={`shrink-0 whitespace-nowrap rounded-full border px-3 py-1 text-xs font-medium transition ${
+                  !subtypeSlug
+                    ? "border-black bg-black text-white"
+                    : "border-neutral-300 bg-white text-neutral-700 hover:border-black"
+                }`}
+              >
+                {tItem("subtypeAll")}
+              </Link>
+              {subtypesForItemType.map((s) => {
+                const active = subtypeSlug === s.slug;
+                // Each subtype pill writes ?subtype=<slug> while
+                // preserving ?room=. We rebuild the full querystring
+                // rather than using URLSearchParams because the page
+                // is a Server Component — sp arrived as a plain
+                // object and we only ever care about two keys here
+                // (room, subtype). Other params (styles/colors/etc.)
+                // get reset on subtype change, which is intentional:
+                // changing the rough cut should reset the fine cuts.
+                const qs = new URLSearchParams();
+                if (room) qs.set("room", room.slug);
+                qs.set("subtype", s.slug);
+                return (
+                  <Link
+                    key={s.slug}
+                    href={`/item/${itemType.slug}?${qs.toString()}`}
+                    className={`shrink-0 whitespace-nowrap rounded-full border px-3 py-1 text-xs font-medium transition ${
+                      active
+                        ? "border-black bg-black text-white"
+                        : "border-neutral-300 bg-white text-neutral-700 hover:border-black"
+                    }`}
+                  >
+                    {labelFor(s, locale)}
+                  </Link>
+                );
+              })}
+            </div>
+          </div>
+        ) : null}
 
         <div className="grid gap-8 md:grid-cols-[240px_1fr]">
           <Suspense>
