@@ -13,6 +13,11 @@ import { inferProductFields } from "@/lib/ai/infer";
 import { requireAdmin } from "@/lib/auth/require-admin";
 import { invalidatePublishedCountsCache } from "@/lib/products";
 import { runRembgForImage } from "@/lib/rembg/pipeline";
+import {
+  checkPublishGates,
+  type PublishGateInput,
+  type PublishGateReason,
+} from "@/lib/publish-gates";
 // Wave 2B · Commit 7 retired the held-back-status pattern: updateProduct
 // no longer auto-kicks Meshy as a side effect of Publish. The kickoff
 // helper is still imported because `generate3DForProduct` (the explicit
@@ -445,37 +450,8 @@ export async function getRembgProgress(
   return { ok: true, snapshot: snap };
 }
 
-// ─── Wave 2B · Commit 7: Publish gate enforcement ─────────────
-//
-// Three gates a product must satisfy before status='published' is
-// allowed. Shared between updateProduct (form save), bulkUpdateStatusAction
-// (list bulk action), and setProductStatusAction (URL-addressable inline
-// status flip — Commit 9 retires the dropdown UI but keeps the action
-// gated for defense-in-depth).
-//
-// Gates in fail-order — we surface the FIRST failing one to the
-// operator. Earlier gates are cheaper to fix (rooms = a few clicks
-// in a picker), later ones spend money (GLB = run Meshy ~$0.20).
-// Reporting them in cost order lets the operator fix the cheap
-// blockers first instead of paying for Meshy then discovering they
-// also forgot to pick rooms.
-
-export type PublishGateInput = {
-  rooms: string[];
-  glbUrl: string | null;
-  cutoutApprovedCount: number;
-};
-
-export type PublishGateReason = "rooms" | "cutouts" | "glb";
-
-export function checkPublishGates(input: PublishGateInput):
-  | { ok: true }
-  | { ok: false; reason: PublishGateReason } {
-  if (input.rooms.length === 0) return { ok: false, reason: "rooms" };
-  if (input.cutoutApprovedCount < 1) return { ok: false, reason: "cutouts" };
-  if (!input.glbUrl) return { ok: false, reason: "glb" };
-  return { ok: true };
-}
+// Publish gate logic moved to src/lib/publish-gates.ts — sync exports
+// aren't allowed in "use server" files under Turbopack. Imported above.
 
 /**
  * Read the three gate-relevant facts for a product in one round-trip
