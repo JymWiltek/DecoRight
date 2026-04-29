@@ -2,7 +2,7 @@ import Link from "next/link";
 import { getLocale, getTranslations } from "next-intl/server";
 import type { Locale } from "@/i18n/config";
 import SiteHeader from "@/components/SiteHeader";
-import CategoryTile from "@/components/CategoryTile";
+import RoomCard from "@/components/RoomCard";
 import HScrollRail from "@/components/HScrollRail";
 import SectionHeading from "@/components/SectionHeading";
 import { loadTaxonomy, labelFor } from "@/lib/taxonomy";
@@ -145,11 +145,36 @@ export default async function Home() {
           </section>
         ) : null}
 
-        {/* ─── Section 3 · Rooms ──────────────────────────────────
+        {/* ─── Section 2 · Tagline ───────────────────────────────
          *
-         * Existing room grid. Commit 3 will redesign this with cover
-         * photos (Unsplash → own-bucket); kept as-is in commit 2 to
-         * keep this commit's diff focused on the new rail.
+         * "See it, buy it" / "看到什么，就买到什么" / "Lihat, terus beli".
+         * One short line that sets the value prop before the room
+         * grid. Centered, slightly muted; not a hero — the room grid
+         * directly below is the actual landing surface. We deliberately
+         * do NOT add a CTA here: the rail above and the grid below
+         * already give two click paths, a third would dilute.
+         */}
+        <section className="mb-8 text-center sm:mb-12">
+          <p className="mx-auto max-w-md text-base font-medium text-neutral-700 sm:text-lg">
+            {tHome("tagline")}
+          </p>
+        </section>
+
+        {/* ─── Section 3 · Rooms (cover-led grid) ─────────────────
+         *
+         * Migration 0020 added rooms.cover_url. The 6 Notion-design
+         * primary rooms (living/dining/kitchen/bedroom/bathroom/
+         * balcony) have Unsplash covers seeded into our own
+         * thumbnails bucket via scripts/seed-room-covers.ts. The
+         * other 6 legacy rooms keep cover_url = NULL and fall back
+         * to the typographic tile inside RoomCard — which means the
+         * grid stays coherent even before Jym ships real photographs
+         * for the legacy rooms.
+         *
+         * Mobile: 2 cols. Tablet+: 3 cols. Desktop: 4 cols. The
+         * Notion design only specs 6 cards; we still render all 12
+         * because the catalog spans them, but the 6 covered ones
+         * dominate visually.
          */}
         <header className="mb-4 sm:mb-8">
           <h1 className="text-2xl font-semibold text-neutral-900 sm:text-3xl">
@@ -169,17 +194,51 @@ export default async function Home() {
             {taxonomy.rooms.map((r) => {
               const count = roomCounts[r.slug] ?? 0;
               return (
-                <CategoryTile
+                <RoomCard
                   key={r.slug}
                   href={`/room/${r.slug}`}
                   label={labelFor(r, locale)}
                   count={count}
                   countLabel={tHome("itemCount", { count })}
+                  coverUrl={r.cover_url}
                 />
               );
             })}
           </div>
         )}
+
+        {/* ─── Section 4 · AI Inspiration (placeholder) ──────────
+         *
+         * Phase 3+. For now: a single static "coming soon" card so
+         * users (and Jym, when reviewing the design) see where the
+         * AI feature will land without a half-built UI. NO data, NO
+         * API call, NO interactivity — just informational.
+         *
+         * Placed at the bottom of the home page, after the room grid:
+         * this is exploratory / future-looking content; users who
+         * want to shop have already had the rail (Section 1) and the
+         * room grid (Section 3) above. Section 4 is for browsers who
+         * scrolled all the way down.
+         */}
+        <section className="mt-12 sm:mt-16">
+          <div
+            className="
+              rounded-lg border border-dashed border-neutral-300
+              bg-gradient-to-br from-violet-50 via-white to-amber-50
+              px-5 py-8 text-center sm:px-8 sm:py-12
+            "
+          >
+            <div className="mx-auto inline-flex items-center gap-2 rounded-full bg-violet-100 px-3 py-1 text-[11px] font-medium uppercase tracking-wide text-violet-700">
+              <span>{tHome("aiBadge")}</span>
+            </div>
+            <h2 className="mt-3 text-xl font-semibold text-neutral-900 sm:text-2xl">
+              {tHome("aiInspirationTitle")}
+            </h2>
+            <p className="mx-auto mt-2 max-w-md text-sm text-neutral-600">
+              {tHome("aiInspirationSubtitle")}
+            </p>
+          </div>
+        </section>
       </main>
     </>
   );

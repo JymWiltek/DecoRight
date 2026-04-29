@@ -13,9 +13,13 @@
     "emptyResults": "没有符合条件的商品，试试调整筛选。",
     "browseByItem": "按品类浏览",
     "browseByItemSubtitle": "最热门的品类 —— 左右滑动查看更多。",
+    "tagline": "3D 看清楚 · AR 试摆放 · 看到什么就买到什么。",
     "pickRoom": "选择房间",
     "pickRoomSubtitle": "按摆放的房间浏览家具。",
-    "roomEmpty": "暂无房间。"
+    "roomEmpty": "暂无房间。",
+    "aiBadge": "即将上线",
+    "aiInspirationTitle": "AI 灵感设计",
+    "aiInspirationSubtitle": "未来：描述你的空间，AI 帮你搭一整间房 —— 每一件都能 3D 预览、AR 试摆。"
   },
   "room": {
     "pickItem": "选择物件",

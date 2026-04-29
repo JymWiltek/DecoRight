@@ -13,9 +13,13 @@
     "emptyResults": "Tiada produk yang sepadan. Cuba laraskan penapis.",
     "browseByItem": "Lihat ikut jenis",
     "browseByItemSubtitle": "Kategori paling banyak stok — leret untuk lihat lagi.",
+    "tagline": "Lihat dalam 3D · cuba dengan AR · beli dengan yakin.",
     "pickRoom": "Pilih bilik",
     "pickRoomSubtitle": "Cari perabot mengikut bilik yang dimasukkan.",
-    "roomEmpty": "Belum ada bilik."
+    "roomEmpty": "Belum ada bilik.",
+    "aiBadge": "Akan datang",
+    "aiInspirationTitle": "Inspirasi AI untuk reka bentuk",
+    "aiInspirationSubtitle": "Tidak lama lagi: huraikan ruang anda, AI cadangkan idea bilik — setiap perabot boleh dilihat 3D & AR sebelum dibeli."
   },
   "room": {
     "pickItem": "Pilih barang",

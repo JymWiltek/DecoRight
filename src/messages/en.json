@@ -13,9 +13,13 @@
     "emptyResults": "No products match your filters. Try adjusting them.",
     "browseByItem": "Browse by item",
     "browseByItemSubtitle": "Most-stocked categories — swipe to see more.",
+    "tagline": "See it in 3D · live with AR · then buy with confidence.",
     "pickRoom": "Pick a room",
     "pickRoomSubtitle": "Browse furniture by the room it goes in.",
-    "roomEmpty": "No rooms yet."
+    "roomEmpty": "No rooms yet.",
+    "aiBadge": "Coming soon",
+    "aiInspirationTitle": "AI design inspiration",
+    "aiInspirationSubtitle": "Soon: describe your space, get curated room ideas — every piece shoppable in 3D and AR."
   },
   "room": {
     "pickItem": "Pick an item",

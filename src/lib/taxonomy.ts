@@ -9,6 +9,7 @@ import type {
   ItemTypeRoomRow,
   ItemSubtypeRow,
   RegionRow,
+  RoomRow,
 } from "./supabase/types";
 
 /** Cookie-free anon client. Taxonomy tables have public-read RLS, so no
@@ -38,7 +39,10 @@ export type Taxonomy = {
    *  and to list relevant item types on /room/[slug]. NOT a
    *  constraint on which rooms a product may have. */
   itemTypeRooms: ItemTypeRoomRow[];
-  rooms: TaxonomyRow[];
+  /** Migration 0020: each room can carry an optional cover photo
+   *  URL for the redesigned home grid. Falls back to gradient tile
+   *  when null. */
+  rooms: RoomRow[];
   styles: TaxonomyRow[];
   materials: TaxonomyRow[];
   colors: ColorRow[];
@@ -97,10 +101,13 @@ export async function loadTaxonomy(): Promise<Taxonomy> {
         regions: rg.data ?? [],
       };
     },
-    // v4 — P1 #2: 5 tables flipped to label_en sort. Bump the cache
-    // key so prod/staging fetches don't serve a stale sort_order
-    // payload from the old tag.
-    ["taxonomy-v4"],
+    // v5 — Wave UI · Commit 3: rooms gained a cover_url column
+    // (migration 0020). Stale cached payloads from v4 would render
+    // every room with the typographic fallback for ~5 min after
+    // deploy because the field would be `undefined` instead of the
+    // newly-seeded URL. Bumping the cache key forces a fresh load
+    // so the room covers show up on first visit post-deploy.
+    ["taxonomy-v5"],
     { tags: [TAG], revalidate: 300 },
   )();
 }

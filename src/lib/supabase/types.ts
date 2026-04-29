@@ -243,6 +243,15 @@ export type ItemTypeRow = TaxonomyRow & {
   attribute_schema: AttributeSchemaField[];
 };
 
+/** Migration 0020 — rooms get an optional cover photo URL for the
+ *  redesigned home grid. Cover image lives in our `thumbnails`
+ *  public bucket so we can swap source (Unsplash placeholder → real
+ *  photographs) without FE changes. NULL → FE falls back to a
+ *  typographic gradient tile. */
+export type RoomRow = TaxonomyRow & {
+  cover_url: string | null;
+};
+
 /** Migration 0013 — M2M between item_types and rooms. A single
  *  item_type can be associated with multiple rooms (faucet →
  *  kitchen / bathroom / balcony). Used by the admin form to
@@ -411,9 +420,9 @@ export type Database = {
         Relationships: [];
       };
       rooms: {
-        Row: TaxonomyRow;
-        Insert: TaxonomyInsert;
-        Update: Partial<TaxonomyRow>;
+        Row: RoomRow;
+        Insert: TaxonomyInsert & { cover_url?: string | null };
+        Update: Partial<RoomRow>;
         Relationships: [];
       };
       styles: {
