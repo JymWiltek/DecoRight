@@ -156,7 +156,18 @@ export default async function Home() {
           </div>
         ) : (
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
-            {taxonomy.rooms.map((r) => {
+            {/*
+              loadTaxonomy() returns rooms ordered by `label_en` (alpha)
+              so the admin/filter UIs stay A-Z stable. The home grid
+              instead wants the curated `sort_order` (mig 0025): real
+              rooms 1-11 first (with covers floating to the top of that
+              band as more get shot), storefront-internal categories
+              like Curtain / Door / Lighting at 20+. Sort on a slice so
+              we don't mutate the cached taxonomy array.
+            */}
+            {[...taxonomy.rooms]
+              .sort((a, b) => a.sort_order - b.sort_order)
+              .map((r) => {
               const count = roomCounts[r.slug] ?? 0;
               return (
                 <RoomCard
