@@ -76,7 +76,36 @@ export default async function RootLayout({
       lang={locale}
       className={`${inter.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col font-sans overflow-x-hidden">
+      {/*
+        No `flex flex-col` on body — see HScrollRail-scroll regression.
+        Wave UI · Commit 3 (c2ecc35) had `flex flex-col` for an
+        anticipated sticky-footer pattern, then patched the resulting
+        regression with `overflow-x-hidden` because HScrollRail's
+        content was leaking past the viewport. That fix was a band-aid:
+        it clipped the visual overflow but left `<main>` sized at the
+        rail's intrinsic content width. With `flex flex-col` on body,
+        `<main>` is a flex item and inherits `min-width: auto`, which
+        resolves to its descendants' min-content. The rail's `<ul>`
+        is a flex container with `shrink-0` cards summing to ~1000px
+        on mobile, so `<main>` was forced to 1000px and body's
+        `overflow-x-hidden` clipped it visually. Side effect Wave 1
+        missed: the rail's `<ul>` was sized at its own content width
+        too, so its `overflow-x: auto` had nothing to scroll — users
+        saw a frozen, fully-rendered IKEA strip.
+
+        Removing `flex flex-col` makes `<main>` a normal block: width
+        defaults to 100% of body, the rail's `<ul>` becomes narrower
+        than its scroll content, and `overflow-x: auto` does its job.
+        Re-introduce `flex flex-col` only alongside `[&>*]:min-w-0`
+        on body when a sticky-footer pattern is actually shipped.
+
+        `overflow-x-hidden` retained as defense in depth: with the
+        root cause gone it has nothing to clip, but it keeps any
+        future regression that reintroduces a wide unconstrained
+        descendant from breaking the page horizontally before someone
+        notices.
+      */}
+      <body className="min-h-full font-sans overflow-x-hidden">
         <NextIntlClientProvider locale={locale} messages={messages}>
           {children}
         </NextIntlClientProvider>
