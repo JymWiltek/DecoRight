@@ -12,7 +12,6 @@ import {
   publishedCountsByItemTypeInRoom,
   listPublishedProducts,
 } from "@/lib/products";
-import { BRAND } from "@config/brand";
 
 // Intentionally NOT `force-dynamic`. `loadTaxonomy`,
 // `publishedCountsByItemTypeInRoom`, and `listPublishedProducts`
@@ -28,8 +27,11 @@ export async function generateMetadata({ params }: PageProps) {
     getTranslations("room"),
   ]);
   const room = taxonomy.rooms.find((r) => r.slug === slug);
-  if (!room) return { title: `${tRoom("notFound")} · ${BRAND.name}` };
-  return { title: `${labelFor(room, locale)} · ${BRAND.name}` };
+  // Title is just the page noun; the brand suffix is appended by the
+  // root layout's `title.template` ('%s · DecoRight'). Returning the
+  // brand here too produced "Office · DecoRight · DecoRight" in prod.
+  if (!room) return { title: tRoom("notFound") };
+  return { title: labelFor(room, locale) };
 }
 
 /**

@@ -13,7 +13,6 @@ import ItemTypeRailCard from "@/components/ItemTypeRailCard";
 import { listPublishedProducts, type ProductFilters } from "@/lib/products";
 import { publishedCountsByItemTypeInRoom } from "@/lib/products";
 import { loadTaxonomy, labelFor, labelMap, colorHexMap } from "@/lib/taxonomy";
-import { BRAND } from "@config/brand";
 
 // `searchParams` + cookie-aware product query already make this page
 // dynamic. Explicit `force-dynamic` only adds `cache-control: no-store`
@@ -51,8 +50,11 @@ export async function generateMetadata({ params }: PageProps) {
     getTranslations("itemType"),
   ]);
   const it = taxonomy.itemTypes.find((r) => r.slug === slug);
-  if (!it) return { title: `${tItem("notFound")} · ${BRAND.name}` };
-  return { title: `${labelFor(it, locale)} · ${BRAND.name}` };
+  // Title is just the page noun; the brand suffix is appended by the
+  // root layout's `title.template` ('%s · DecoRight'). Returning the
+  // brand here too produced "Mirror · DecoRight · DecoRight" in prod.
+  if (!it) return { title: tItem("notFound") };
+  return { title: labelFor(it, locale) };
 }
 
 /**

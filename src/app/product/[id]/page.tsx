@@ -8,7 +8,6 @@ import { getPublishedProductById } from "@/lib/products";
 import { createServiceRoleClient } from "@/lib/supabase/service";
 import { getSignedRawUrl } from "@/lib/storage";
 import { labelFor, labelMap, loadTaxonomy } from "@/lib/taxonomy";
-import { BRAND } from "@config/brand";
 
 export const dynamic = "force-dynamic";
 
@@ -17,12 +16,15 @@ type PageProps = { params: Promise<{ id: string }> };
 export async function generateMetadata({ params }: PageProps) {
   const { id } = await params;
   const product = await getPublishedProductById(id);
+  // Title is just the page noun; the brand suffix is appended by the
+  // root layout's `title.template` ('%s · DecoRight'). Returning the
+  // brand here too produced "<name> · DecoRight · DecoRight" in prod.
   if (!product) {
     const t = await getTranslations("product");
-    return { title: `${t("notFound")} · ${BRAND.name}` };
+    return { title: t("notFound") };
   }
   return {
-    title: `${product.name} · ${BRAND.name}`,
+    title: product.name,
     description: product.description ?? undefined,
   };
 }
