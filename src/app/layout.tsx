@@ -11,14 +11,37 @@ const inter = Inter({
   subsets: ["latin"],
 });
 
+/** Map our 2-letter locale to the BCP-47 + region OG/HTML expects.
+ *  - Open Graph wants underscore variants (en_US, zh_CN, ms_MY).
+ *  - hreflang wants hyphen variants (en, zh-CN, ms-MY).
+ *  We don't gate by literal user IP — DecoRight serves Malaysia, so
+ *  ms is ms-MY (not ms-ID), zh is zh-CN (the source-of-truth tagline
+ *  is Simplified, matches BRAND.locale), en is en-US (no en-MY in
+ *  Facebook's locale list anyway). */
+const OG_LOCALE: Record<string, string> = {
+  en: "en_US",
+  zh: "zh_CN",
+  ms: "ms_MY",
+};
+
 export async function generateMetadata(): Promise<Metadata> {
   const tSite = await getTranslations("site");
+  const locale = await getLocale();
+  const defaultTitle = `${BRAND.name} — ${tSite("tagline")}`;
+  const description = tSite("metaDescription");
   return {
+    // Resolves every relative URL in this metadata tree (and every
+    // child page that doesn't supply its own metadataBase) against
+    // the canonical origin. Without this, Next emits a build-time
+    // warning AND falls back to localhost:3000 in dev / VERCEL_URL
+    // in prod — neither of which is the URL you want crawlers to
+    // store. See config/brand.ts for the rationale on hard-coding.
+    metadataBase: new URL(BRAND.siteUrl),
     title: {
-      default: `${BRAND.name} — ${tSite("tagline")}`,
+      default: defaultTitle,
       template: `%s · ${BRAND.name}`,
     },
-    description: tSite("metaDescription"),
+    description,
     applicationName: BRAND.name,
     // Tell Google the same URL serves all three locales. Since we don't
     // use URL prefixes, every alternate points back to the same path;
@@ -28,6 +51,35 @@ export async function generateMetadata(): Promise<Metadata> {
         ["x-default", "/"],
         ...LOCALES.map((l) => [l, "/"]),
       ]),
+    },
+    // Default Open Graph block. og:image is auto-injected by the
+    // file-convention `app/opengraph-image.tsx` — we don't repeat
+    // it here because explicit `images: [...]` would override that
+    // file at the root level (defeating the point). Child segments
+    // can override `openGraph.images` to swap the share preview
+    // for a per-page artwork (commit 2 — product/room/item OG).
+    openGraph: {
+      type: "website",
+      siteName: BRAND.name,
+      title: defaultTitle,
+      description,
+      url: "/",
+      locale: OG_LOCALE[locale] ?? "en_US",
+      // The other two locales become og:locale:alternate, which
+      // Facebook uses to surface the multilingual variants.
+      alternateLocale: LOCALES.filter((l) => l !== locale).map(
+        (l) => OG_LOCALE[l] ?? l,
+      ),
+    },
+    // Twitter / X card. summary_large_image is the rectangular
+    // preview (matches the 1200×630 we ship). twitter:image isn't
+    // set — the X card spec falls back to og:image, which the file
+    // convention has already populated. One image source, two
+    // platforms.
+    twitter: {
+      card: "summary_large_image",
+      title: defaultTitle,
+      description,
     },
   };
 }
