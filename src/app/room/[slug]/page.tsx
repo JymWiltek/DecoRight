@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { getLocale, getTranslations } from "next-intl/server";
+import type { Metadata, ResolvingMetadata } from "next";
 import type { Locale } from "@/i18n/config";
 import SiteHeader from "@/components/SiteHeader";
 import Breadcrumb from "@/components/Breadcrumb";
@@ -11,6 +12,7 @@ import { loadTaxonomy, labelFor, labelMap, colorHexMap } from "@/lib/taxonomy";
 import {
   publishedCountsByItemTypeInRoom,
   listPublishedProducts,
+  publishedCountsByRoom,
 } from "@/lib/products";
 
 // Intentionally NOT `force-dynamic`. `loadTaxonomy`,
@@ -19,10 +21,17 @@ import {
 
 type PageProps = { params: Promise<{ slug: string }> };
 
-export async function generateMetadata({ params }: PageProps) {
+export async function generateMetadata(
+  { params }: PageProps,
+  parent: ResolvingMetadata,
+): Promise<Metadata> {
   const { slug } = await params;
-  const [taxonomy, locale, tRoom] = await Promise.all([
+  const [taxonomy, roomCounts, locale, tRoom] = await Promise.all([
     loadTaxonomy(),
+    // publishedCountsByRoom is tag-cached on the same `published-counts`
+    // tag the page render uses, so this is a free piggyback (cache hit
+    // rate ≈ 100% after first warm-up; same revalidate window).
+    publishedCountsByRoom(),
     getLocale() as Promise<Locale>,
     getTranslations("room"),
   ]);
@@ -31,7 +40,52 @@ export async function generateMetadata({ params }: PageProps) {
   // root layout's `title.template` ('%s · DecoRight'). Returning the
   // brand here too produced "Office · DecoRight · DecoRight" in prod.
   if (!room) return { title: tRoom("notFound") };
-  return { title: labelFor(room, locale) };
+  // Per-room OG (Wave SEO commit 2).
+  //
+  // Image: rooms.cover_url is set for the 6 design-promoted rooms
+  // (mig 0020 + scripts/seed-room-covers.ts); the other 11 rooms
+  // (legacy quasi-rooms + the recently-promoted office/children/
+  // laundry/outdoor/balcony/entrance bunch) keep cover_url = NULL.
+  // For those, fall back to the parent's resolved openGraph.images
+  // (the file-convention /opengraph-image route from the root). We
+  // CANNOT just omit `images` — Next replaces the parent's openGraph
+  // wholesale when the child returns its own block, which silently
+  // drops the file-convention image (verified locally on /room/curtain).
+  //
+  // Description: "Browse N products in <Room>" — uses the per-room
+  // count from publishedCountsByRoom(). On rooms with zero stock
+  // (storefront-internal categories that haven't been populated
+  // yet) we drop the count and fall back to a generic line so the
+  // share preview doesn't say "Browse 0 products".
+  const roomLabel = labelFor(room, locale);
+  const count = roomCounts[room.slug] ?? 0;
+  const description =
+    count > 0
+      ? `Browse ${count} ${count === 1 ? "product" : "products"} in ${roomLabel} on DecoRight — see them in 3D, live with AR, buy with confidence.`
+      : `Browse ${roomLabel} on DecoRight — every piece shoppable in 3D and AR.`;
+  const parentMeta = await parent;
+  const parentImages = parentMeta.openGraph?.images ?? [];
+  const parentTwitterImages = parentMeta.twitter?.images ?? [];
+  const ogImages = room.cover_url
+    ? [{ url: room.cover_url, alt: roomLabel }]
+    : parentImages;
+  const twitterImages = room.cover_url ? [room.cover_url] : parentTwitterImages;
+  return {
+    title: roomLabel,
+    description,
+    openGraph: {
+      type: "website",
+      title: roomLabel,
+      description,
+      images: ogImages,
+    },
+    twitter: {
+      card: "summary_large_image",
+      title: roomLabel,
+      description,
+      images: twitterImages,
+    },
+  };
 }
 
 /**

@@ -2,6 +2,7 @@ import { Suspense } from "react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getLocale, getTranslations } from "next-intl/server";
+import type { Metadata, ResolvingMetadata } from "next";
 import type { Locale } from "@/i18n/config";
 import SiteHeader from "@/components/SiteHeader";
 import FilterPanel from "@/components/FilterPanel";
@@ -10,8 +11,12 @@ import Breadcrumb from "@/components/Breadcrumb";
 import HScrollRail from "@/components/HScrollRail";
 import SectionHeading from "@/components/SectionHeading";
 import ItemTypeRailCard from "@/components/ItemTypeRailCard";
-import { listPublishedProducts, type ProductFilters } from "@/lib/products";
-import { publishedCountsByItemTypeInRoom } from "@/lib/products";
+import {
+  listPublishedProducts,
+  publishedCountsByItemType,
+  publishedCountsByItemTypeInRoom,
+  type ProductFilters,
+} from "@/lib/products";
 import { loadTaxonomy, labelFor, labelMap, colorHexMap } from "@/lib/taxonomy";
 
 // `searchParams` + cookie-aware product query already make this page
@@ -42,10 +47,17 @@ function pickMany(v: string | string[] | undefined, allowed: Set<string>): strin
     .filter((s) => s && allowed.has(s));
 }
 
-export async function generateMetadata({ params }: PageProps) {
+export async function generateMetadata(
+  { params }: PageProps,
+  parent: ResolvingMetadata,
+): Promise<Metadata> {
   const { slug } = await params;
-  const [taxonomy, locale, tItem] = await Promise.all([
+  const [taxonomy, itemTypeCounts, locale, tItem] = await Promise.all([
     loadTaxonomy(),
+    // Reuses the same `published-counts` cache tag the home page hits,
+    // so generateMetadata for /item/<slug> rides the cache that's
+    // almost always warm.
+    publishedCountsByItemType(),
     getLocale() as Promise<Locale>,
     getTranslations("itemType"),
   ]);
@@ -54,7 +66,53 @@ export async function generateMetadata({ params }: PageProps) {
   // root layout's `title.template` ('%s · DecoRight'). Returning the
   // brand here too produced "Mirror · DecoRight · DecoRight" in prod.
   if (!it) return { title: tItem("notFound") };
-  return { title: labelFor(it, locale) };
+  // Per-item-type OG (Wave SEO commit 2).
+  //
+  // Image: there's no canonical "item type cover" — pick the first
+  // published product with a thumbnail and use that as the share
+  // preview. Sampling one product is intentional: hero a real piece
+  // of inventory rather than synthesizing a category illustration.
+  // limit:1 keeps the lookup cheap. When no published product has
+  // a thumbnail (item type with zero stock, or every published item
+  // is mid-cutout), fall back to the parent's resolved openGraph
+  // images (the file-convention /opengraph-image route). We CANNOT
+  // just omit `images` — Next replaces the parent's openGraph
+  // wholesale when the child returns its own block, which silently
+  // drops the file-convention image.
+  //
+  // Description: "Browse N <Item Type> for your home" with locale-
+  // aware label. Same N=0 sentinel handling as the room page.
+  const itemTypeLabel = labelFor(it, locale);
+  const count = itemTypeCounts[it.slug] ?? 0;
+  const sampled = await listPublishedProducts({ itemTypes: [it.slug] }, 1);
+  const sampleThumb = sampled.find((p) => p.thumbnail_url)?.thumbnail_url ?? null;
+  const description =
+    count > 0
+      ? `Browse ${count} ${itemTypeLabel.toLowerCase()} ${count === 1 ? "option" : "options"} for your home on DecoRight — see them in 3D, live with AR, buy with confidence.`
+      : `Browse ${itemTypeLabel.toLowerCase()} on DecoRight — every piece shoppable in 3D and AR.`;
+  const parentMeta = await parent;
+  const parentImages = parentMeta.openGraph?.images ?? [];
+  const parentTwitterImages = parentMeta.twitter?.images ?? [];
+  const ogImages = sampleThumb
+    ? [{ url: sampleThumb, alt: itemTypeLabel }]
+    : parentImages;
+  const twitterImages = sampleThumb ? [sampleThumb] : parentTwitterImages;
+  return {
+    title: itemTypeLabel,
+    description,
+    openGraph: {
+      type: "website",
+      title: itemTypeLabel,
+      description,
+      images: ogImages,
+    },
+    twitter: {
+      card: "summary_large_image",
+      title: itemTypeLabel,
+      description,
+      images: twitterImages,
+    },
+  };
 }
 
 /**

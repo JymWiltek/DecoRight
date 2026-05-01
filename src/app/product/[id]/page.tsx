@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { getLocale, getTranslations } from "next-intl/server";
+import type { Metadata, ResolvingMetadata } from "next";
 import type { Locale } from "@/i18n/config";
 import SiteHeader from "@/components/SiteHeader";
 import ProductDetail from "@/components/ProductDetail";
@@ -13,7 +14,10 @@ export const dynamic = "force-dynamic";
 
 type PageProps = { params: Promise<{ id: string }> };
 
-export async function generateMetadata({ params }: PageProps) {
+export async function generateMetadata(
+  { params }: PageProps,
+  parent: ResolvingMetadata,
+): Promise<Metadata> {
   const { id } = await params;
   const product = await getPublishedProductById(id);
   // Title is just the page noun; the brand suffix is appended by the
@@ -23,9 +27,59 @@ export async function generateMetadata({ params }: PageProps) {
     const t = await getTranslations("product");
     return { title: t("notFound") };
   }
+  // Per-product OG (Wave SEO commit 2).
+  //
+  // Image: products.thumbnail_url is the styled cutout already living
+  // in a public Supabase Storage bucket (used as <img src> on
+  // ProductCard) — handing it straight to og:image works because it's
+  // a stable absolute URL. When a product has no thumbnail (rare —
+  // happens during the upload→cutout window or if the operator
+  // skipped photos for a 3D-only listing), we fall back to the parent
+  // segment's resolved openGraph.images (i.e. the file-convention
+  // /opengraph-image route emitted by app/opengraph-image.tsx). We
+  // CANNOT just omit `images` — Next replaces the parent's openGraph
+  // wholesale when the child returns its own block, which would drop
+  // the file-convention image and emit a product page with NO og:image
+  // at all (verified locally on a thumbnail-less product).
+  //
+  // Description: products.description is operator-written copy and
+  // may be the empty string, null, or several paragraphs. Trim to
+  // 160 chars (Facebook truncates beyond ~155, X around 200) and
+  // append a "3D model · Download for SketchUp/Blender" tail when a
+  // GLB is actually published. Adding the tail unconditionally would
+  // lie on listings that haven't been 3D'd yet (mig 0014:
+  // products.glb_url is NULL for those).
+  const desc = product.description?.trim() ?? "";
+  const trimmed =
+    desc.length > 160 ? desc.slice(0, 157).trimEnd() + "…" : desc;
+  const tail = product.glb_url
+    ? " · 3D model · Download for SketchUp/Blender"
+    : "";
+  const ogDescription =
+    (trimmed + tail).trim() ||
+    `${product.name} on DecoRight — see it in 3D, live with AR, buy with confidence.`;
+  const parentImages = (await parent).openGraph?.images ?? [];
+  const ogImages = product.thumbnail_url
+    ? [{ url: product.thumbnail_url, alt: product.name }]
+    : parentImages;
+  const twitterImages = product.thumbnail_url
+    ? [product.thumbnail_url]
+    : ((await parent).twitter?.images ?? []);
   return {
     title: product.name,
-    description: product.description ?? undefined,
+    description: ogDescription,
+    openGraph: {
+      type: "article",
+      title: product.name,
+      description: ogDescription,
+      images: ogImages,
+    },
+    twitter: {
+      card: "summary_large_image",
+      title: product.name,
+      description: ogDescription,
+      images: twitterImages,
+    },
   };
 }
 
