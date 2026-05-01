@@ -101,17 +101,25 @@ export async function loadTaxonomy(): Promise<Taxonomy> {
         regions: rg.data ?? [],
       };
     },
+    // v7 — Mig 0026 standardized 14 ms label strings (audit-driven
+    // round 2): style/vintage no longer collides with style/classic
+    // ('Klasik' → 'Vintaj'), faucet 'Paip' → 'Pili Air', rug 'Tikar'
+    // → 'Permaidani', wardrobe 'Almari' → 'Almari Pakaian', etc.
+    // A stale v6 payload would keep serving the old strings for the
+    // 5-minute revalidate window after deploy — most user-visible on
+    // the filter chips and breadcrumbs of ms visitors. Bumping forces
+    // a fresh fetch on first hit post-deploy.
+    //
     // v6 — Mig 0025 renumbered rooms.sort_order across all 16 rows
     // (real rooms 1-11, storefront-internal categories 20+, balcony
     // pulled in from 100 → 10). The home grid sorts taxonomy.rooms
     // by sort_order, so a stale v5 payload would keep showing the
     // old "rooms-then-quasi-rooms-then-new-rooms-then-balcony"
     // order for the 5-minute revalidate window after deploy.
-    // Bumping the key forces a fresh fetch on first hit post-deploy.
     //
     // v5 — mig 0020 added rooms.cover_url. Same reasoning: stale v4
     // payloads would render every room with the typographic fallback.
-    ["taxonomy-v6"],
+    ["taxonomy-v7"],
     { tags: [TAG], revalidate: 300 },
   )();
 }
