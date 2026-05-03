@@ -198,6 +198,13 @@ export type ProductImageRow = {
    *  ImageErrorKind for the closed vocabulary. NULL on a row that has
    *  never been attempted (e.g. just-saved Save-as-Draft uploads). */
   last_error_kind: ImageErrorKind | null;
+  /** Migration 0027 — pure audit flag. True when the operator clicked
+   *  "Skip — already clean" on the admin workbench, in which case the
+   *  raw bytes were copied into the public cutouts bucket as-is and
+   *  the row landed at state='cutout_approved'. Does NOT participate
+   *  in publish gates, RLS, or storefront queries — only powers the
+   *  "skipped" admin badge and the $0-spend cost-reporting branch. */
+  skip_cutout: boolean;
   sort_order: number;
   created_at: string;
   updated_at: string;
@@ -213,6 +220,7 @@ export type ProductImageInsert = {
   rembg_provider?: string | null;
   rembg_cost_usd?: number | null;
   last_error_kind?: ImageErrorKind | null;
+  skip_cutout?: boolean;
   sort_order?: number;
 };
 

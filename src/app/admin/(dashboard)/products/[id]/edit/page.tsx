@@ -25,6 +25,10 @@ type PageProps = {
     reran?: string;
     retried?: string;
     unsatisfied?: string;
+    /** Mig 0027 — set by markImageSkipCutout's success redirect. The
+     *  ProductImagesSection turns this into a green confirmation banner
+     *  ("Image marked as already clean — saved without rembg"). */
+    skipped?: string;
     processed?: string;
     err?: string;
     msg?: string;
@@ -107,8 +111,15 @@ export default async function EditProductPage({
   const PUBLISH_BLOCKED_MESSAGES: Record<string, string> = {
     rooms:
       "Pick at least one room in the Rooms picker below before publishing.",
+    // Mig 0027 — operator may now satisfy the cutout gate two ways:
+    // run rembg, OR mark a clean photo as Skipped (skip_cutout=true,
+    // raw bytes copied to public bucket, lands at cutout_approved
+    // exactly like a successful rembg run). Both routes count toward
+    // cutoutApprovedCount because skip-cutout rows live in the same
+    // state. Surfacing both options here so the operator knows they
+    // don't have to burn rembg quota on a clean white-backdrop photo.
     cutouts:
-      "Click \"Run Background Removal\" so at least one cutout is approved before publishing.",
+      "Click \"Run Background Removal\" OR mark a clean image as Skipped so at least one cutout is approved before publishing.",
     glb:
       "Click \"Generate 3D model\" (or upload a .glb) so the product has a 3D model before publishing.",
   };
@@ -157,6 +168,7 @@ export default async function EditProductPage({
           deletedCount={sp.deleted ? Number(sp.deleted) : undefined}
           unsatisfied={sp.unsatisfied === "1"}
           retried={sp.retried === "1"}
+          skipped={sp.skipped === "1"}
           errCode={rembgErrCode}
           errMsg={rembgErrMsg}
           rembgUsage={rembgUsage}

@@ -2,6 +2,7 @@ import { UploadDropzone } from "./UploadDropzone";
 import DeleteImageButton from "./DeleteImageButton";
 import RunRembgButton from "./RunRembgButton";
 import {
+  markImageSkipCutout,
   markImageUnsatisfied,
   retryFailedImage,
 } from "@/app/admin/(dashboard)/products/[id]/edit/image-actions";
@@ -55,6 +56,12 @@ type ImageWithPreview = {
    *  pipeline.ts whenever a row lands at cutout_failed. Wired through
    *  here so commit 2 can render a specific sentence per category. */
   last_error_kind: ImageErrorKind | null;
+  /** Migration 0027: true when the operator clicked "Skip — already
+   *  clean" on a raw row, in which case the row landed at
+   *  cutout_approved with cutout_image_url pointing at a copy of the
+   *  raw bytes in the public cutouts bucket. Drives the "skipped"
+   *  badge on the approved card and the $0-spend cost line. */
+  skip_cutout: boolean;
   created_at: string;
   raw_preview_url: string | null;
 };
@@ -73,6 +80,10 @@ type Props = {
   deletedCount?: number;
   unsatisfied?: boolean;
   retried?: boolean;
+  /** Migration 0027 — set to true when the redirect query carries
+   *  `?skipped=1`, i.e. the operator just marked an image as "Skip —
+   *  already clean". Drives the success banner. */
+  skipped?: boolean;
   errCode?: string;
   errMsg?: string;
   /** P0-3: lifetime rembg cost rollup. Lets the section header show
@@ -92,6 +103,7 @@ export default function ProductImagesSection({
   deletedCount,
   unsatisfied,
   retried,
+  skipped,
   errCode,
   errMsg,
   rembgUsage,
@@ -242,6 +254,12 @@ export default function ProductImagesSection({
       {retried ? (
         <Banner tone="emerald">Retry succeeded — cutout approved.</Banner>
       ) : null}
+      {skipped ? (
+        <Banner tone="emerald">
+          Image marked as already clean — saved to gallery without running
+          background removal.
+        </Banner>
+      ) : null}
 
       {/* Uploader: pure-preview dropzone. Files stage as thumbnails
           in React state; nothing touches Storage until the operator
@@ -330,6 +348,20 @@ function ImageCard({
             Primary
           </span>
         )}
+        {/* Mig 0027 · "skipped" badge — distinguishes a cutout that's
+            actually a verbatim raw copy (skip_cutout=true, $0 spend)
+            from a real rembg output. Sits below the Primary chip
+            (top:7 = ~28px vertical offset) so they stack cleanly when
+            an image is BOTH primary AND skipped (the common case for
+            single-image products). */}
+        {image.skip_cutout && image.state === "cutout_approved" && (
+          <span
+            className={`absolute ${image.is_primary ? "left-1.5 top-7" : "left-1.5 top-1.5"} rounded bg-sky-600 px-1.5 py-0.5 text-[10px] font-medium text-white shadow`}
+            title="Operator skipped background removal — using the original photo as-is."
+          >
+            Skipped
+          </span>
+        )}
         {/* × top-right on approved images: mark as unsatisfactory.
             Floats over the thumbnail per the spec ("approved 是
             default, rejected 是 user exception"). */}
@@ -415,9 +447,30 @@ function ImageCard({
         )}
 
         {image.state === "raw" && (
-          <p className="text-center text-[10px] text-neutral-400">
-            Background removal in progress…
-          </p>
+          <>
+            <p className="text-center text-[10px] text-neutral-400">
+              Background removal in progress…
+            </p>
+            {/* Mig 0027 · skip-cutout escape hatch. The `raw` state is
+                normally transient — the auto-pipeline runs rembg in
+                the same server action that uploads the bytes. But
+                when rembg fails partway, or when the operator's photo
+                is already clean (white backdrop, reflective surface,
+                wood grain that rembg destroys), they can click Skip
+                here to copy the raw bytes into the public cutouts
+                bucket as-is and unblock Publish without burning rembg
+                quota. The button title spells out the trade-off so
+                we don't lure operators into skipping busy backdrops. */}
+            <ActionForm
+              action={markImageSkipCutout}
+              label="Skip — already clean"
+              variant="neutral"
+              imageId={image.id}
+              productId={image.product_id}
+              returnTo={returnTo}
+              title="Use this photo as-is — don't run background removal."
+            />
+          </>
         )}
 
         {/* Destructive: always available. Delegated to a client
@@ -661,6 +714,13 @@ function humanizeError(code: string): string {
       return "Image not found.";
     case "missing_id":
       return "Internal error: missing image id.";
+    case "storage":
+      // Mig 0027 · markImageSkipCutout copy step failed (raw download
+      // or cutouts upload). Operator can retry; the row is still raw.
+      return "Storage error copying the raw image — try again.";
+    case "product_mismatch":
+      // Mig 0027 · belt-and-suspenders cross-product guard.
+      return "Image does not belong to this product.";
     default:
       return code;
   }

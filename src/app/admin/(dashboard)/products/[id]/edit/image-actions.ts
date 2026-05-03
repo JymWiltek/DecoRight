@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { createServiceRoleClient } from "@/lib/supabase/service";
 import { runRembgForImage } from "@/lib/rembg/pipeline";
 import type { RemBgProviderId } from "@/lib/rembg";
+import { copyRawToCutouts } from "@/lib/storage";
 
 /**
  * Image pipeline (post-migration 0010 auto-cutout; post direct-upload
@@ -217,6 +218,142 @@ export async function markImageUnsatisfied(fd: FormData): Promise<void> {
   revalidatePath(`/`);
   revalidatePath(`/product/${img.product_id}`);
   redirect(withQuery(base, "unsatisfied", "1"));
+}
+
+/**
+ * "Skip — already clean" button on a raw row. Operator is saying the
+ * uploaded photo doesn't need rembg (clean white backdrop, reflective
+ * surface rembg would mangle, wood grain, etc). We copy the raw bytes
+ * into the public cutouts bucket and land the row at cutout_approved
+ * — same terminal state a successful rembg run produces — so the
+ * existing publish gate, sync_primary_thumbnail trigger, and
+ * storefront gallery query all keep working without touching them.
+ *
+ * skip_cutout=true is set as an audit flag so:
+ *   • the admin ImageCard can render a "skipped" badge instead of
+ *     "rembg via replicate · $0.002"
+ *   • cost reports can distinguish $0-spent skipped images from
+ *     un-attempted-yet rows (last_error_kind=null + rembg_cost_usd=null
+ *     is ambiguous otherwise).
+ *
+ * Primary handling mirrors `runRembgForImage` AUTO mode: if the
+ * product currently has no cutout_approved primary, this row becomes
+ * the primary and the trigger syncs cutout_image_url into
+ * products.thumbnail_url. Otherwise we don't touch is_primary —
+ * existing primary keeps its claim.
+ *
+ * Pre-conditions: row must exist, must be in `raw` state (matches
+ * the spot where the button is rendered in ProductImagesSection),
+ * and must have a raw_image_url to copy from. Other states (failed,
+ * approved, rejected) get rejected with `wrong_state` rather than
+ * silently no-oping — operator should retry / delete those instead.
+ */
+export async function markImageSkipCutout(fd: FormData): Promise<void> {
+  const imageId = fd.get("imageId")?.toString();
+  const productId = fd.get("productId")?.toString();
+  const returnTo = safeReturnTo(fd);
+  const base =
+    returnTo ?? (productId ? `/admin/products/${productId}/edit` : "/admin");
+
+  if (!imageId || !productId) {
+    redirect(withQuery(base, "err", "missing_id"));
+  }
+
+  const supabase = createServiceRoleClient();
+
+  // Read the row + check for an existing primary in parallel. The
+  // primary check decides whether THIS row gets is_primary=true
+  // (matches runRembgForImage AUTO mode's "first approved wins"
+  // convention).
+  const [imgRes, primaryRes] = await Promise.all([
+    supabase
+      .from("product_images")
+      .select("id,product_id,state,raw_image_url")
+      .eq("id", imageId)
+      .single(),
+    supabase
+      .from("product_images")
+      .select("id")
+      .eq("product_id", productId)
+      .eq("is_primary", true)
+      .maybeSingle(),
+  ]);
+
+  if (imgRes.error || !imgRes.data) {
+    redirect(withQuery(base, "err", "not_found"));
+  }
+  const img = imgRes.data;
+
+  if (img.product_id !== productId) {
+    // Belt-and-suspenders: the form submits both, and the imageId
+    // must belong to the productId. Cross-product writes would let
+    // a crafted FormData hijack a row from another product.
+    redirect(withQuery(base, "err", "product_mismatch"));
+  }
+
+  if (img.state !== "raw") {
+    redirect(
+      withQuery(withQuery(base, "err", "wrong_state"), "msg", img.state),
+    );
+  }
+
+  if (!img.raw_image_url) {
+    // The button is only rendered for state='raw' rows, all of which
+    // have raw_image_url (set by the dropzone direct-upload action).
+    // This branch covers the edge where a row got stuck mid-upload.
+    redirect(withQuery(base, "err", "missing_raw"));
+  }
+
+  // Copy raw bytes → public cutouts bucket. Returns the public URL
+  // with a cache-bust suffix so the CDN doesn't serve a stale object
+  // if the operator re-skips after replacing the raw.
+  let cutoutUrl: string;
+  try {
+    cutoutUrl = await copyRawToCutouts(img.raw_image_url, productId, imageId);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    redirect(withQuery(withQuery(base, "err", "storage"), "msg", msg));
+  }
+
+  // Land at cutout_approved with the audit flag. is_primary fires
+  // sync_primary_thumbnail (mig 0009) iff this is the first primary
+  // for the product. rembg_provider/cost stay NULL — this row never
+  // touched a paid provider. last_error_kind is cleared defensively
+  // (it should already be NULL on a raw row, but leaving stale data
+  // is sloppy).
+  const patch: {
+    state: "cutout_approved";
+    cutout_image_url: string;
+    skip_cutout: true;
+    rembg_provider: null;
+    rembg_cost_usd: null;
+    last_error_kind: null;
+    is_primary?: boolean;
+  } = {
+    state: "cutout_approved",
+    cutout_image_url: cutoutUrl,
+    skip_cutout: true,
+    rembg_provider: null,
+    rembg_cost_usd: null,
+    last_error_kind: null,
+  };
+  if (!primaryRes.data) patch.is_primary = true;
+
+  const { error: updErr } = await supabase
+    .from("product_images")
+    .update(patch)
+    .eq("id", imageId)
+    .eq("product_id", productId);
+  if (updErr) {
+    redirect(withQuery(withQuery(base, "err", "db"), "msg", updErr.message));
+  }
+
+  revalidatePath(`/admin/products/${productId}/edit`);
+  revalidatePath(`/admin/cutouts`);
+  revalidatePath(`/admin`);
+  revalidatePath(`/`);
+  revalidatePath(`/product/${productId}`);
+  redirect(withQuery(base, "skipped", "1"));
 }
 
 /**

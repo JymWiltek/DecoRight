@@ -224,6 +224,91 @@ export async function uploadCutout(
   return `${data.publicUrl}?v=${Date.now()}`;
 }
 
+/**
+ * Migration 0027 · skip-cutout helper.
+ *
+ * Copy raw bytes verbatim from the private `raw-images` bucket into
+ * the public `cutouts` bucket. Used by `markImageSkipCutout` when the
+ * operator declares "this photo is already clean — don't burn rembg
+ * quota on it". The row then transitions to state='cutout_approved'
+ * with `cutout_image_url` pointing at the public URL returned here, so
+ * the existing trigger / RLS / storefront query path doesn't have to
+ * special-case skip rows.
+ *
+ * Why a dedicated helper (vs. reusing `uploadCutout`):
+ *   - `uploadCutout` hardcodes `.png` + `contentType: image/png` because
+ *     rembg providers always emit PNG-with-alpha. Skip preserves the
+ *     operator's original JPG/PNG/WEBP, so the content-type and the
+ *     path's extension must match reality (object metadata is what
+ *     CDNs and email previewers honor when deciding if the bytes are
+ *     a JPEG or a PNG).
+ *   - Keeps the rembg-output path semantic ("uploadCutout" = "I have
+ *     PNG bytes from rembg") rather than overloading it.
+ *
+ * Path: cutouts/<productId>/<imageId>.<originalExt>
+ *   - Same imageId-keyed convention as `uploadCutout` so the public
+ *     URL is stable and upsert idempotent on re-skip.
+ *   - We deliberately do NOT collide with the `.png` rembg output
+ *     path: if a row is later un-skipped and rerun through rembg, the
+ *     rembg run writes to `<imageId>.png` and orphans this `.<ext>`
+ *     object. That's acceptable — un-skipping isn't a supported flow,
+ *     orphans are cheap, and the alternative (forcing both paths to
+ *     the same extension) would require transcoding the JPG to PNG
+ *     just to satisfy the path convention.
+ */
+export async function copyRawToCutouts(
+  rawPath: string,
+  productId: string,
+  imageId: string,
+): Promise<string> {
+  const supabase = createServiceRoleClient();
+
+  // Download raw bytes. raw_image_url is a storage PATH (the bucket
+  // is private, so we never stored a URL — see uploadRawImage). The
+  // service-role client bypasses RLS so we don't need a signed URL
+  // here — direct .download() is faster than .createSignedUrl + fetch.
+  const { data: rawBlob, error: dlErr } = await supabase.storage
+    .from(RAW_BUCKET)
+    .download(rawPath);
+  if (dlErr) throw dlErr;
+
+  // Extract the original extension from the raw path. uploadRawImage
+  // uses extFromContentType so legitimate values are png/webp/gif/jpg.
+  // Fall back to "jpg" if the path is malformed — a missing/garbage
+  // extension shouldn't crash the skip flow; the bytes still display.
+  const dotIdx = rawPath.lastIndexOf(".");
+  const ext = dotIdx >= 0 ? rawPath.slice(dotIdx + 1).toLowerCase() : "jpg";
+  const contentType =
+    ext === "png"
+      ? "image/png"
+      : ext === "webp"
+        ? "image/webp"
+        : ext === "gif"
+          ? "image/gif"
+          : "image/jpeg";
+  const dstPath = `${productId}/${imageId}.${ext}`;
+
+  // Re-wrap the downloaded Blob with the explicit content-type so
+  // Storage records the right object metadata. Supabase-js's upload
+  // honors the Blob's `type` AND the `contentType` option; setting
+  // both keeps node + edge runtimes consistent.
+  const bytes = await rawBlob.arrayBuffer();
+  const { error: upErr } = await supabase.storage
+    .from(CUTOUTS_BUCKET)
+    .upload(dstPath, new Blob([bytes], { type: contentType }), {
+      upsert: true,
+      contentType,
+      cacheControl: "31536000",
+    });
+  if (upErr) throw upErr;
+
+  const { data } = supabase.storage.from(CUTOUTS_BUCKET).getPublicUrl(dstPath);
+  // Same cache-bust trick as uploadCutout: bucket caches 1y, so a
+  // re-skip would otherwise serve stale bytes if the operator
+  // re-uploaded the raw under the same imageId.
+  return `${data.publicUrl}?v=${Date.now()}`;
+}
+
 // ─── models (public) — Phase A GLBs ─────────────────────────
 
 /**
