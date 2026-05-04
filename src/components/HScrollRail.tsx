@@ -69,11 +69,15 @@ type Props = {
 /** Distinguishing a click from a drag: total movement < this many
  *  CSS pixels = click (let the link fire); ≥ this = drag (swallow the
  *  click so the user doesn't navigate after they reposition the rail).
- *  5px is the de-facto web standard (matches what most JS carousel
- *  libs settle on — anything less and a shaky hand on a mouse counts
- *  as a drag; anything more and a deliberate short-drag-then-release
- *  registers as a click). */
-const CLICK_DRAG_THRESHOLD_PX = 5;
+ *  8px is what Material Design tap-target jitter and the CSS
+ *  drag-and-drop spec settle on — 5px (our previous setting) was
+ *  routinely tripped by a real human pressing the mouse button down
+ *  on a trackpad, where the finger naturally translates 2–6px during
+ *  the press. The result was every Browse-by-item card click being
+ *  classified as a drag and the navigation getting suppressed.
+ *  8px keeps deliberate short-drag-then-release feeling responsive
+ *  while ignoring the press wobble.  */
+const CLICK_DRAG_THRESHOLD_PX = 8;
 
 export default function HScrollRail({
   children,
@@ -118,17 +122,20 @@ export default function HScrollRail({
       startScrollLeft: ul.scrollLeft,
       moved: false,
     };
-    // Pointer capture means we keep getting pointermove events even
-    // if the cursor leaves the <ul> mid-drag (over the page header,
-    // outside the viewport, etc.). Without it, the drag state would
-    // freeze the moment the cursor crosses an edge.
-    try {
-      ul.setPointerCapture(e.pointerId);
-    } catch {
-      // setPointerCapture can throw if the pointer is already gone
-      // (rare; e.g. user alt-tabs mid-click). Falling through still
-      // works — we just lose off-rail tracking for this gesture.
-    }
+    // NOTE: We do NOT call setPointerCapture here. The previous
+    // implementation captured eagerly so off-rail drags would still
+    // track, but eager capture has a cost: in Chrome, the click event
+    // is composed against the captured target, NOT the underlying
+    // <a>. Result — every card "click" was getting redirected to the
+    // <ul>, and the link's default navigation never ran. Card clicks
+    // appeared dead in production.
+    //
+    // Lazy capture: we only capture once movement exceeds the
+    // threshold (i.e. we've confirmed it's a drag). For pure clicks
+    // — the common case — capture is never set, the click event
+    // dispatches normally to the <a>, and the link navigates. Drags
+    // pay one delayed call to setPointerCapture but visually feel
+    // identical (the cursor is already moving by then).
     ul.classList.add("cursor-grabbing");
     ul.classList.remove("cursor-grab");
   };
@@ -141,11 +148,42 @@ export default function HScrollRail({
     const dx = e.clientX - drag.startX;
     if (!drag.moved && Math.abs(dx) >= CLICK_DRAG_THRESHOLD_PX) {
       drag.moved = true;
+      // Lazy capture (see onPointerDown rationale): now that we've
+      // confirmed a real drag, take pointer capture so off-rail
+      // pointermove still feeds us scroll deltas. setPointerCapture
+      // can throw if the pointer is already gone (rare; e.g. user
+      // alt-tabs mid-drag) — falling through still works, we just
+      // lose off-rail tracking for this gesture.
+      try {
+        ul.setPointerCapture(e.pointerId);
+      } catch {
+        // pointer already released — ignore
+      }
     }
     // Inverted: dragging right reveals more of the right side, which
     // means scrollLeft DECREASES. dx > 0 (cursor moved right) →
     // scrollLeft -= dx. Same direction convention as native trackpad.
-    ul.scrollLeft = drag.startScrollLeft - dx;
+    //
+    // GUARD: only mutate scrollLeft AFTER the threshold has been
+    // crossed. Real mouse clicks emit a 1–3px pointermove between
+    // mousedown and mouseup (hand jitter on a trackpad / a CDP click
+    // that synthesises a brief move). With `snap-x mandatory` CSS
+    // applied to the rail, ANY scrollLeft write triggers a scroll-
+    // snap re-align — even a 1-pixel shift will cause the rail to
+    // visually jump back to the nearest snap point. That re-align
+    // happens BETWEEN mousedown and click, so the click event is
+    // composed against whatever element ends up under the FINAL
+    // cursor position (often the gap between cards or the <ul>
+    // itself), and the underlying <a>'s default navigation never
+    // runs. Symptom: card gets focus ring (mousedown landed) but
+    // URL doesn't change.
+    //
+    // Holding scrollLeft steady below the threshold means a click
+    // is genuinely a click — no scroll, no snap, click dispatches
+    // against the same element the mousedown hit.
+    if (drag.moved) {
+      ul.scrollLeft = drag.startScrollLeft - dx;
+    }
   };
 
   const endDrag = (e: React.PointerEvent<HTMLUListElement>) => {
@@ -153,11 +191,17 @@ export default function HScrollRail({
     if (!drag || drag.pointerId !== e.pointerId) return;
     const ul = ulRef.current;
     if (ul) {
-      try {
-        ul.releasePointerCapture(e.pointerId);
-      } catch {
-        // Already released (e.g. pointercancel after capture lost) —
-        // safe to ignore; either way the drag ends here.
+      // Capture only exists if we crossed the drag threshold during
+      // pointermove (lazy capture — see onPointerDown). Calling
+      // releasePointerCapture without a matching setPointerCapture
+      // throws InvalidStateError, so we guard on `drag.moved`.
+      if (drag.moved) {
+        try {
+          ul.releasePointerCapture(e.pointerId);
+        } catch {
+          // Already released (e.g. pointercancel after capture lost) —
+          // safe to ignore; either way the drag ends here.
+        }
       }
       ul.classList.remove("cursor-grabbing");
       ul.classList.add("cursor-grab");
