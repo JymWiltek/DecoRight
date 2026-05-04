@@ -50,26 +50,28 @@ export default async function Home() {
       getLocale() as Promise<Locale>,
     ]);
 
-  // Wave UI · Commit 2 — top item types by published count.
+  // Wave UI · Commit 2 — eight item types in the rail, with zero-fill.
   //
-  // Tie-breaker: count DESC, then label_en ASC. Without the alpha
-  // secondary sort, two item types with the same count would race
-  // every revalidation (taxonomy comes back in a new order whenever
-  // a row is touched), so the rail order would jiggle for the
-  // operator. label_en is NOT NULL post-migration 0008, so this is
-  // safe — and English-canonical sort matches admin muscle memory.
+  // Sort: count DESC, then label_en ASC. Stocked categories surface
+  // first; ties broken alphabetically so the order doesn't jiggle
+  // every revalidation when two counts match. label_en is NOT NULL
+  // post-migration 0008, so the secondary sort is total.
   //
-  // Filter: count > 0. Showing "0 items" tiles in the rail wastes
-  // valuable above-the-fold mobile space. Empty item types stay
-  // discoverable via /room/[slug]/[item_type] (item-internal page).
+  // Zero-fill: previously we filtered `count > 0`, which left the rail
+  // showing only 1–3 cards on a freshly-seeded catalog and made the
+  // homepage feel half-built. Now we keep all item types and let the
+  // limit do the trimming — the 1–3 stocked types still come first
+  // (count DESC) and the next 5–7 alpha-sorted empty types fill the
+  // remaining slots so the rail looks complete from day one. Zero-
+  // count tiles stay clickable: the destination /item/<slug> page
+  // already renders an empty state cleanly (no notFound).
   //
   // Limit: 8. Notion design specifies 6–8 hot items; eight is the
   // upper end. On a 375px viewport with w-32 cards (~128px) plus
-  // 12px gap, eight cards = ~1120px which scrolls smoothly. Tighter
+  // 12px gap, eight cards ≈ 1120px which scrolls smoothly. Tighter
   // limits feel sparse on tablets; wider rails hit visual fatigue.
   const topItemTypes = taxonomy.itemTypes
     .map((it) => ({ ...it, count: itemTypeCounts[it.slug] ?? 0 }))
-    .filter((it) => it.count > 0)
     .sort(
       (a, b) =>
         b.count - a.count || a.label_en.localeCompare(b.label_en, "en"),
