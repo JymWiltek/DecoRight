@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getLocale, getTranslations } from "next-intl/server";
 import type { Metadata, ResolvingMetadata } from "next";
@@ -8,9 +7,11 @@ import Breadcrumb from "@/components/Breadcrumb";
 import HScrollRail from "@/components/HScrollRail";
 import SectionHeading from "@/components/SectionHeading";
 import ItemTypeRailCard from "@/components/ItemTypeRailCard";
+import ItemTypeCoverCard from "@/components/ItemTypeCoverCard";
 import ProductCard from "@/components/ProductCard";
 import { loadTaxonomy, labelFor, labelMap, colorHexMap } from "@/lib/taxonomy";
 import {
+  coversByItemTypeInRoom,
   publishedCountsByItemTypeInRoom,
   listPublishedProducts,
   publishedCountsByRoom,
@@ -121,12 +122,20 @@ export async function generateMetadata(
  */
 export default async function RoomPage({ params }: PageProps) {
   const { slug } = await params;
-  const [taxonomy, counts, products, tHome, tRoom, tSite, locale] =
+  const [taxonomy, counts, covers, products, tHome, tRoom, tSite, locale] =
     await Promise.all([
       loadTaxonomy(),
       // Drives both the rail (filter+count) and the small "N items"
       // labels under each rail card.
       publishedCountsByItemTypeInRoom(slug),
+      // Wave UI · Commit 4 — cover thumb per item_type, scoped to
+      // this room. A bathroom-rail card for "Sink" should show a
+      // bathroom sink, not the kitchen sink that happens to be
+      // newest globally — so the cover lookup overlaps room_slugs
+      // with this room. Falls through to the typographic tile when
+      // the room+item_type pair has no stocked product yet (common
+      // post-Commit 3 grid surface for under-stocked rooms).
+      coversByItemTypeInRoom(slug),
       // Product waterfall — published, scoped to this room. Same
       // listPublishedProducts call shape as /item/[slug] minus the
       // item_type filter; reuses the cookie-aware query path.
@@ -274,14 +283,24 @@ export default async function RoomPage({ params }: PageProps) {
           <section className="mb-8 sm:mb-12">
             <SectionHeading title={tRoom("pickItem")} />
             <HScrollRail ariaLabel={tRoom("pickItem")}>
-              {itemTypesInRoom.map((it) => {
+              {itemTypesInRoom.map((it, i) => {
                 const count = counts[it.slug] ?? 0;
                 return (
                   <ItemTypeRailCard
                     key={it.slug}
                     href={`/item/${it.slug}?room=${room.slug}`}
                     label={labelFor(it, locale)}
+                    count={count}
                     countLabel={tHome("itemCount", { count })}
+                    // Wave UI · Commit 4 — room-scoped cover thumb.
+                    // itemTypesInRoom is filtered to count > 0, so
+                    // every entry SHOULD have a cover; the ?? null
+                    // is a defense for products published with no
+                    // thumbnail (admin can publish without a primary
+                    // image — rare, but the typographic fallback
+                    // keeps the rail coherent if it happens).
+                    coverUrl={covers[it.slug] ?? null}
+                    priority={i < 3}
                   />
                 );
               })}
@@ -323,46 +342,30 @@ export default async function RoomPage({ params }: PageProps) {
               subtitle={tRoom("allCategoriesSubtitle", { room: roomLabel })}
             />
             <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 lg:grid-cols-4">
-              {allItemTypesForRoom.map((it) => {
+              {allItemTypesForRoom.map((it, i) => {
                 const count = counts[it.slug] ?? 0;
                 return (
                   <li key={it.slug} className="list-none">
-                    {/* Inline card body for now — Commit 4 replaces this
-                     *  with a shared <ItemTypeCoverCard> that adds a
-                     *  product thumbnail with this same typographic
-                     *  fallback. Visual language matches the rail's
-                     *  ItemTypeRailCard exactly so the hand-off in
-                     *  Commit 4 is a one-place edit. */}
-                    <Link
+                    {/* Wave UI · Commit 4 — shared `ItemTypeCoverCard`
+                     *  replaces the previously inlined card body. Same
+                     *  component drives the rails above; visual rhythm
+                     *  stays in sync between rail and grid by
+                     *  construction. coverUrl is room-scoped (covers
+                     *  comes from `coversByItemTypeInRoom`) so the
+                     *  cover image always matches what /item/<slug>?
+                     *  room=<this> would surface on click. */}
+                    <ItemTypeCoverCard
                       href={`/item/${it.slug}?room=${slug}`}
-                      className="
-                        group flex h-full flex-col overflow-hidden
-                        rounded-lg border border-neutral-200 bg-white
-                        transition active:scale-[0.98]
-                        hover:border-black hover:shadow-sm
-                      "
-                    >
-                      <div
-                        className="
-                          flex aspect-square w-full items-center
-                          justify-center bg-gradient-to-br
-                          from-neutral-50 to-neutral-100 p-3 text-center
-                        "
-                      >
-                        <span
-                          className={`
-                            text-base font-semibold leading-tight
-                            transition group-hover:scale-[1.02]
-                            ${count > 0 ? "text-neutral-900" : "text-neutral-400"}
-                          `}
-                        >
-                          {labelFor(it, locale)}
-                        </span>
-                      </div>
-                      <div className="px-2.5 py-1.5 text-[11px] text-neutral-500">
-                        {tHome("itemCount", { count })}
-                      </div>
-                    </Link>
+                      label={labelFor(it, locale)}
+                      count={count}
+                      countLabel={tHome("itemCount", { count })}
+                      coverUrl={covers[it.slug] ?? null}
+                      // First 8 grid cards are above the fold on a
+                      // 1024+ viewport (4-col grid × 2 rows). Eager-
+                      // load those; the rest can lazy-load as the
+                      // user scrolls.
+                      priority={i < 8}
+                    />
                   </li>
                 );
               })}

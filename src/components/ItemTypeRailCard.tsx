@@ -1,70 +1,62 @@
 /**
- * Wave UI · Commit 4 — fixed-width item-type card for HScrollRail.
- *
- * Extracted from the home page's inline rail JSX (Wave UI · Commit 2).
- * Three rails on three pages share this exact tile shape:
+ * Wave UI · Commit 4 — fixed-width rail wrapper for the shared
+ * `ItemTypeCoverCard`. Three rails share the same fixed-width tile:
  *
  *   • home `/`               → Browse by item (top 8 by published count)
- *   • `/room/[slug]`         → Item types in this room (commit 4)
- *   • `/item/[slug]?room=`   → Sibling item types in same room (commit 5)
+ *   • `/room/[slug]`         → Item types in this room
+ *   • `/item/[slug]?room=`   → Sibling item types in same room (future)
  *
- * Inlining the same JSX three times is the common path to drift —
- * one place adjusts the corner radius or hover state and the other
- * two silently diverge. One component keeps them locked.
- *
- * Width: fixed `w-32` mobile (≈128px) and `w-36` (≈144px) sm+. On a
- * 375px viewport with 12px gap, that lets ~2.6 cards peek above the
- * fold — enough to signal scrollability without crowding.
+ * Why this thin wrapper exists:
+ *   • The shared `ItemTypeCoverCard` renders just the inner <Link>
+ *     so it can drop into both rails (fixed-width + snap-start + <li>)
+ *     and grids (flex-fill + plain <li>) without forking. This
+ *     component owns the rail-specific list-item shape so the rail's
+ *     parent <ul> contract stays correct.
+ *   • Width: `w-32` mobile (≈128px), `w-36` (≈144px) sm+. On a 375px
+ *     viewport with 12px gap, ~2.6 cards peek above the fold —
+ *     enough to signal scrollability without crowding.
  *
  * Render contract:
- *   • Caller wraps in <li> via HScrollRail's child rules.
- *   • `href` is precomputed by the caller — different rails point at
- *     different URLs (home → /item/X; room/item pages → /item/X?room=Y).
+ *   • Caller wraps in <ul> via HScrollRail's child rules; this
+ *     component supplies the <li>.
+ *   • All visual concerns (image, typographic fallback, muted state)
+ *     live in `ItemTypeCoverCard` so a tweak there updates rails AND
+ *     grids in one place. Was previously inlined here pre-Commit 4.
  */
-import Link from "next/link";
+import ItemTypeCoverCard from "./ItemTypeCoverCard";
 
 export default function ItemTypeRailCard({
   href,
   label,
+  count,
   countLabel,
+  coverUrl,
+  priority,
 }: {
   href: string;
   label: string;
+  /** Drives the typographic-fallback muted state. Defaults to >0
+   *  for backward-compat with rails that haven't been updated to
+   *  pass it (the Browse-by-item rail on home pre-Commit 4 only
+   *  passed countLabel). */
+  count?: number;
   /** Localized "{count} items" string — rendered verbatim. */
   countLabel: string;
+  /** Cover image; null/undefined falls back to typographic tile. */
+  coverUrl?: string | null;
+  /** Eager-load the cover. Use for the first 2-3 cards in the rail. */
+  priority?: boolean;
 }) {
   return (
     <li className="w-32 shrink-0 snap-start sm:w-36">
-      <Link
+      <ItemTypeCoverCard
         href={href}
-        className="
-          group flex h-full flex-col overflow-hidden
-          rounded-lg border border-neutral-200 bg-white
-          transition active:scale-[0.98]
-          hover:border-black hover:shadow-sm
-        "
-      >
-        <div
-          className="
-            flex aspect-square w-full items-center
-            justify-center bg-gradient-to-br
-            from-neutral-50 to-neutral-100 p-3 text-center
-          "
-        >
-          <span
-            className="
-              text-sm font-semibold leading-tight
-              text-neutral-900
-              transition group-hover:scale-[1.02]
-            "
-          >
-            {label}
-          </span>
-        </div>
-        <div className="px-2.5 py-1.5 text-[11px] text-neutral-500">
-          {countLabel}
-        </div>
-      </Link>
+        label={label}
+        count={count ?? 1}
+        countLabel={countLabel}
+        coverUrl={coverUrl}
+        priority={priority}
+      />
     </li>
   );
 }

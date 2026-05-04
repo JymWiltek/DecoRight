@@ -242,6 +242,131 @@ export async function publishedCountsByRoom(): Promise<
   )();
 }
 
+/**
+ * Wave UI · Commit 4 — cover thumbnail per item_type.
+ *
+ * For each item_type slug, picks ONE published product's
+ * `thumbnail_url` to serve as the category card's cover image.
+ * Returned as a Record<string, string> — only item_types that have
+ * at least one stocked product with a thumbnail appear; everything
+ * else is absent and the UI falls back to the typographic tile.
+ *
+ * Pick rule: most recently created published product (`created_at
+ * DESC`). Two reasons:
+ *   1. Newest stock is what Jym wants on the marquee — the rail/grid
+ *      doubles as a "what's new" surface implicitly.
+ *   2. It's stable: as long as no product is published or unpublished,
+ *      the same product wins on every render → no thumbnail flicker
+ *      across page revisits within the cache window.
+ *
+ * Why one query that pulls (item_type, thumbnail_url, created_at)
+ * for ALL published products instead of one query per slug: the
+ * catalog has ~30 published products and ~25 item_types today, so
+ * a single round-trip + in-memory reduction beats N parallel queries
+ * by a wide margin (and stays linear as we grow). PostgREST's
+ * DISTINCT ON would let us push the reduction server-side, but the
+ * supabase-js builder doesn't expose it cleanly — the in-memory
+ * reduce is short and obvious.
+ *
+ * Cache: same `published-counts` tag the count helpers use, so a
+ * single publish/unpublish invalidates both counts and covers in one
+ * shot. 5-min revalidate matches counts so the row a visitor sees
+ * is internally consistent (count and cover come from the same
+ * cache window).
+ */
+export async function coversByItemType(): Promise<Record<string, string>> {
+  return unstable_cache(
+    async () => {
+      const url = process.env.NEXT_PUBLIC_APP_SUPABASE_URL;
+      const anonKey = process.env.NEXT_PUBLIC_APP_SUPABASE_ANON_KEY;
+      if (!url || !anonKey) {
+        throw new Error(
+          "Missing NEXT_PUBLIC_APP_SUPABASE_URL or NEXT_PUBLIC_APP_SUPABASE_ANON_KEY",
+        );
+      }
+      const supabase = createAnonSbClient<Database>(url, anonKey, {
+        auth: { persistSession: false, autoRefreshToken: false },
+      });
+      // ORDER BY created_at DESC means the first row we see for any
+      // given item_type is the newest. Since `out[slug]` is set only
+      // when not already present, that newest one wins.
+      const { data, error } = await supabase
+        .from("products")
+        .select("item_type, thumbnail_url, created_at")
+        .eq("status", "published")
+        .not("thumbnail_url", "is", null)
+        .order("created_at", { ascending: false });
+      if (error) throw error;
+      const out: Record<string, string> = {};
+      for (const row of data ?? []) {
+        const slug = row.item_type;
+        const thumb = row.thumbnail_url;
+        if (!slug || !thumb) continue;
+        if (out[slug]) continue;
+        out[slug] = thumb;
+      }
+      return out;
+    },
+    ["covers-by-item-type-v1"],
+    { tags: [PRODUCT_COUNTS_TAG], revalidate: 300 },
+  )();
+}
+
+/**
+ * Wave UI · Commit 4 — cover thumbnail per item_type, scoped to a
+ * specific room. Same pick rule as `coversByItemType` (newest
+ * published product wins) but only considers products whose
+ * `room_slugs` contains `roomSlug`.
+ *
+ * Why per-room: on /room/bathroom, the rail and grid show item-types
+ * that belong in the bathroom — and a generic "Sink" cover from the
+ * kitchen (kitchen sink) would mislead the visitor about what they'd
+ * see if they tapped through. Filtering ensures the cover is at least
+ * AS specific as the link's room=<this> query param.
+ *
+ * If a room has no products in some item_type (which is the common
+ * case post-Commit 3 — the M2M grid surfaces taxonomy-only types too),
+ * that slug is simply absent from the map and the UI falls back to
+ * the typographic tile.
+ */
+export async function coversByItemTypeInRoom(
+  roomSlug: string,
+): Promise<Record<string, string>> {
+  return unstable_cache(
+    async () => {
+      const url = process.env.NEXT_PUBLIC_APP_SUPABASE_URL;
+      const anonKey = process.env.NEXT_PUBLIC_APP_SUPABASE_ANON_KEY;
+      if (!url || !anonKey) {
+        throw new Error(
+          "Missing NEXT_PUBLIC_APP_SUPABASE_URL or NEXT_PUBLIC_APP_SUPABASE_ANON_KEY",
+        );
+      }
+      const supabase = createAnonSbClient<Database>(url, anonKey, {
+        auth: { persistSession: false, autoRefreshToken: false },
+      });
+      const { data, error } = await supabase
+        .from("products")
+        .select("item_type, thumbnail_url, created_at")
+        .eq("status", "published")
+        .not("thumbnail_url", "is", null)
+        .overlaps("room_slugs", [roomSlug])
+        .order("created_at", { ascending: false });
+      if (error) throw error;
+      const out: Record<string, string> = {};
+      for (const row of data ?? []) {
+        const slug = row.item_type;
+        const thumb = row.thumbnail_url;
+        if (!slug || !thumb) continue;
+        if (out[slug]) continue;
+        out[slug] = thumb;
+      }
+      return out;
+    },
+    ["covers-by-item-type-in-room-v1", roomSlug],
+    { tags: [PRODUCT_COUNTS_TAG], revalidate: 300 },
+  )();
+}
+
 export async function getRelatedProducts(
   product: ProductRow,
   limit = 6,

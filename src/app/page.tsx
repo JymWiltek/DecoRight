@@ -7,6 +7,7 @@ import ItemTypeRailCard from "@/components/ItemTypeRailCard";
 import SectionHeading from "@/components/SectionHeading";
 import { loadTaxonomy, labelFor } from "@/lib/taxonomy";
 import {
+  coversByItemType,
   publishedCountsByItemType,
   publishedCountsByRoom,
 } from "@/lib/products";
@@ -34,7 +35,7 @@ import {
  * section but we still render it (the catalog is growing).
  */
 export default async function Home() {
-  const [taxonomy, roomCounts, itemTypeCounts, tHome, locale] =
+  const [taxonomy, roomCounts, itemTypeCounts, itemTypeCovers, tHome, locale] =
     await Promise.all([
       loadTaxonomy(),
       // Migration 0013: room lives on products.room_slugs[] directly —
@@ -46,6 +47,12 @@ export default async function Home() {
       // ("published-counts") so a single publish/unpublish invalidates
       // both lookups in one shot.
       publishedCountsByItemType(),
+      // Wave UI · Commit 4: cover thumbnail per item_type (newest
+      // published product wins). Same `published-counts` cache tag
+      // as the count helpers, so one publish invalidates counts and
+      // covers atomically — no risk of mismatched count/cover state
+      // bleeding through to a visitor.
+      coversByItemType(),
       getTranslations("home"),
       getLocale() as Promise<Locale>,
     ]);
@@ -100,12 +107,22 @@ export default async function Home() {
               subtitle={tHome("browseByItemSubtitle")}
             />
             <HScrollRail ariaLabel={tHome("browseByItem")}>
-              {topItemTypes.map((it) => (
+              {topItemTypes.map((it, i) => (
                 <ItemTypeRailCard
                   key={it.slug}
                   href={`/item/${it.slug}`}
                   label={labelFor(it, locale)}
+                  count={it.count}
                   countLabel={tHome("itemCount", { count: it.count })}
+                  // Wave UI · Commit 4 — cover thumb per item_type.
+                  // Falls back to typographic tile when item_type has
+                  // no stocked product with a thumbnail (zero-fill
+                  // tail of the rail).
+                  coverUrl={itemTypeCovers[it.slug] ?? null}
+                  // Eager-load the first 3 cards in the rail (the
+                  // ones visible above the fold on mobile). The rest
+                  // lazy-load as the user swipes.
+                  priority={i < 3}
                 />
               ))}
             </HScrollRail>
