@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getLocale, getTranslations } from "next-intl/server";
 import type { Metadata, ResolvingMetadata } from "next";
@@ -139,12 +140,51 @@ export default async function RoomPage({ params }: PageProps) {
   const room = taxonomy.rooms.find((r) => r.slug === slug);
   if (!room) notFound();
 
-  // Show every item_type that has at least one published product
-  // in this room. Sort by taxonomy order (label_en — set in
-  // loadTaxonomy's ORDER BY) so the shelf is stable.
+  // Item-type rail (existing): only types that already have stock in
+  // this room. Surfaces the "buy now" path immediately. Sort by
+  // taxonomy order (label_en — set in loadTaxonomy's ORDER BY) so
+  // the shelf is stable across publishes.
   const itemTypesInRoom = taxonomy.itemTypes.filter(
     (it) => (counts[it.slug] ?? 0) > 0,
   );
+
+  // Wave UI · Commit 3 — full item-type grid (M2M-defined, all of them).
+  //
+  // The rail above is the "shop now" path; this grid is the "what
+  // CAN go in this room" map. Difference matters on rooms we haven't
+  // stocked yet (Office / Children / Laundry / Outdoor / Entrance):
+  // the rail collapses to nothing and the page used to feel empty
+  // even though the catalog clearly has space for those types. The
+  // grid keeps the room page useful at zero-stock — every M2M-
+  // mapped category gets a tile, all clickable to /item/<slug>?
+  // room=<this>, where the item page renders its own clean empty
+  // state. As products get added, the rail fills up; the grid stays
+  // unchanged (it's about taxonomy, not stock).
+  //
+  // Source: taxonomy.itemTypeRooms (mig 0017) is the canonical M2M
+  // for "this item-type belongs in this room". One Set lookup is
+  // O(M) where M = itemTypeRooms rows for this room (small).
+  //
+  // Sort: itemTypeRooms.sort_order primary (curated per-room order
+  // from migration 0017 + admin tweaks), label_en secondary as a
+  // total tie-breaker. Curated ordering matters here because some
+  // rooms have a natural priority (kitchen → fridge before sink-cab
+  // → ovens before range-hoods); falling back to alpha would scramble
+  // that.
+  const roomItemTypeOrder = new Map<string, number>();
+  for (const r of taxonomy.itemTypeRooms) {
+    if (r.room_slug === slug) {
+      roomItemTypeOrder.set(r.item_type_slug, r.sort_order);
+    }
+  }
+  const allItemTypesForRoom = taxonomy.itemTypes
+    .filter((it) => roomItemTypeOrder.has(it.slug))
+    .sort((a, b) => {
+      const ao = roomItemTypeOrder.get(a.slug) ?? Number.MAX_SAFE_INTEGER;
+      const bo = roomItemTypeOrder.get(b.slug) ?? Number.MAX_SAFE_INTEGER;
+      return ao - bo || a.label_en.localeCompare(b.label_en, "en");
+    });
+
   const roomLabel = labelFor(room, locale);
 
   // Lookup maps for ProductCard. Same shape /item/[slug] feeds it.
@@ -246,6 +286,87 @@ export default async function RoomPage({ params }: PageProps) {
                 );
               })}
             </HScrollRail>
+          </section>
+        ) : null}
+
+        {/* ─── Section · All categories in this room (full grid) ───
+         *
+         * Wave UI · Commit 3. The rail above shows only stocked
+         * categories ("buy now"); this grid shows EVERY item type
+         * that's defined to belong in this room (M2M from
+         * item_type_rooms), regardless of whether we've stocked it
+         * yet. Two purposes:
+         *   1. On under-stocked rooms (office / children / laundry
+         *      / outdoor / entrance) the page used to collapse to a
+         *      hero + empty state. The grid keeps it useful: visitors
+         *      see what categories are CONCEIVED for this room and
+         *      can tap into /item/<slug>?room=<slug> to see if any
+         *      individual category has stock yet.
+         *   2. On well-stocked rooms (kitchen, bathroom) the grid
+         *      doubles as a sitemap of "everything that lives here"
+         *      — the rail handles the impatient buyer; the grid
+         *      handles the "I'm not sure what I want" browser.
+         *
+         * Card shape mirrors the rail card (typographic) for now;
+         * Commit 4 swaps both rail and grid cards for cover-image
+         * tiles via a shared helper.
+         *
+         * Hidden when the room has zero M2M-mapped item types
+         * (would only happen for a brand-new room that hasn't been
+         * seeded yet — currently none in prod, but the guard keeps
+         * the page from emitting an empty grid heading).
+         */}
+        {allItemTypesForRoom.length > 0 ? (
+          <section className="mb-8 sm:mb-12">
+            <SectionHeading
+              title={tRoom("allCategories")}
+              subtitle={tRoom("allCategoriesSubtitle", { room: roomLabel })}
+            />
+            <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 lg:grid-cols-4">
+              {allItemTypesForRoom.map((it) => {
+                const count = counts[it.slug] ?? 0;
+                return (
+                  <li key={it.slug} className="list-none">
+                    {/* Inline card body for now — Commit 4 replaces this
+                     *  with a shared <ItemTypeCoverCard> that adds a
+                     *  product thumbnail with this same typographic
+                     *  fallback. Visual language matches the rail's
+                     *  ItemTypeRailCard exactly so the hand-off in
+                     *  Commit 4 is a one-place edit. */}
+                    <Link
+                      href={`/item/${it.slug}?room=${slug}`}
+                      className="
+                        group flex h-full flex-col overflow-hidden
+                        rounded-lg border border-neutral-200 bg-white
+                        transition active:scale-[0.98]
+                        hover:border-black hover:shadow-sm
+                      "
+                    >
+                      <div
+                        className="
+                          flex aspect-square w-full items-center
+                          justify-center bg-gradient-to-br
+                          from-neutral-50 to-neutral-100 p-3 text-center
+                        "
+                      >
+                        <span
+                          className={`
+                            text-base font-semibold leading-tight
+                            transition group-hover:scale-[1.02]
+                            ${count > 0 ? "text-neutral-900" : "text-neutral-400"}
+                          `}
+                        >
+                          {labelFor(it, locale)}
+                        </span>
+                      </div>
+                      <div className="px-2.5 py-1.5 text-[11px] text-neutral-500">
+                        {tHome("itemCount", { count })}
+                      </div>
+                    </Link>
+                  </li>
+                );
+              })}
+            </ul>
           </section>
         ) : null}
 
