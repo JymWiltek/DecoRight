@@ -3,6 +3,8 @@
 import { useState } from "react";
 import { useTranslations } from "next-intl";
 import ModelViewer from "./ModelViewer";
+import ModelViewerErrorBoundary from "./ModelViewerErrorBoundary";
+import ModelFallback from "./ModelFallback";
 
 /**
  * Product gallery — main image priority is "3D first, photo fallback":
@@ -120,12 +122,24 @@ export default function ProductGallery({
           </div>
         )}
         {current.kind === "model" && (
-          <ModelViewer
-            src={current.glbUrl}
-            alt={current.alt}
-            poster={current.poster}
-            overrideColorHex={overrideColorHex}
-          />
+          // Render-phase / commit-phase errors inside <model-viewer>
+          // (Draco decode throw, malformed GLB, WebGL refusal, etc.)
+          // are caught here so the rest of the gallery + product page
+          // survives. iOS Safari OS-level OOM kills are NOT catchable
+          // — those are blocked upstream by lib/admin/compress-glb's
+          // checkGlbBudget pre-check at upload time.
+          <ModelViewerErrorBoundary
+            fallback={
+              <ModelFallback thumbnail={current.poster} alt={current.alt} />
+            }
+          >
+            <ModelViewer
+              src={current.glbUrl}
+              alt={current.alt}
+              poster={current.poster}
+              overrideColorHex={overrideColorHex}
+            />
+          </ModelViewerErrorBoundary>
         )}
         {current.kind === "original" && (
           // Original scene photo — full-bleed, no gradient backdrop.

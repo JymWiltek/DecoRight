@@ -56,6 +56,7 @@
   "product": {
     "notFound": "Product not found",
     "noModel": "No 3D model yet",
+    "modelUnavailable": "3D preview unavailable on this device",
     "noImages": "No photos uploaded yet — please check back soon.",
     "galleryViewMain": "View main thumbnail",
     "galleryViewModel": "View 3D model",
