@@ -248,6 +248,44 @@ export default function FileDropzone({
       // file under the cap. Tells them whether to retry vs. give up.
       return;
     }
+
+    // Decoded-budget pre-check — runs on the FINAL staged bytes whether
+    // or not compression engaged. Catches the iOS-Safari-OOM scenario
+    // where a Draco-compressed 8 MB GLB hides 1 M+ verts and a 4096²
+    // texture inside (see /product/9dbd6623 incident, 2026-05-09 0:47).
+    // We import from the same module as compressGlb so the lazy chunk
+    // is reused; if the compression branch already ran, this is a
+    // no-cost re-import.
+    if (kind === "glb" && /\.glb$/i.test(staged.name)) {
+      try {
+        const { checkGlbBudget, GlbBudgetExceededError } = await import(
+          "@/lib/admin/compress-glb"
+        );
+        try {
+          await checkGlbBudget(staged);
+        } catch (e) {
+          if (e instanceof GlbBudgetExceededError) {
+            setError(e.message);
+            return;
+          }
+          // Parse failures (malformed glb, unexpected chunk layout) —
+          // log + let the file through. The post-upload renderer will
+          // surface a more specific error if the file is genuinely
+          // broken; we don't want budget-checker brittleness to block
+          // legitimate uploads.
+          console.warn(
+            "[admin/glb] budget check parse failed, allowing through:",
+            e,
+          );
+        }
+      } catch (importErr) {
+        // The dynamic import itself failed — exceedingly rare (network
+        // hiccup mid-pick) but we keep the user moving rather than
+        // hard-rejecting on tooling failure.
+        console.warn("[admin/glb] budget checker unavailable:", importErr);
+      }
+    }
+
     setPicked(staged);
   }
 
