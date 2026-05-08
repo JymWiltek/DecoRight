@@ -17,6 +17,20 @@
 /.next/
 /out/
 
+# Draco WASM artifacts mirrored from node_modules/draco3dgltf by the
+# postinstall + prebuild hooks (scripts/copy-draco-wasm.mjs). Treated
+# as build output, not source — the contents come straight out of the
+# pinned draco3dgltf package.
+/public/draco/
+
+# Local-only QA scaffolding for the admin GLB upload flow:
+#   scripts/gen-test-glbs.ts      — synthesizes test .glbs of varying sizes
+#   scripts/mint-test-session.ts  — mints a dev admin session cookie
+# Neither is imported by runtime code; both stay out of git so the
+# production surface only ships shipping code.
+/scripts/gen-test-glbs.ts
+/scripts/mint-test-session.ts
+
 # production
 /build
 
