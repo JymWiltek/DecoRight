@@ -63,16 +63,24 @@ export type GlbCompressionResult = {
 /**
  * Threshold under which we skip compression entirely.
  *
- * 5 MB is the size at which the fixed cost of the WASM round-trip
- * (~150 ms even on a fast laptop) starts to feel disproportionate to
- * the savings. Most pre-optimized furniture GLBs are 1–4 MB; running
- * Draco on them gains a few hundred KB while burning visible CPU.
+ * 20 MB after live experience with Meshy / Tripo exports: a typical
+ * generated GLB lands at 6-15 MB. Compressing those takes 15-25 s of
+ * locked main-thread time and saves a few MB on storage — but the
+ * uncompressed file uploads in ~1 s on any reasonable connection,
+ * and the storage delta costs cents per month. The wait isn't worth
+ * the spend.
  *
- * Above 5 MB we always compress: storage cost matters, render-time
- * GPU upload time matters more, and the WASM warmup is dwarfed by
- * the compression itself.
+ * Above 20 MB we always compress: that's the band where uploads
+ * actually start hurting (60 MB bucket cap, 30+ s upload on slow
+ * networks, real GPU upload pain on the storefront), so the
+ * compression CPU pays for itself in real-world bandwidth + render-
+ * time savings.
+ *
+ * Earlier value: 5 MB (commit 1f87e25). Bumped per Jym's feedback —
+ * Meshy outputs in the 6-15 MB range were forcing 20 s spinners with
+ * no perceivable upside vs. uploading raw.
  */
-export const COMPRESS_THRESHOLD_BYTES = 5 * 1024 * 1024;
+export const COMPRESS_THRESHOLD_BYTES = 20 * 1024 * 1024;
 
 /**
  * Hard ceiling above which we refuse to even attempt compression.
@@ -228,7 +236,7 @@ export async function compressGlb(file: File): Promise<GlbCompressionResult> {
   });
 
   // Floor at 0 in the unlikely case Draco made it bigger (it can,
-  // marginally, on tiny meshes — we only get here for files ≥ 5 MB
+  // marginally, on tiny meshes — we only get here for files ≥ 20 MB
   // where compression virtually always wins, but defend anyway so
   // the UI doesn't show "-2 % smaller").
   const ratio = Math.max(0, 1 - compressedBytes / originalBytes);

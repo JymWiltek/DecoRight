@@ -8,10 +8,13 @@
  * Mechanics:
  *   - User picks / drops a file → we stash it in component state and
  *     render filename + size + a Clear button. No network IO.
- *   - For .glb files ≥ 5 MB: we transparently run client-side Draco
+ *   - For .glb files ≥ 20 MB: we transparently run client-side Draco
  *     compression before staging, so a 62 MB Meshy export that would
  *     otherwise blow past the 60 MB bucket cap becomes ~8 MB on its
- *     way in. Compression lives in a dynamically-imported module
+ *     way in. Files under 20 MB upload as-is — sparing the user a
+ *     20 s spinner for storage savings of cents per month (see the
+ *     COMPRESS_THRESHOLD_BYTES doc in compress-glb.ts for the math).
+ *     Compression lives in a dynamically-imported module
  *     (`@/lib/admin/compress-glb`) so the gltf-transform + draco3dgltf
  *     stack stays out of every other bundle, including the entire
  *     storefront. See that module's header for the design notes.
@@ -373,7 +376,7 @@ export default function FileDropzone({
 
       {/*
         Compression stat line — only shown when the Draco pipeline
-        actually ran (file ≥ 5 MB threshold). Kept above the error
+        actually ran (file ≥ 20 MB threshold). Kept above the error
         banner so the operator sees BOTH "we compressed 62→61" AND
         "but it's still too big" in the rare oversize case.
       */}
