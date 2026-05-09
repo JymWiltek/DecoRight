@@ -342,7 +342,7 @@ export default function ProductForm({
 
         <Section
           title="3D model"
-          hint="Optional. .glb file — auto-compressed in your browser via Draco; original can be any size, the post-compression result must fit under 60 MB. Staged for upload — nothing uploads until you click Save."
+          hint="Optional. .glb file (60 MB max). If your file is larger, compress it at https://gltf.report (Draco) before uploading. Staged for upload — nothing uploads until you click Save."
         >
           <Field label=".glb model">
             <FileDropzone

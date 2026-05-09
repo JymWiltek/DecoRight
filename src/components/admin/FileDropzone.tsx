@@ -6,18 +6,10 @@
  * Publish button fires.
  *
  * Mechanics:
- *   - User picks / drops a file → we stash it in component state and
- *     render filename + size + a Clear button. No network IO.
- *   - For .glb files ≥ 20 MB: we transparently run client-side Draco
- *     compression before staging, so a 62 MB Meshy export that would
- *     otherwise blow past the 60 MB bucket cap becomes ~8 MB on its
- *     way in. Files under 20 MB upload as-is — sparing the user a
- *     20 s spinner for storage savings of cents per month (see the
- *     COMPRESS_THRESHOLD_BYTES doc in compress-glb.ts for the math).
- *     Compression lives in a dynamically-imported module
- *     (`@/lib/admin/compress-glb`) so the gltf-transform + draco3dgltf
- *     stack stays out of every other bundle, including the entire
- *     storefront. See that module's header for the design notes.
+ *   - User picks / drops a .glb → vet format + size → run the
+ *     decoded-budget pre-check (lib/admin/glb-budget) → stash in
+ *     component state and render filename + size + Clear. No
+ *     network IO at this stage.
  *   - On mount we register with <StagedUploadsProvider> (from
  *     ProductForm). When the form submits, the provider invokes our
  *     `run()` which:
@@ -25,13 +17,23 @@
  *       2. PUTs the .glb bytes directly to Supabase Storage. This
  *          step bypasses Vercel's 4.5 MB platform body cap — the
  *          whole reason for the direct-upload refactor.
- *       3. Returns hidden fields (`glb_path`, `glb_size_kb`) that
- *          ProductForm appends to its FormData before calling the
- *          server action.
+ *       3. Returns hidden fields (`glb_path`, `glb_size_kb`, plus
+ *          the three budget metadata numbers) that ProductForm
+ *          appends to its FormData before calling the server action.
  *   - On /products/new there's no productId yet, so the dropzone
  *     disables itself with a hint to save the name first. That
  *     keeps us from minting a signed URL for a UUID that doesn't
  *     exist in the products table yet.
+ *
+ * History note: 2026-05-08 we shipped a client-side Draco compression
+ * pipeline (gltf-transform + draco3dgltf, ~600 KB gzipped) so a 62 MB
+ * Meshy export could squeeze under the 60 MB bucket cap. After the
+ * /product/9dbd6623 incident showed that a "successfully compressed"
+ * 8 MB GLB still OOM-killed iOS Safari during decode, Jym decided to
+ * stop trying to auto-fix oversize assets and route them through a
+ * manual gltf.report compress + re-upload flow instead. The
+ * compression code path was torn out 2026-05-09; the budget check
+ * stayed because it's still the right gate against iOS OOM.
  */
 
 import { useEffect, useRef, useState, type DragEvent } from "react";
@@ -42,19 +44,6 @@ import {
   useStagedUploads,
   type StagedField,
 } from "./product-form-staging";
-
-/** Inline format helper — one place, two callsites below. */
-function fmtMb(bytes: number): string {
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-}
-
-type CompressionStat = {
-  originalBytes: number;
-  compressedBytes: number;
-  ratio: number;
-  /** Did compression actually run, or was the file under the threshold? */
-  ran: boolean;
-};
 
 type Props = {
   /** Comma-sep MIME types (forwarded to input.accept). */
@@ -101,19 +90,10 @@ export default function FileDropzone({
     maxTextureDim: number;
     decodedRamMb: number;
   } | null>(null);
-  // Two compression-flow states. `compressing` flips the dropzone into
-  // a non-interactive spinner-y state while the WASM round-trip runs.
-  // `compressionStat` survives until the user clears or replaces the
-  // file, so the "62.1 MB → 8.3 MB (87 % smaller)" line stays visible
-  // through the staged-upload step.
-  const [compressing, setCompressing] = useState(false);
-  const [compressionStat, setCompressionStat] = useState<CompressionStat | null>(
-    null,
-  );
   const maxBytes = maxFileMb * 1024 * 1024;
 
   const { busy } = useStagedUploads();
-  const disabled = !productId || busy || compressing;
+  const disabled = !productId || busy;
 
   // The staged uploader reads the *latest* picked file via a ref so
   // the registration itself can be mount-once.
@@ -178,7 +158,7 @@ export default function FileDropzone({
   function vetSize(f: File): string | null {
     if (f.size > maxBytes) {
       const mb = (f.size / 1024 / 1024).toFixed(1);
-      return `${f.name}: ${mb} MB exceeds ${maxFileMb} MB limit — please compress further`;
+      return `${f.name}: ${mb} MB exceeds ${maxFileMb} MB limit. Compress at https://gltf.report (Draco) before uploading.`;
     }
     return null;
   }
@@ -186,16 +166,18 @@ export default function FileDropzone({
   /**
    * Take a user-picked file and stage it.
    *
-   * For .glb (kind === "glb"): run the client-side Draco pipeline
-   * BEFORE the size vet, so a 62 MB Meshy export that compresses to
-   * 8 MB clears the 60 MB bucket cap.
+   * Flow:
+   *   1. Format vet (extension/MIME).
+   *   2. Size vet (60 MB hard cap).
+   *   3. Decoded-budget vet (vertex / texture / RAM caps — protects
+   *      iOS Safari from OOM-crashing on borderline-heavy assets
+   *      that pass the size cap).
+   *   4. Stash file + budget report.
    *
-   * Failure mode: if the compression module throws (WASM unsupported,
-   * malformed .glb, OOM on a hostile input), we silently fall back to
-   * the original bytes and run them through the usual size vet —
-   * matching the pre-compression behaviour for users on browsers
-   * where the pipeline can't run. A `console.warn` records the cause
-   * for triage without leaking jargon to the operator.
+   * The async signature is here only because the budget check reads
+   * the file's bytes via FileReader. There's no compression / WASM /
+   * progress UI — passing or failing the budget check is the only
+   * server-side delay (typically <50 ms even on a 60 MB GLB).
    */
   async function take(f: File) {
     const fmtErr = vetFormat(f);
@@ -210,91 +192,26 @@ export default function FileDropzone({
       return;
     }
     setError(null);
-    setCompressionStat(null);
 
-    // Decide whether to run the Draco pipeline. We keep this gated to
-    // kind === "glb" so future callers (image dropzones, etc.) don't
-    // accidentally pull in the gltf-transform stack.
-    const shouldCompress = kind === "glb" && /\.glb$/i.test(f.name);
-
-    let staged: File = f;
-
-    if (shouldCompress) {
-      setCompressing(true);
-      try {
-        const { compressGlb, GlbTooLargeError } = await import(
-          "@/lib/admin/compress-glb"
-        );
-        try {
-          const result = await compressGlb(f);
-          staged = result.file;
-          setCompressionStat({
-            originalBytes: result.originalBytes,
-            compressedBytes: result.compressedBytes,
-            ratio: result.ratio,
-            ran: result.compressedBytes < result.originalBytes,
-          });
-        } catch (e) {
-          if (e instanceof GlbTooLargeError) {
-            // Pre-compression ceiling — Draco never even started, so
-            // the original file is too big to bother retrying. Bail
-            // with a friendly explicit message.
-            setCompressing(false);
-            const mb = (e.originalBytes / 1024 / 1024).toFixed(1);
-            const ceilMb = (e.ceilingBytes / 1024 / 1024).toFixed(0);
-            setError(
-              `${f.name}: ${mb} MB exceeds the ${ceilMb} MB pre-compression ceiling — please decimate the model in Blender (or another tool) before uploading.`,
-            );
-            return;
-          }
-          // Generic failure — fall through to the existing fallback
-          // path: keep original, console.warn, let vetSize decide.
-          throw e;
-        }
-      } catch (e) {
-        // Graceful fallback per the design contract: keep the original
-        // file, log to console for triage, let the size vet decide
-        // whether to accept it. The user only sees an error if the
-        // original is over the bucket cap.
-        console.warn("[admin/glb] compression failed, falling back to original:", e);
-        staged = f;
-        setCompressionStat(null);
-      } finally {
-        setCompressing(false);
-      }
-    }
-
-    const sizeErr = vetSize(staged);
+    const sizeErr = vetSize(f);
     if (sizeErr) {
       setError(sizeErr);
-      // Keep the compressionStat visible so the operator sees "62 MB →
-      // 61 MB" — the rare case where compression couldn't squeeze the
-      // file under the cap. Tells them whether to retry vs. give up.
       return;
     }
 
-    // Decoded-budget pre-check — runs on the FINAL staged bytes whether
-    // or not compression engaged. Catches the iOS-Safari-OOM scenario
-    // where a Draco-compressed 8 MB GLB hides 1 M+ verts and a 4096²
-    // texture inside (see /product/9dbd6623 incident, 2026-05-09 0:47).
-    // We import from the same module as compressGlb so the lazy chunk
-    // is reused; if the compression branch already ran, this is a
-    // no-cost re-import.
-    //
-    // Side effect: on success we stash the report into budgetReportRef
-    // so the staged-uploader's run() callback can ship the three numbers
-    // to the server action. The DB columns are mig-0031 nullable, and
-    // the server-side render gate treats NULL as "render anyway" — so
-    // a parse failure here just leaves the legacy backward-compat
-    // behaviour intact, no upload regression.
+    // Decoded-budget pre-check. Even after manual gltf.report
+    // compression, a high-vertex / high-texture asset can still
+    // OOM iOS Safari at decode time. The budget check is the
+    // metric that actually correlates with iOS-fitness; the
+    // 60 MB file-size cap above is just convenience.
     budgetReportRef.current = null;
-    if (kind === "glb" && /\.glb$/i.test(staged.name)) {
+    if (kind === "glb" && /\.glb$/i.test(f.name)) {
       try {
         const { checkGlbBudget, GlbBudgetExceededError } = await import(
-          "@/lib/admin/compress-glb"
+          "@/lib/admin/glb-budget"
         );
         try {
-          const report = await checkGlbBudget(staged);
+          const report = await checkGlbBudget(f);
           budgetReportRef.current = {
             vertices: report.totalVertices,
             maxTextureDim: report.largestTexture
@@ -325,7 +242,7 @@ export default function FileDropzone({
       }
     }
 
-    setPicked(staged);
+    setPicked(f);
   }
 
   function onDrop(e: DragEvent<HTMLDivElement>) {
@@ -341,7 +258,6 @@ export default function FileDropzone({
     if (disabled) return;
     setPicked(null);
     setError(null);
-    setCompressionStat(null);
     budgetReportRef.current = null;
   }
 
@@ -404,26 +320,6 @@ export default function FileDropzone({
             Save the product first (just the name works), then drop a{" "}
             .glb here on the edit page.
           </div>
-        ) : compressing ? (
-          // Active compression — non-interactive while WASM works.
-          // The label shows the original (pre-compression) size since
-          // we don't know the final size until the pipeline finishes.
-          <>
-            <div
-              role="status"
-              aria-live="polite"
-              className="flex items-center gap-2 text-neutral-700"
-            >
-              <span
-                aria-hidden
-                className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-neutral-300 border-t-neutral-700"
-              />
-              <span className="font-medium">Compressing .glb…</span>
-            </div>
-            <div className="mt-1 text-xs text-neutral-500">
-              First-time use loads ~600 KB of WebAssembly · subsequent files reuse the cache
-            </div>
-          </>
         ) : picked ? (
           <>
             <div className="font-medium text-neutral-800">{picked.name}</div>
@@ -446,25 +342,24 @@ export default function FileDropzone({
               {hint ?? "Click to pick a file, or drop it here"}
             </div>
             <div className="mt-1 text-xs text-neutral-500">
-              Up to {maxFileMb} MB after compression · staged for Save
+              Max {maxFileMb} MB · staged for Save
+            </div>
+            <div className="mt-1 text-xs text-neutral-400">
+              Tip: if your GLB is over {maxFileMb} MB, compress it at{" "}
+              <a
+                href="https://gltf.report"
+                target="_blank"
+                rel="noopener"
+                className="underline hover:text-neutral-600"
+                onClick={(e) => e.stopPropagation()}
+              >
+                gltf.report
+              </a>{" "}
+              before uploading.
             </div>
           </>
         )}
       </div>
-
-      {/*
-        Compression stat line — only shown when the Draco pipeline
-        actually ran (file ≥ 20 MB threshold). Kept above the error
-        banner so the operator sees BOTH "we compressed 62→61" AND
-        "but it's still too big" in the rare oversize case.
-      */}
-      {compressionStat && compressionStat.ran && (
-        <div className="rounded-md bg-emerald-50 px-3 py-2 text-xs text-emerald-700">
-          Compressed {fmtMb(compressionStat.originalBytes)} →{" "}
-          {fmtMb(compressionStat.compressedBytes)} (
-          {Math.round(compressionStat.ratio * 100)}% smaller)
-        </div>
-      )}
 
       {error && (
         <div className="rounded-md bg-rose-50 px-3 py-2 text-xs text-rose-700">

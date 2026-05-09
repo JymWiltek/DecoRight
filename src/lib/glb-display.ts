@@ -21,7 +21,7 @@
  *   too.
  *
  * Server caps are intentionally STRICTER than the admin upload caps
- * (lib/admin/compress-glb constants):
+ * (lib/admin/glb-budget constants):
  *
  *   admin upload (rejects)        server SSR gate (skips render)
  *   ──────────────────────        ──────────────────────────────

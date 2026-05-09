@@ -17,26 +17,13 @@
 /.next/
 /out/
 
-# Draco WASM artifacts mirrored from node_modules/draco3dgltf by the
-# postinstall + prebuild hooks (scripts/copy-draco-wasm.mjs). Treated
-# as build output, not source — the contents come straight out of the
-# pinned draco3dgltf package.
-/public/draco/
-
-# Local-only QA scaffolding for the admin GLB upload flow:
-#   scripts/gen-test-glbs.ts          — synthesizes test .glbs of varying sizes
-#   scripts/gen-budget-test-glbs.ts   — synthesizes boundary-case .glbs for
-#                                       the decoded-budget pre-check tests
-#   scripts/mint-test-session.ts      — mints a dev admin session cookie
-#   scripts/test-budget.mjs           — direct-call unit test of checkGlbBudget
-#   scripts/test-dropzone.mjs         — Playwright dropzone integration test
+# Local-only QA scaffolding for the admin GLB upload flow.
 # None are imported by runtime code; all stay out of git so the
 # production surface only ships shipping code.
-/scripts/gen-test-glbs.ts
-/scripts/gen-budget-test-glbs.ts
+#   scripts/mint-test-session.ts      — mints a dev admin session cookie
+#   scripts/test-revert.mjs           — Playwright dropzone integration test
 /scripts/mint-test-session.ts
-/scripts/test-budget.mjs
-/scripts/test-dropzone.mjs
+/scripts/test-revert.mjs
 
 # production
 /build

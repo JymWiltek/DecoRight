@@ -29,7 +29,7 @@
  *     internals throw (Draco decode failures, WebGL context
  *     refusals, malformed GLB asset), and is no help against
  *     the OS-level OOM kill — that needs the upload-side
- *     pre-check (lib/admin/compress-glb#checkGlbBudget) to
+ *     pre-check (lib/admin/glb-budget#checkGlbBudget) to
  *     prevent oversize assets from reaching prod in the first
  *     place. The boundary is the second layer of defence.
  *

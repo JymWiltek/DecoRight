@@ -126,7 +126,7 @@ export default function ProductGallery({
           // (Draco decode throw, malformed GLB, WebGL refusal, etc.)
           // are caught here so the rest of the gallery + product page
           // survives. iOS Safari OS-level OOM kills are NOT catchable
-          // — those are blocked upstream by lib/admin/compress-glb's
+          // — those are blocked upstream by lib/admin/glb-budget's
           // checkGlbBudget pre-check at upload time.
           <ModelViewerErrorBoundary
             fallback={

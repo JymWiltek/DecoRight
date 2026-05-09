@@ -546,11 +546,11 @@ export async function updateProduct(id: string, fd: FormData): Promise<void> {
       updates.glb_url = glbPublicUrl(id);
       updates.glb_size_kb = num(fd, "glb_size_kb");
       // Decoded-budget metadata (mig 0031). Computed in the dropzone
-      // by lib/admin/compress-glb#checkGlbBudget at pick time, shipped
+      // by lib/admin/glb-budget#checkGlbBudget at pick time, shipped
       // as 3 hidden form fields. The server-side render gate
-      // (lib/glb-display#shouldRenderGlbServerSide) reads these to
-      // decide whether <model-viewer> should mount on the product
-      // page — preventing iOS Safari OOM on borderline-too-heavy GLBs.
+      // (lib/glb-display#glbUrlForGallery) reads these to decide
+      // whether <model-viewer> should mount on the product page —
+      // preventing iOS Safari OOM on borderline-too-heavy GLBs.
       // num() returns null on missing/invalid input → the DB columns
       // accept null and the gate treats null as "render anyway"
       // (backward compat with pre-mig-0031 products).
