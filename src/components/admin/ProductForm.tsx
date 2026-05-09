@@ -74,6 +74,11 @@ type Props = {
    *  provided, renders at the very top of the form so the operator
    *  sees Meshy progress before scrolling. /new doesn't pass this. */
   meshyBanner?: React.ReactNode;
+  /** Wave 5 (mig 0038) — feed_to_ai=true product images, pre-resolved
+   *  with preview URLs. Drives the SpecSheetAutofillBlock's image
+   *  picker. Empty array → block renders an "upload an image first"
+   *  hint instead of the picker. */
+  aiCandidateImages?: { id: string; previewUrl: string | null }[];
 };
 
 const FORM_ID = "product-form";
@@ -90,6 +95,7 @@ export default function ProductForm({
   errMsg,
   imagesSection,
   meshyBanner,
+  aiCandidateImages = [],
 }: Props) {
   const p = product;
   const isEdit = Boolean(p);
@@ -387,7 +393,11 @@ export default function ProductForm({
               the typical operator flow for a brand-new product. */}
           <div className="flex flex-col gap-3">
             <AIInferButton productId={p?.id ?? null} form={FORM_ID} />
-            <SpecSheetAutofillBlock productId={p?.id ?? null} formId={FORM_ID} />
+            <SpecSheetAutofillBlock
+              productId={p?.id ?? null}
+              formId={FORM_ID}
+              candidates={aiCandidateImages}
+            />
           </div>
         </Section>
 

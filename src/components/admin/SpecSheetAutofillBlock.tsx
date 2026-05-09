@@ -1,45 +1,39 @@
 "use client";
 
 /**
- * Wave 3 — admin UI block: upload a brand spec sheet image, run it
- * through GPT-4o vision via the parseSpecSheetAction server action,
- * and let the operator selectively apply each suggested field to the
- * product form.
+ * Wave 5 (mig 0038) — admin "Auto-fill from image" block.
+ *
+ * Behavior change vs. Wave 3:
+ *   • Was: operator uploads a fresh spec sheet, the action persists
+ *     it as image_kind='spec_sheet' and forwards bytes to GPT-4o.
+ *   • Now: operator picks one of the existing product images that
+ *     have feed_to_ai=true. No new upload — the spec sheet (or any
+ *     other image they want parsed) just goes through the regular
+ *     image upload flow with feed_to_ai turned on.
+ *
+ * The flat image-pool model means we don't care what kind the image
+ * is — a brand spec PDF screenshot, a product page snip, even a
+ * cutout — they all go through GPT-4o vision the same way. The
+ * `image_kind` column stays around for the cutout pipeline's
+ * internal use, no longer gated by it here.
  *
  * UX flow:
- *   1. Operator picks a spec sheet (JPEG/PNG/WebP, ≤ 8 MB).
- *   2. Click "Parse spec sheet". The action uploads the image to
- *      raw-images storage with image_kind='spec_sheet' (so it stays
- *      private + invisible to storefront), forwards to GPT-4o, and
- *      returns the structured suggestions.
- *   3. Suggestions render in a card with one row per field. Each
- *      row shows the AI value + a checkbox (default ON when the AI
- *      returned a non-null value, OFF otherwise).
- *   4. "Apply selected" button writes the checked fields into the
- *      form:
- *        - name / description → emit via the existing autofill bus
- *          (AutofillTextInput / AutofillTextarea listen for it).
- *        - brand / sku_id / dim_* / weight_kg → directly set the
- *          underlying <input>'s value (those are uncontrolled).
- *      ai_filled_fields hidden inputs are emitted for each applied
- *      field so the server action persists the audit list.
- *
- * Note about file uploads in server actions: this calls the action
- * with a FormData containing the spec_image. Per Next 15+ semantics,
- * server actions accept multipart payloads transparently — no special
- * client wiring needed beyond constructing the FormData. The
- * experimental.serverActions.bodySizeLimit in next.config.ts (10 MB)
- * is sufficient for an 8 MB spec sheet.
- *
- * Why a NEW component instead of extending AIInferButton: Jym
- * explicitly asked we not change the existing photo-classifier
- * "Auto-classify from photo" logic. This block is the new
- * "Auto-fill from spec sheet" surface — different inputs, different
- * outputs, different review UI.
+ *   1. Operator sees a list of available images (thumbnails) for
+ *      this product, filtered to feed_to_ai=true.
+ *   2. Picks one (radio).
+ *   3. Click "Parse" → server action fetches the bytes, calls GPT-4o,
+ *      returns suggestions.
+ *   4. Same per-field checkbox card + Apply button as before.
+ *   5. Apply pushes name/description through the existing autofill
+ *      bus + writes brand/sku/dim/weight directly into the form's
+ *      uncontrolled inputs.
  */
 
-import { useRef, useState, useTransition } from "react";
-import { parseSpecSheetAction, type ParseSpecSheetResult } from "@/app/admin/(dashboard)/products/actions";
+import { useState, useTransition } from "react";
+import {
+  parseSpecSheetAction,
+  type ParseSpecSheetResult,
+} from "@/app/admin/(dashboard)/products/actions";
 import { emitAutofillApply } from "@/lib/ai/autofill-bus";
 
 type SuggestionRow = {
@@ -61,18 +55,37 @@ type SuggestionRow = {
   checked: boolean;
 };
 
+/** Shape the ProductForm passes per image. */
+export type AiCandidateImage = {
+  id: string;
+  /** Public preview URL — the cutout if available (it's already a
+   *  public CDN URL); otherwise a signed URL of the raw upload that
+   *  the page resolved server-side. May be null on rows that
+   *  haven't finished processing. */
+  previewUrl: string | null;
+};
+
 type Props = {
-  /** Required — the action persists the spec image into product_images. */
+  /** Required — the action verifies the picked image belongs here. */
   productId: string | null;
   /** id attribute of the outer ProductForm <form>. We append hidden
    *  ai_filled_fields inputs there after Apply so the server action
    *  picks them up at Save time. */
   formId: string;
+  /** All product_images rows with feed_to_ai=true, pre-resolved with
+   *  preview URLs. Empty = no images yet; render an "upload an image
+   *  first" hint instead of an empty picker. */
+  candidates: AiCandidateImage[];
 };
 
-export default function SpecSheetAutofillBlock({ productId, formId }: Props) {
-  const fileRef = useRef<HTMLInputElement>(null);
-  const [picked, setPicked] = useState<File | null>(null);
+export default function SpecSheetAutofillBlock({
+  productId,
+  formId,
+  candidates,
+}: Props) {
+  const [pickedId, setPickedId] = useState<string | null>(
+    candidates[0]?.id ?? null,
+  );
   const [pending, startTransition] = useTransition();
   const [suggestions, setSuggestions] = useState<SuggestionRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -80,16 +93,10 @@ export default function SpecSheetAutofillBlock({ productId, formId }: Props) {
   const [notes, setNotes] = useState<string>("");
   const [appliedAt, setAppliedAt] = useState<number | null>(null);
 
-  const disabled = !productId || pending;
-
-  function onPick(f: File | null) {
-    setPicked(f);
-    setError(null);
-    setSuggestions(null);
-  }
+  const disabled = !productId || pending || !pickedId;
 
   function onParse() {
-    if (!productId || !picked) return;
+    if (!productId || !pickedId) return;
     setError(null);
     setSuggestions(null);
     setCostUsd(null);
@@ -97,7 +104,7 @@ export default function SpecSheetAutofillBlock({ productId, formId }: Props) {
     setAppliedAt(null);
     startTransition(async () => {
       const fd = new FormData();
-      fd.set("spec_image", picked);
+      fd.set("imageId", pickedId);
       let res: ParseSpecSheetResult;
       try {
         res = await parseSpecSheetAction(productId, fd);
@@ -167,8 +174,6 @@ export default function SpecSheetAutofillBlock({ productId, formId }: Props) {
     const toApply = suggestions.filter((r) => r.checked && r.value != null);
     if (toApply.length === 0) return;
 
-    // Split: name/description go through the autofill bus (their
-    // inputs are React-controlled via AutofillTextInput).
     const busDetail: { name?: string; description?: string } = {};
     for (const r of toApply) {
       if (r.key === "name") busDetail.name = r.value!;
@@ -178,10 +183,6 @@ export default function SpecSheetAutofillBlock({ productId, formId }: Props) {
       emitAutofillApply(busDetail);
     }
 
-    // Direct DOM set for the uncontrolled inputs (brand, sku_id,
-    // dim_*, weight_kg). Setting input.value directly works because
-    // these inputs are NOT React-controlled — ProductForm renders
-    // them as plain <input defaultValue=…>.
     for (const r of toApply) {
       if (
         r.key === "brand" ||
@@ -196,18 +197,11 @@ export default function SpecSheetAutofillBlock({ productId, formId }: Props) {
         );
         if (input) {
           input.value = r.value!;
-          // Dispatch a synthetic input event so any listeners (none
-          // today, but cheap insurance) see the change.
           input.dispatchEvent(new Event("input", { bubbles: true }));
         }
       }
     }
 
-    // Stamp ai_filled_fields hidden inputs onto the form so
-    // updateProduct's parsePayload picks them up at Save time.
-    // Remove any prior ones we wrote — multiple Apply clicks shouldn't
-    // pile up duplicate keys (though the server-side Set dedups them
-    // either way, this keeps the DOM clean for inspection).
     const oldHiddens = document.querySelectorAll<HTMLInputElement>(
       `input[name="ai_filled_fields"][data-source="spec_sheet"]`,
     );
@@ -233,38 +227,78 @@ export default function SpecSheetAutofillBlock({ productId, formId }: Props) {
     <div className="flex flex-col gap-3 rounded-md border border-violet-200 bg-violet-50/40 p-3">
       <div className="flex flex-col gap-1">
         <div className="text-sm font-semibold text-neutral-800">
-          Auto-fill from spec sheet
+          Auto-fill from image
         </div>
         <div className="text-xs text-neutral-500">
-          Upload a brand spec sheet (JPEG / PNG / WebP, ≤ 8 MB). GPT-4o reads
-          name / brand / SKU / dimensions / weight / description, you pick
-          what to apply.
+          Pick any image with{" "}
+          <span className="font-medium">Feed to AI parser</span> turned on (a
+          brand spec sheet, product page screenshot, datasheet, even a
+          cutout). GPT-4o reads name / brand / SKU / dimensions / weight /
+          description; you pick what to apply.
         </div>
       </div>
 
-      <div className="flex flex-wrap items-center gap-2">
-        <input
-          ref={fileRef}
-          type="file"
-          accept="image/jpeg,image/png,image/webp"
-          disabled={disabled}
-          onChange={(e) => onPick(e.currentTarget.files?.[0] ?? null)}
-          className="text-xs"
-        />
-        <button
-          type="button"
-          onClick={onParse}
-          disabled={disabled || !picked}
-          className="rounded-md border border-violet-300 bg-violet-100 px-3 py-1.5 text-xs font-medium text-violet-800 transition hover:border-violet-500 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {pending ? "Parsing…" : "Parse spec sheet"}
-        </button>
-        {!productId && (
-          <span className="text-xs text-neutral-500">
-            Save the product first, then parse a spec.
-          </span>
-        )}
-      </div>
+      {!productId ? (
+        <div className="rounded-md bg-neutral-100 px-3 py-2 text-xs text-neutral-500">
+          Save the product first, then upload an image.
+        </div>
+      ) : candidates.length === 0 ? (
+        <div className="rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-700">
+          No images with Feed to AI turned on. Upload one in the Images
+          section above and the parser becomes available.
+        </div>
+      ) : (
+        <div className="flex flex-col gap-2">
+          <div className="text-[11px] font-medium text-neutral-700">
+            Pick an image:
+          </div>
+          <div
+            className="grid grid-cols-3 gap-2 sm:grid-cols-5"
+            role="radiogroup"
+            aria-label="Image to parse"
+          >
+            {candidates.map((c) => {
+              const selected = pickedId === c.id;
+              return (
+                <button
+                  key={c.id}
+                  type="button"
+                  role="radio"
+                  aria-checked={selected}
+                  onClick={() => setPickedId(c.id)}
+                  className={`relative aspect-square overflow-hidden rounded-md border-2 bg-neutral-50 transition ${
+                    selected
+                      ? "border-violet-500 ring-1 ring-violet-200"
+                      : "border-neutral-200 hover:border-neutral-400"
+                  }`}
+                >
+                  {c.previewUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={c.previewUrl}
+                      alt=""
+                      className="h-full w-full object-cover"
+                      loading="lazy"
+                    />
+                  ) : (
+                    <div className="flex h-full w-full items-center justify-center text-[10px] text-neutral-400">
+                      no preview
+                    </div>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+          <button
+            type="button"
+            onClick={onParse}
+            disabled={disabled}
+            className="self-start rounded-md border border-violet-300 bg-violet-100 px-3 py-1.5 text-xs font-medium text-violet-800 transition hover:border-violet-500 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {pending ? "Parsing…" : "Parse selected image"}
+          </button>
+        </div>
+      )}
 
       {error && (
         <div className="rounded-md bg-rose-50 px-3 py-2 text-xs text-rose-700">
@@ -336,12 +370,6 @@ export default function SpecSheetAutofillBlock({ productId, formId }: Props) {
   );
 }
 
-/**
- * Translate a UI row key into the DB column name that
- * ai_filled_fields persists. Returns null for keys that don't map
- * (none today, but defensive — adding a UI-only key shouldn't
- * silently get persisted with the same name).
- */
 function mapRowKeyToDbField(key: SuggestionRow["key"]): string | null {
   switch (key) {
     case "name":

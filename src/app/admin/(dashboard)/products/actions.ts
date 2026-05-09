@@ -6,13 +6,11 @@ import { createServiceRoleClient } from "@/lib/supabase/service";
 import {
   glbPublicUrl,
   uploadThumbnail,
-  uploadRawImage,
   getSignedRawUrl,
   thumbnailPublicUrl,
 } from "@/lib/storage";
 import { inferProductFields } from "@/lib/ai/infer";
 import { parseSpecSheet, type SpecSheetParse } from "@/lib/ai/parse-spec";
-import { randomUUID } from "node:crypto";
 import { requireAdmin } from "@/lib/auth/require-admin";
 import { invalidatePublishedCountsCache } from "@/lib/products";
 import { runRembgForImage } from "@/lib/rembg/pipeline";
@@ -1429,58 +1427,78 @@ export async function parseSpecSheetAction(
   if (!productId || !UUID_RE.test(productId)) {
     return { ok: false, error: "invalid product id" };
   }
-  const file = fd.get("spec_image");
-  if (!(file instanceof File)) {
-    return { ok: false, error: "spec_image file is required" };
+  // Wave 5 (mig 0038) — operator picks an EXISTING product_images
+  // row to parse instead of uploading a new spec sheet. The selected
+  // image must be on the product AND have feed_to_ai=true. Spec
+  // sheets the operator wants to keep around just go through the
+  // normal photo upload path and have feed_to_ai toggled on.
+  const imageId = fd.get("imageId")?.toString();
+  if (!imageId || !UUID_RE.test(imageId)) {
+    return { ok: false, error: "imageId required" };
   }
-  if (file.size > SPEC_SHEET_MAX_BYTES) {
+
+  const supabase = createServiceRoleClient();
+  const { data: img, error: imgErr } = await supabase
+    .from("product_images")
+    .select("id, product_id, raw_image_url, cutout_image_url, feed_to_ai")
+    .eq("id", imageId)
+    .single();
+  if (imgErr || !img) {
+    return { ok: false, error: "image not found" };
+  }
+  if (img.product_id !== productId) {
+    return { ok: false, error: "image belongs to a different product" };
+  }
+  if (!img.feed_to_ai) {
     return {
       ok: false,
-      error: `spec image is ${(file.size / 1024 / 1024).toFixed(1)} MB; max ${SPEC_SHEET_MAX_BYTES / 1024 / 1024} MB`,
-    };
-  }
-  if (file.type && !SPEC_SHEET_ALLOWED_MIME.has(file.type)) {
-    return {
-      ok: false,
-      error: `unsupported format ${file.type}; use JPEG / PNG / WebP`,
+      error: "this image has Feed to AI parser turned off",
     };
   }
 
-  // 1. Persist the image into raw-images storage + product_images
-  // table with image_kind='spec_sheet' so it's associated with the
-  // product but invisible to the storefront / rembg pipeline.
-  const supabase = createServiceRoleClient();
-  const imageId = randomUUID();
-  let storagePath: string;
+  // Resolve bytes. Prefer cutout_image_url (already public PNG) over
+  // signing the raw URL — fewer round trips for the common case
+  // where the operator is parsing a cutout-pipeline-processed image.
+  let imageBytes: Uint8Array;
+  let mimeType: string;
   try {
-    storagePath = await uploadRawImage(productId, imageId, file);
+    if (img.cutout_image_url) {
+      const r = await fetch(img.cutout_image_url, { cache: "no-store" });
+      if (!r.ok) throw new Error(`cutout fetch ${r.status}`);
+      imageBytes = new Uint8Array(await r.arrayBuffer());
+      mimeType = "image/png";
+    } else if (img.raw_image_url) {
+      const signedUrl = await getSignedRawUrl(img.raw_image_url);
+      const r = await fetch(signedUrl, { cache: "no-store" });
+      if (!r.ok) throw new Error(`raw fetch ${r.status}`);
+      imageBytes = new Uint8Array(await r.arrayBuffer());
+      // raw bytes mime: best-guess from extension. If the upload
+      // pipeline normalized the path, the extension is reliable.
+      const ext = img.raw_image_url.split(".").pop()?.toLowerCase() ?? "jpg";
+      mimeType =
+        ext === "png" ? "image/png" :
+        ext === "webp" ? "image/webp" :
+        "image/jpeg";
+    } else {
+      return { ok: false, error: "image has no fetchable URL" };
+    }
   } catch (e) {
     return {
       ok: false,
-      error: `storage upload failed: ${e instanceof Error ? e.message : String(e)}`,
-    };
-  }
-  const { error: rowErr } = await supabase.from("product_images").insert({
-    id: imageId,
-    product_id: productId,
-    raw_image_url: storagePath,
-    cutout_image_url: null,
-    state: "cutout_approved", // terminal — won't be picked up by rembg
-    image_kind: "spec_sheet",
-    is_primary: false,
-  });
-  if (rowErr) {
-    return {
-      ok: false,
-      error: `product_images insert failed: ${rowErr.message}`,
+      error: `image fetch failed: ${e instanceof Error ? e.message : String(e)}`,
     };
   }
 
-  // 2. Send the bytes to GPT-4o vision.
-  const buf = new Uint8Array(await file.arrayBuffer());
+  if (imageBytes.byteLength > SPEC_SHEET_MAX_BYTES) {
+    return {
+      ok: false,
+      error: `image is ${(imageBytes.byteLength / 1024 / 1024).toFixed(1)} MB; max ${SPEC_SHEET_MAX_BYTES / 1024 / 1024} MB`,
+    };
+  }
+
   let parsed: { result: SpecSheetParse; usage: { promptTokens: number; completionTokens: number; estCostUsd: number } };
   try {
-    parsed = await parseSpecSheet(buf, file.type || "image/jpeg");
+    parsed = await parseSpecSheet(imageBytes, mimeType);
   } catch (e) {
     return {
       ok: false,
@@ -1488,7 +1506,7 @@ export async function parseSpecSheetAction(
     };
   }
 
-  // 3. Track cost in api_usage. service is a free-form text column
+  // Track cost in api_usage. service is a free-form text column
   // (mig 0006), so adding a new service tag costs no schema change.
   await supabase.from("api_usage").insert({
     service: "gpt4o_vision_spec",
@@ -1502,7 +1520,7 @@ export async function parseSpecSheetAction(
   return {
     ok: true,
     result: parsed.result,
-    specImagePath: storagePath,
+    specImagePath: img.cutout_image_url ?? img.raw_image_url ?? "",
     estCostUsd: parsed.usage.estCostUsd,
   };
 }

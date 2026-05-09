@@ -88,6 +88,18 @@ export default async function EditProductPage({
     (i) => i.state === "cutout_approved",
   ).length;
 
+  // Wave 5 (mig 0038) — pool of images the AI parser may pick from.
+  // Filter to feed_to_ai=true AND something the operator-side
+  // already has a preview for (cutout_image_url public URL OR a
+  // raw_preview_url signed URL we resolved above). Empty list →
+  // SpecSheetAutofillBlock renders an upload-first hint.
+  const aiCandidateImages = imagesWithPreviews
+    .filter((i) => i.feed_to_ai)
+    .map((i) => ({
+      id: i.id,
+      previewUrl: i.cutout_image_url ?? i.raw_preview_url,
+    }));
+
   const avail = providerAvailability();
 
   const action = updateProduct.bind(null, id);
@@ -140,6 +152,7 @@ export default async function EditProductPage({
       freshlyCreated={sp.fresh === "1"}
       errCode={productErrCode}
       errMsg={productErrMsg}
+      aiCandidateImages={aiCandidateImages}
       meshyBanner={
         <MeshyStatusBanner
           productId={id}
