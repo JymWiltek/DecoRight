@@ -5,7 +5,9 @@ import {
   markImageSkipCutout,
   markImageUnsatisfied,
   retryFailedImage,
+  setImageToggle,
 } from "@/app/admin/(dashboard)/products/[id]/edit/image-actions";
+import ImageToggleCheckbox from "./ImageToggleCheckbox";
 import type { ImageErrorKind, ImageState } from "@/lib/supabase/types";
 import type { ProductRembgUsage } from "@/lib/admin/products";
 
@@ -50,6 +52,12 @@ type ImageWithPreview = {
   raw_image_url: string | null;
   cutout_image_url: string | null;
   is_primary: boolean;
+  /** Mig 0038 — operator-toggled storefront-gallery flag. */
+  show_on_storefront: boolean;
+  /** Mig 0038 — operator-chosen customer-card cover. Max 1 / product. */
+  is_primary_thumbnail: boolean;
+  /** Mig 0038 — selectable as input to GPT-4o spec parser. */
+  feed_to_ai: boolean;
   rembg_provider: string | null;
   rembg_cost_usd: number | null;
   /** Phase 1 收尾 P0-2: categorized failure reason. Populated by
@@ -128,7 +136,12 @@ export default function ProductImagesSection({
     <section className="rounded-lg border border-neutral-200 bg-white p-5">
       <div className="mb-4 flex items-baseline justify-between gap-4">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-neutral-500">
-          Images ({images.length})
+          Images ({images.length}/5)
+          {images.length >= 5 && (
+            <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium normal-case text-amber-800">
+              cap reached — delete one to add more
+            </span>
+          )}
         </h2>
         <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-neutral-500">
           {(
@@ -407,6 +420,17 @@ function ImageCard({
           )
         )}
       </div>
+
+      {/* Mig 0038 — three toggles per image, driving its three
+          independent behaviors. Rendered for cutout_approved rows
+          only (state machine: rejected/raw rows aren't part of the
+          storefront/AI surface yet). The toggles persist via
+          server-action POSTs that immediately revalidate the page
+          + the storefront product page so changes are visible
+          without an extra Save. */}
+      {image.state === "cutout_approved" && (
+        <ImageToggleRow image={image} returnTo={returnTo} />
+      )}
 
       {/* state-specific inline actions — kept minimal. The happy path
           (cutout_approved) needs no buttons; the × on the thumbnail
@@ -724,4 +748,105 @@ function humanizeError(code: string): string {
     default:
       return code;
   }
+}
+
+/**
+ * Mig 0038 / Wave 5 — three-toggle row rendered under each
+ * cutout_approved image card. Drives the flat image-pool model:
+ *
+ *   show_on_storefront    → product-page gallery includes this image
+ *   is_primary_thumbnail  → customer-card cover. Max 1 per product;
+ *                           a server-side trigger clears any previous
+ *                           primary when this flips to true.
+ *   feed_to_ai            → selectable as input to the spec parser.
+ *
+ * Each checkbox is its own <form> wrapping a hidden <input type="submit">
+ * pattern: clicking the label toggles the value and submits, same as
+ * the existing inline ActionForm mechanism elsewhere in this file but
+ * leaner because the action only needs three string fields. The
+ * checkbox itself triggers via onChange→form.requestSubmit, not via
+ * action button click — keeps the affordance to "click checkbox =
+ * apply".
+ *
+ * Note this is a Server Component; the form submission goes through
+ * the standard server-action POST pipeline. We render checkboxes as
+ * <input type="checkbox" name="value" value="true|false">: when the
+ * box is currently checked, clicking submits a form whose value is
+ * "false" (i.e. flip), and vice versa. Toggling without JS works.
+ */
+function ImageToggleRow({
+  image,
+  returnTo,
+}: {
+  image: ImageWithPreview;
+  returnTo: string;
+}) {
+  return (
+    <div className="mt-2 space-y-1 rounded border border-neutral-100 bg-neutral-50 px-2 py-1.5">
+      <ToggleCheckbox
+        imageId={image.id}
+        field="show_on_storefront"
+        label="Show on storefront"
+        checked={image.show_on_storefront}
+        returnTo={returnTo}
+      />
+      <ToggleCheckbox
+        imageId={image.id}
+        field="is_primary_thumbnail"
+        label="Primary thumbnail"
+        checked={image.is_primary_thumbnail}
+        returnTo={returnTo}
+        hint="Max 1 per product · drives the customer card"
+      />
+      <ToggleCheckbox
+        imageId={image.id}
+        field="feed_to_ai"
+        label="Feed to AI parser"
+        checked={image.feed_to_ai}
+        returnTo={returnTo}
+      />
+    </div>
+  );
+}
+
+function ToggleCheckbox({
+  imageId,
+  field,
+  label,
+  checked,
+  returnTo,
+  hint,
+}: {
+  imageId: string;
+  field: "show_on_storefront" | "is_primary_thumbnail" | "feed_to_ai";
+  label: string;
+  checked: boolean;
+  returnTo: string;
+  hint?: string;
+}) {
+  const formId = `toggle-${imageId}-${field}`;
+  // The form posts the OPPOSITE of the current value — clicking the
+  // checkbox flips it. We use a hidden input "value" pre-set to the
+  // post-toggle target, and the visible checkbox is wired to submit
+  // its own parent form. Without JS this still works: the checkbox
+  // is just a label affordance; the form submission carries the
+  // pre-baked target value via the hidden input.
+  const target = checked ? "false" : "true";
+  return (
+    <div className="flex items-baseline gap-1.5 text-[11px]">
+      <form id={formId} action={setImageToggle} className="contents">
+        <input type="hidden" name="imageId" value={imageId} />
+        <input type="hidden" name="field" value={field} />
+        <input type="hidden" name="value" value={target} />
+        <input type="hidden" name="returnTo" value={returnTo} />
+        <label className="flex items-baseline gap-1.5">
+          <ImageToggleCheckbox formId={formId} checked={checked} />
+          <span className="cursor-pointer select-none font-medium text-neutral-700">
+            {label}
+          </span>
+        </label>
+      </form>
+      {hint && <span className="text-neutral-400">· {hint}</span>}
+    </div>
+  );
 }

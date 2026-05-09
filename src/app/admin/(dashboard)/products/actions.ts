@@ -293,12 +293,39 @@ function validGlbPath(path: string | null, productId: string): boolean {
  * deterministically). Here we just record their existence in the DB
  * so the rembg worker can find them.
  */
+/** Mig 0038 / Wave 5 — flat image-pool cap. Per-product hard limit;
+ *  the AI / gallery / unify flows assume small image counts and the
+ *  storefront-page render becomes noisy past this point. */
+const MAX_IMAGES_PER_PRODUCT = 5;
+
 async function attachStagedRawImages(
   productId: string,
   entries: RawImageEntry[],
 ): Promise<{ ok: true; ids: string[] } | { ok: false; error: string }> {
   if (entries.length === 0) return { ok: true, ids: [] };
   const supabase = createServiceRoleClient();
+
+  // Mig 0038 — enforce 5-image cap. Count existing non-rejected rows
+  // for this product (rejected/user-rejected don't count toward cap;
+  // they're audit history). The cap excludes rows that the upsert
+  // is about to OVERWRITE — if the operator retries with the same
+  // imageId, we shouldn't double-count.
+  const incomingIds = new Set(entries.map((e) => e.imageId));
+  const { data: existing } = await supabase
+    .from("product_images")
+    .select("id, state")
+    .eq("product_id", productId)
+    .not("state", "in", "(cutout_rejected,user_rejected)");
+  const existingNotOverwritten = (existing ?? []).filter(
+    (r) => !incomingIds.has(r.id),
+  ).length;
+  if (existingNotOverwritten + entries.length > MAX_IMAGES_PER_PRODUCT) {
+    return {
+      ok: false,
+      error: `image cap: a product can have at most ${MAX_IMAGES_PER_PRODUCT} active images. Delete an existing image before adding more.`,
+    };
+  }
+
   const rows = entries.map((e) => ({
     id: e.imageId,
     product_id: productId,

@@ -40,7 +40,6 @@ import SubtypePicker from "./SubtypePicker";
 import RoomsPicker from "./RoomsPicker";
 import RegionsPicker from "./RegionsPicker";
 import FileDropzone from "./FileDropzone";
-import { UploadDropzone } from "./UploadDropzone";
 import SpecSheetAutofillBlock from "./SpecSheetAutofillBlock";
 import ReunifyThumbnailButton from "./ReunifyThumbnailButton";
 import AIInferButton from "./AIInferButton";
@@ -370,27 +369,12 @@ export default function ProductForm({
           </Field>
         </Section>
 
-        {/* Wave 4 — real product photos. NOT routed through rembg;
-            land at state='cutout_approved' immediately and surface
-            in a dedicated lightbox-strip below the storefront's
-            main gallery. Use this section for photographs of the
-            actual product — installed shots, packaging, detail
-            close-ups. The "Photos" section above is for sources
-            for the AI cutout pipeline; mixing the two would dilute
-            both. */}
-        {p?.id ? (
-          <Section
-            title="Real photos"
-            hint="Operator-uploaded photos of the actual product. NOT cutouts — these are shown as-is in a carousel below the 3D viewer on the storefront. Click Save / Publish to upload."
-          >
-            <UploadDropzone
-              productId={p.id}
-              kind="real_photo"
-              multiple
-              maxFileMb={8}
-            />
-          </Section>
-        ) : null}
+        {/* Wave 5 (mig 0038) — Real Photos as a separate section was
+            retired. The flat image-pool model means every photo lives
+            in the main "Images" section and carries 3 toggles
+            (show_on_storefront, is_primary_thumbnail, feed_to_ai).
+            Operators uploading a real photo just drop it into the
+            same dropzone as cutout candidates. */}
 
         <Section title="AI assist">
           {/* Two AI buttons, deliberately split:

@@ -579,3 +579,91 @@ export async function deleteProductImage(fd: FormData): Promise<void> {
   revalidatePath(`/product/${img.product_id}`);
   redirect(withQuery(errBase, "deleted", "1"));
 }
+
+// ────────────────────────────────────────────────────────────
+// Wave 5 (mig 0038) — toggle actions for the flat image-pool model.
+// ────────────────────────────────────────────────────────────
+
+/** Mig 0038 — toggle one of the three booleans on a product_images
+ *  row. Single action serving all three toggles via a `field`
+ *  selector so the admin form can use a single <form action=…> per
+ *  checkbox without forking three near-identical copies.
+ *
+ *  Auth: requireAdmin via the proxy middleware (this is a server
+ *  action, not a route handler; the standard admin gate covers it).
+ *
+ *  Validation:
+ *    • imageId must exist + belong to a product.
+ *    • field must be one of the 3 known toggles.
+ *    • value parsed as "true" / "false" — anything else returns
+ *      err=bad_value.
+ *
+ *  After the UPDATE the action revalidates the admin edit page so
+ *  the toggle's new state is reflected on the next render.
+ *  Storefront catalog cache is invalidated indirectly when
+ *  is_primary_thumbnail changes — the unify route's pg_net trigger
+ *  fires (mig 0038's rewrite of mig 0035 watches
+ *  is_primary_thumbnail) which calls revalidatePath inside the
+ *  route. Direct revalidation here would be redundant. */
+export async function setImageToggle(fd: FormData): Promise<void> {
+  const imageId = fd.get("imageId")?.toString();
+  const field = fd.get("field")?.toString();
+  const value = fd.get("value")?.toString();
+  const returnTo = safeReturnTo(fd);
+
+  if (!imageId || !field || !value) {
+    redirect(withQuery(returnTo ?? "/admin", "err", "missing_arg"));
+  }
+  if (
+    field !== "show_on_storefront" &&
+    field !== "is_primary_thumbnail" &&
+    field !== "feed_to_ai"
+  ) {
+    redirect(withQuery(returnTo ?? "/admin", "err", "bad_field"));
+  }
+  if (value !== "true" && value !== "false") {
+    redirect(withQuery(returnTo ?? "/admin", "err", "bad_value"));
+  }
+
+  const supabase = createServiceRoleClient();
+  const { data: img, error: readErr } = await supabase
+    .from("product_images")
+    .select("id,product_id")
+    .eq("id", imageId)
+    .single();
+  if (readErr || !img) {
+    redirect(withQuery(returnTo ?? "/admin", "err", "not_found"));
+  }
+
+  const base = returnTo ?? `/admin/products/${img.product_id}/edit`;
+  const newVal = value === "true";
+
+  // Build the partial update — only the field the operator toggled.
+  // Use a typed Update shape so supabase-js's RejectExcessProperties
+  // accepts it. The runtime guard above already pinned `field` to
+  // one of the three legal column names; this just makes tsc happy.
+  type ImagePatch = {
+    show_on_storefront?: boolean;
+    is_primary_thumbnail?: boolean;
+    feed_to_ai?: boolean;
+  };
+  const patch: ImagePatch = {};
+  if (field === "show_on_storefront") patch.show_on_storefront = newVal;
+  else if (field === "is_primary_thumbnail") patch.is_primary_thumbnail = newVal;
+  else if (field === "feed_to_ai") patch.feed_to_ai = newVal;
+
+  const { error: updErr } = await supabase
+    .from("product_images")
+    .update(patch)
+    .eq("id", imageId);
+  if (updErr) {
+    redirect(withQuery(withQuery(base, "err", "db"), "msg", updErr.message));
+  }
+
+  revalidatePath(`/admin/products/${img.product_id}/edit`);
+  // The storefront product page reads show_on_storefront +
+  // is_primary_thumbnail at render time; bust its cache so toggles
+  // reflect immediately without waiting for ISR.
+  revalidatePath(`/product/${img.product_id}`);
+  redirect(withQuery(base, "toggled", field));
+}
