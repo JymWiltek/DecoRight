@@ -545,6 +545,18 @@ export async function updateProduct(id: string, fd: FormData): Promise<void> {
       }
       updates.glb_url = glbPublicUrl(id);
       updates.glb_size_kb = num(fd, "glb_size_kb");
+      // Decoded-budget metadata (mig 0031). Computed in the dropzone
+      // by lib/admin/compress-glb#checkGlbBudget at pick time, shipped
+      // as 3 hidden form fields. The server-side render gate
+      // (lib/glb-display#shouldRenderGlbServerSide) reads these to
+      // decide whether <model-viewer> should mount on the product
+      // page — preventing iOS Safari OOM on borderline-too-heavy GLBs.
+      // num() returns null on missing/invalid input → the DB columns
+      // accept null and the gate treats null as "render anyway"
+      // (backward compat with pre-mig-0031 products).
+      updates.glb_vertex_count = num(fd, "glb_vertex_count");
+      updates.glb_max_texture_dim = num(fd, "glb_max_texture_dim");
+      updates.glb_decoded_ram_mb = num(fd, "glb_decoded_ram_mb");
       // Manual upload → mark provenance + generated time so the
       // "Meshy only runs once" gate trips correctly even if the
       // operator clears glb_url and re-runs Generate 3D later.

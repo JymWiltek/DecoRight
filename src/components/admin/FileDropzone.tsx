@@ -92,6 +92,15 @@ export default function FileDropzone({
   const [dragging, setDragging] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [picked, setPicked] = useState<File | null>(null);
+  // Budget metadata captured at pick time. Plumbed into the staged
+  // uploader's run() so it ships to the server action alongside
+  // glb_path + glb_size_kb. Stored in a ref (not state) because we
+  // never need to re-render based on its value — read-only at upload.
+  const budgetReportRef = useRef<{
+    vertices: number;
+    maxTextureDim: number;
+    decodedRamMb: number;
+  } | null>(null);
   // Two compression-flow states. `compressing` flips the dropzone into
   // a non-interactive spinner-y state while the WASM round-trip runs.
   // `compressionStat` survives until the user clears or replaces the
@@ -136,6 +145,21 @@ export default function FileDropzone({
         { name: "glb_path", value: r.ticket.path },
         { name: "glb_size_kb", value: String(sizeKb) },
       ];
+      // Budget metadata from the pick-time check. Always shipped when
+      // present so the server action can persist them — drives the
+      // SSR-time render gate that prevents iOS Safari OOM. Skipped
+      // (not added to fields) when budgetReportRef is null, e.g.
+      // checkGlbBudget couldn't parse the file. The DB columns stay
+      // NULL in that case and the server treats NULL as "render
+      // anyway" (backward compat with pre-mig-0031 products).
+      const br = budgetReportRef.current;
+      if (br) {
+        fields.push(
+          { name: "glb_vertex_count", value: String(br.vertices) },
+          { name: "glb_max_texture_dim", value: String(br.maxTextureDim) },
+          { name: "glb_decoded_ram_mb", value: String(br.decodedRamMb) },
+        );
+      }
       return fields;
     },
   });
@@ -256,13 +280,28 @@ export default function FileDropzone({
     // We import from the same module as compressGlb so the lazy chunk
     // is reused; if the compression branch already ran, this is a
     // no-cost re-import.
+    //
+    // Side effect: on success we stash the report into budgetReportRef
+    // so the staged-uploader's run() callback can ship the three numbers
+    // to the server action. The DB columns are mig-0031 nullable, and
+    // the server-side render gate treats NULL as "render anyway" — so
+    // a parse failure here just leaves the legacy backward-compat
+    // behaviour intact, no upload regression.
+    budgetReportRef.current = null;
     if (kind === "glb" && /\.glb$/i.test(staged.name)) {
       try {
         const { checkGlbBudget, GlbBudgetExceededError } = await import(
           "@/lib/admin/compress-glb"
         );
         try {
-          await checkGlbBudget(staged);
+          const report = await checkGlbBudget(staged);
+          budgetReportRef.current = {
+            vertices: report.totalVertices,
+            maxTextureDim: report.largestTexture
+              ? Math.max(report.largestTexture.width, report.largestTexture.height)
+              : 0,
+            decodedRamMb: Math.round(report.estimatedDecodedMb),
+          };
         } catch (e) {
           if (e instanceof GlbBudgetExceededError) {
             setError(e.message);
@@ -303,6 +342,7 @@ export default function FileDropzone({
     setPicked(null);
     setError(null);
     setCompressionStat(null);
+    budgetReportRef.current = null;
   }
 
   // Clear the error banner automatically when the user picks a new

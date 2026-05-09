@@ -49,6 +49,15 @@ export type ProductRow = {
   description: string | null;
   glb_url: string | null;
   glb_size_kb: number | null;
+  // ── Decoded-budget metadata (mig 0031) ──────────────────────
+  // Snapshot at admin-upload time; fed back into a server-side
+  // render gate so iOS Safari doesn't OOM on borderline-heavy
+  // GLBs. NULL = unknown (legacy product uploaded pre-mig 0031);
+  // SSR treats NULL as "render anyway" for backward compat.
+  // See lib/glb-display#shouldRenderGlbServerSide for the gate.
+  glb_vertex_count: number | null;
+  glb_max_texture_dim: number | null;
+  glb_decoded_ram_mb: number | null;
   thumbnail_url: string | null;
   status: ProductStatus;
   ai_filled_fields: string[];
@@ -111,6 +120,9 @@ export type ProductInsert = {
   description?: string | null;
   glb_url?: string | null;
   glb_size_kb?: number | null;
+  glb_vertex_count?: number | null;
+  glb_max_texture_dim?: number | null;
+  glb_decoded_ram_mb?: number | null;
   thumbnail_url?: string | null;
   status?: ProductStatus;
   ai_filled_fields?: string[];

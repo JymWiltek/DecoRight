@@ -5,6 +5,7 @@ import { useTranslations, useLocale } from "next-intl";
 import ProductGallery from "./ProductGallery";
 import ColorSwitcher, { type ColorOption } from "./ColorSwitcher";
 import { buildGlbDownload, formatMYR } from "@/lib/format";
+import { glbUrlForGallery } from "@/lib/glb-display";
 import type { ProductRow } from "@/lib/supabase/types";
 
 type Props = {
@@ -53,7 +54,14 @@ export default function ProductDetail({
       <ProductGallery
         productName={product.name}
         primaryCutoutUrl={product.thumbnail_url}
-        glbUrl={product.glb_url}
+        // Decoded-budget gate (lib/glb-display): nulls the URL for
+        // GLBs whose persisted vertex/texture/RAM metadata exceeds
+        // iOS-Safari-safe thresholds, so <model-viewer> never mounts
+        // for those products. ProductGallery falls through to its
+        // styled-thumbnail slide. Other consumers of product.glb_url
+        // (e.g. the Download .glb button below) still see the real
+        // URL — only the in-page 3D viewer is gated.
+        glbUrl={glbUrlForGallery(product)}
         originalRawUrls={originalRawUrls}
         overrideColorHex={overrideColorHex}
         emptyLabel={t("noImages")}
