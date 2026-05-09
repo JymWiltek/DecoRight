@@ -114,7 +114,11 @@ export async function getPublishedProductById(id: string): Promise<ProductRow | 
  * `loadTaxonomy` so any write that invalidates taxonomy also
  * invalidates counts (new products publish → item_type counts shift).
  */
-const PRODUCT_COUNTS_TAG = "published-counts";
+/** Cache tag for the home + room cover/count helpers below. Exported
+ *  so route handlers can call `revalidateTag(PRODUCT_COUNTS_TAG)`
+ *  directly — `updateTag` is server-action-only and throws inside a
+ *  Route Handler (Next 16). */
+export const PRODUCT_COUNTS_TAG = "published-counts";
 
 export async function publishedCountsByItemType(): Promise<
   Record<string, number>

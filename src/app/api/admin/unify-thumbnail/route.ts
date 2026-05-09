@@ -27,10 +27,12 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import { revalidatePath, revalidateTag } from "next/cache";
 import { requireAdmin } from "@/lib/auth/require-admin";
 import { createServiceRoleClient } from "@/lib/supabase/service";
 import { unifyThumbnail } from "@/lib/admin/unify-thumbnail";
 import { uploadUnifiedThumbnailPng } from "@/lib/storage";
+import { PRODUCT_COUNTS_TAG } from "@/lib/products";
 
 export const runtime = "nodejs"; // sharp is a Node addon.
 export const maxDuration = 60; // Vercel default is 10s; sharp on a
@@ -176,12 +178,61 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // ── 8. bust caches that read products.thumbnail_url ───────
+  // Wave 2 originally shipped without this and the catalog kept
+  // serving the pre-backfill cutout URLs for the entire 5-min ISR
+  // window — operator could see the new thumbnail in admin while
+  // the storefront stayed stale (incident 2026-05-10). Without
+  // these calls the route IS correct from the DB's perspective
+  // but the rendered HTML wouldn't pick it up until the tag's
+  // revalidate window expired.
+  //
+  // We need both flavors:
+  //   • revalidatePath for the per-page render cache (room/item/
+  //     product details + home).
+  //   • updateTag(PRODUCT_COUNTS_TAG) for the tag-cached helpers
+  //     that drive the home Browse-by-item rail and the
+  //     /room/[slug] item rail (coversByItemType /
+  //     coversByItemTypeInRoom in lib/products.ts).
+  //
+  // We narrow revalidatePath to the specific room + item slugs
+  // this product actually appears under — invalidating the right
+  // pages instead of every room/item page. The select is cheap
+  // (single row, indexed PK) compared to the sharp work above.
+  const { data: prod } = await supabase
+    .from("products")
+    .select("room_slugs, item_type")
+    .eq("id", productId)
+    .single();
+  revalidatePath("/");
+  revalidatePath(`/product/${productId}`);
+  if (prod?.item_type) revalidatePath(`/item/${prod.item_type}`);
+  for (const r of prod?.room_slugs ?? []) {
+    revalidatePath(`/room/${r}`);
+  }
+  // revalidateTag (not updateTag) — this is a Route Handler, not a
+  // Server Action; updateTag throws here. Fires the same cache-tag
+  // invalidation `lib/products#invalidatePublishedCountsCache` does
+  // from inside server actions.
+  //
+  // Second arg "max" pins immediate-purge cache-life. Next 16 deprecated
+  // single-arg revalidateTag; "max" is the documented replacement when
+  // we want the legacy behavior (purge now, no stale-while-revalidate
+  // window).
+  revalidateTag(PRODUCT_COUNTS_TAG, "max");
+
   return NextResponse.json({
     ok: true,
     product_id: productId,
     thumbnail_url: versioned,
     unified_bytes: unified.png.length,
     product_bbox: { w: unified.productWidthPx, h: unified.productHeightPx },
+    invalidated: {
+      home: true,
+      product: `/product/${productId}`,
+      item: prod?.item_type ? `/item/${prod.item_type}` : null,
+      rooms: prod?.room_slugs ?? [],
+    },
   });
 }
 
