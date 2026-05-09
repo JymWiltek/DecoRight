@@ -110,15 +110,18 @@ export default function ProductDetail({
               <dd>{itemTypeLabel}</dd>
             </>
           )}
-          {/* SKU row — Wave 1 (mig 0033). Always rendered when sku_id
-              is set, em-dash placeholder for null/blank so the column
-              alignment doesn't shift when scanning across products. */}
-          {product.sku_id && product.sku_id.trim() && (
-            <>
-              <dt className="text-neutral-500">{t("sku")}</dt>
-              <dd>{product.sku_id}</dd>
-            </>
-          )}
+          {/* SKU row — Wave 1 (mig 0033). Always rendered; em-dash
+              placeholder when null/blank so the column alignment
+              doesn't shift across products and the visitor can still
+              scan the spec table consistently. */}
+          <>
+            <dt className="text-neutral-500">{t("sku")}</dt>
+            <dd>
+              {product.sku_id && product.sku_id.trim()
+                ? product.sku_id
+                : "—"}
+            </dd>
+          </>
           {roomLabels.length > 0 && (
             <>
               <dt className="text-neutral-500">{t("room")}</dt>
