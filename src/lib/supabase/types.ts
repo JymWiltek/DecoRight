@@ -410,7 +410,17 @@ export type AppConfigRow = {
 // (so we bill eagerly, then refund on failure via a separate
 // row with negative cost).
 
-export const API_SERVICES = ["replicate_rembg", "removebg", "meshy"] as const;
+export const API_SERVICES = [
+  "replicate_rembg",
+  "removebg",
+  "meshy",
+  /** Wave 3 — GPT-4o vision parsing of brand spec sheets. Tracked
+   *  here for $-spend telemetry; does NOT participate in
+   *  reserve_api_slot's daily-cap quota (the spec parser is
+   *  operator-driven, not auto-fired, so a runaway loop is
+   *  implausible). */
+  "gpt4o_vision_spec",
+] as const;
 export type ApiService = (typeof API_SERVICES)[number];
 
 export type ApiUsageRow = {

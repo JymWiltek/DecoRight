@@ -41,6 +41,7 @@ import RoomsPicker from "./RoomsPicker";
 import RegionsPicker from "./RegionsPicker";
 import FileDropzone from "./FileDropzone";
 import { UploadDropzone } from "./UploadDropzone";
+import SpecSheetAutofillBlock from "./SpecSheetAutofillBlock";
 import AIInferButton from "./AIInferButton";
 import { AutofillTextInput, AutofillTextarea } from "./AutofillTextInput";
 import DeleteButton from "./DeleteButton";
@@ -380,7 +381,18 @@ export default function ProductForm({
         ) : null}
 
         <Section title="AI assist">
-          <AIInferButton productId={p?.id ?? null} form={FORM_ID} />
+          {/* Two AI buttons, deliberately split:
+              • Auto-classify from photo — reads a product photo and
+                fills item_type / room / style / color / material.
+              • Auto-fill from spec sheet — reads a brand datasheet
+                screenshot and fills name / brand / sku / dimensions
+                / weight / description.
+              They are non-overlapping; running both sequentially is
+              the typical operator flow for a brand-new product. */}
+          <div className="flex flex-col gap-3">
+            <AIInferButton productId={p?.id ?? null} form={FORM_ID} />
+            <SpecSheetAutofillBlock productId={p?.id ?? null} formId={FORM_ID} />
+          </div>
         </Section>
 
         <Section title="Basics">

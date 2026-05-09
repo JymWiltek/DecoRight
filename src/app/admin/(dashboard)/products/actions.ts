@@ -6,10 +6,13 @@ import { createServiceRoleClient } from "@/lib/supabase/service";
 import {
   glbPublicUrl,
   uploadThumbnail,
+  uploadRawImage,
   getSignedRawUrl,
   thumbnailPublicUrl,
 } from "@/lib/storage";
 import { inferProductFields } from "@/lib/ai/infer";
+import { parseSpecSheet, type SpecSheetParse } from "@/lib/ai/parse-spec";
+import { randomUUID } from "node:crypto";
 import { requireAdmin } from "@/lib/auth/require-admin";
 import { invalidatePublishedCountsCache } from "@/lib/products";
 import { runRembgForImage } from "@/lib/rembg/pipeline";
@@ -1349,4 +1352,130 @@ export async function generate3DForProduct(
   revalidatePath(`/admin/products/${productId}/edit`);
   revalidatePath("/admin");
   return { ok: true, taskId: result.taskId };
+}
+
+// ────────────────────────────────────────────────────────────
+// Wave 3 — Auto-fill from spec sheet (GPT-4o vision)
+// ────────────────────────────────────────────────────────────
+
+export type ParseSpecSheetResult =
+  | {
+      ok: true;
+      result: SpecSheetParse;
+      /** Storage path of the spec image we persisted (image_kind=
+       *  'spec_sheet'). Useful if the operator wants to view it
+       *  later. */
+      specImagePath: string;
+      /** Per-call cost in USD (rough — based on OpenAI's reported
+       *  token counts). Echoed back to the UI so the operator can
+       *  see what each parse cost. */
+      estCostUsd: number;
+    }
+  | { ok: false; error: string };
+
+const SPEC_SHEET_MAX_BYTES = 8 * 1024 * 1024; // 8 MB; same as raw photos
+const SPEC_SHEET_ALLOWED_MIME = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+]);
+
+/**
+ * Wave 3 server action — operator uploads a brand spec sheet image,
+ * we persist it (image_kind='spec_sheet'), forward to GPT-4o vision,
+ * and return the structured suggestions to the client. The client
+ * shows them in a per-field review card; nothing writes to products
+ * until the operator clicks Save.
+ *
+ * Auth: requireAdmin. Rate limit: not enforced server-side yet —
+ * the api_usage cap covers $-spend; if we see abuse we'll add a
+ * per-day count cap like AIInferButton has client-side.
+ *
+ * Cost tracking: api_usage row written for telemetry. service tag
+ * 'gpt4o_vision_spec' is new; existing services kept untouched.
+ */
+export async function parseSpecSheetAction(
+  productId: string,
+  fd: FormData,
+): Promise<ParseSpecSheetResult> {
+  await requireAdmin();
+  if (!productId || !UUID_RE.test(productId)) {
+    return { ok: false, error: "invalid product id" };
+  }
+  const file = fd.get("spec_image");
+  if (!(file instanceof File)) {
+    return { ok: false, error: "spec_image file is required" };
+  }
+  if (file.size > SPEC_SHEET_MAX_BYTES) {
+    return {
+      ok: false,
+      error: `spec image is ${(file.size / 1024 / 1024).toFixed(1)} MB; max ${SPEC_SHEET_MAX_BYTES / 1024 / 1024} MB`,
+    };
+  }
+  if (file.type && !SPEC_SHEET_ALLOWED_MIME.has(file.type)) {
+    return {
+      ok: false,
+      error: `unsupported format ${file.type}; use JPEG / PNG / WebP`,
+    };
+  }
+
+  // 1. Persist the image into raw-images storage + product_images
+  // table with image_kind='spec_sheet' so it's associated with the
+  // product but invisible to the storefront / rembg pipeline.
+  const supabase = createServiceRoleClient();
+  const imageId = randomUUID();
+  let storagePath: string;
+  try {
+    storagePath = await uploadRawImage(productId, imageId, file);
+  } catch (e) {
+    return {
+      ok: false,
+      error: `storage upload failed: ${e instanceof Error ? e.message : String(e)}`,
+    };
+  }
+  const { error: rowErr } = await supabase.from("product_images").insert({
+    id: imageId,
+    product_id: productId,
+    raw_image_url: storagePath,
+    cutout_image_url: null,
+    state: "cutout_approved", // terminal — won't be picked up by rembg
+    image_kind: "spec_sheet",
+    is_primary: false,
+  });
+  if (rowErr) {
+    return {
+      ok: false,
+      error: `product_images insert failed: ${rowErr.message}`,
+    };
+  }
+
+  // 2. Send the bytes to GPT-4o vision.
+  const buf = new Uint8Array(await file.arrayBuffer());
+  let parsed: { result: SpecSheetParse; usage: { promptTokens: number; completionTokens: number; estCostUsd: number } };
+  try {
+    parsed = await parseSpecSheet(buf, file.type || "image/jpeg");
+  } catch (e) {
+    return {
+      ok: false,
+      error: `gpt-4o call failed: ${e instanceof Error ? e.message : String(e)}`,
+    };
+  }
+
+  // 3. Track cost in api_usage. service is a free-form text column
+  // (mig 0006), so adding a new service tag costs no schema change.
+  await supabase.from("api_usage").insert({
+    service: "gpt4o_vision_spec",
+    product_id: productId,
+    product_image_id: imageId,
+    cost_usd: Number(parsed.usage.estCostUsd.toFixed(6)),
+    status: "ok",
+    note: `prompt=${parsed.usage.promptTokens} completion=${parsed.usage.completionTokens}`,
+  });
+
+  return {
+    ok: true,
+    result: parsed.result,
+    specImagePath: storagePath,
+    estCostUsd: parsed.usage.estCostUsd,
+  };
 }

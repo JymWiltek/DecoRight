@@ -55,3 +55,5 @@ next-env.d.ts
 /scripts/test-w4.mjs
 /scripts/test-w4-storefront.mjs
 /scripts/test-sign-tmp.mjs
+/scripts/grab-spec-tmp.mjs
+/scripts/test-spec-parse.ts
