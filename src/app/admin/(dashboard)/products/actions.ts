@@ -213,6 +213,7 @@ async function parsePayload(fd: FormData): Promise<Omit<ProductInsert, "id">> {
   return {
     name,
     brand: str(fd, "brand"),
+    sku_id: str(fd, "sku_id"),
     item_type: itemType,
     subtype_slug: subtype,
     room_slugs: pickManyFromSet(fd, "room_slugs", valid.rooms),

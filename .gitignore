@@ -49,3 +49,5 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 .claude/
+/scripts/test-w1.mjs
+/scripts/test-w1-storefront.mjs

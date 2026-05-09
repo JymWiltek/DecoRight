@@ -1,7 +1,11 @@
 "use client";
 
 /**
- * AI autofill button (Phase 3).
+ * Auto-classify-from-photo button (formerly "AI autofill", Phase 3 —
+ * renamed Wave-merge May-2026 to disambiguate from the upcoming
+ * "Auto-fill from spec sheet" button which fills DIFFERENT fields:
+ *   • this one  (photo → item_type / room / style / color / material)
+ *   • spec one  (spec sheet → name / brand / sku / dimensions / desc)
  *
  * On click, two paths:
  *
@@ -122,7 +126,7 @@ export default function AIInferButton({ productId, form }: Props) {
     const cur = getTodayCount();
     if (cur.count >= RATE_LIMIT_MAX) {
       setError(
-        `Daily AI autofill quota reached (${RATE_LIMIT_MAX}). Try again tomorrow.`,
+        `Daily auto-classify quota reached (${RATE_LIMIT_MAX}). Try again tomorrow.`,
       );
       return;
     }
@@ -150,7 +154,7 @@ export default function AIInferButton({ productId, form }: Props) {
         res = await runAiInfer(productId);
       } else {
         setError(
-          "Drop a photo into the Photos section first, then click AI autofill.",
+          "Drop a photo into the Photos section first, then click Auto-classify from photo.",
         );
         return;
       }
@@ -208,10 +212,10 @@ export default function AIInferButton({ productId, form }: Props) {
           className="self-start rounded-md border border-sky-300 bg-sky-50 px-3 py-1.5 text-xs font-medium text-sky-700 transition hover:border-sky-500 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {pending
-            ? "AI analyzing image…"
+            ? "Classifying photo…"
             : lastRun
-              ? "Re-run AI autofill"
-              : "AI autofill"}
+              ? "Re-run auto-classify"
+              : "Auto-classify from photo"}
         </button>
         <span className="text-xs text-neutral-400">
           {todayCount} / {RATE_LIMIT_MAX} runs today · GPT-4o Vision

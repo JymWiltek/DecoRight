@@ -26,6 +26,13 @@ export type ProductRow = {
   id: string;
   name: string;
   brand: string | null;
+  /** Manufacturer SKU code — e.g. "WD012", "A400-PS", "DCS-ECWC".
+   *  NULLABLE: not every product has a brand-issued SKU (display-only
+   *  items, in-house bundles). Mig 0033. Wave 3 will auto-fill this
+   *  via GPT-4o vision against an uploaded spec sheet; for Wave 1
+   *  it's manually entered in the admin Basics section. Storefront
+   *  renders an em-dash placeholder when null/blank. */
+  sku_id: string | null;
   item_type: string | null;
   subtype_slug: string | null;
   /** Migration 0013: multi-room. A product can belong to any
@@ -103,6 +110,8 @@ export type ProductInsert = {
   id?: string;
   name: string;
   brand?: string | null;
+  /** Mig 0033 — manufacturer SKU code. */
+  sku_id?: string | null;
   item_type?: string | null;
   subtype_slug?: string | null;
   room_slugs?: string[];

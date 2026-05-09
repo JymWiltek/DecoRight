@@ -57,6 +57,7 @@
     "notFound": "未找到商品",
     "noModel": "暂无 3D 模型",
     "modelUnavailable": "此设备不支持 3D 预览",
+    "sku": "货号",
     "noImages": "暂未上传图片，请稍后再来。",
     "galleryViewMain": "查看主图",
     "galleryViewModel": "查看 3D 模型",

@@ -383,6 +383,22 @@ export default function ProductForm({
                 className={inputCls}
               />
             </Field>
+            <Field label="Item SKU ID">
+              {/* Manufacturer SKU code — appears on brand spec sheets.
+                  Plain <input> for now; Wave 3's spec-sheet AI parser
+                  will need a different bus surface (different output
+                  fields than the existing photo-classifier autofill
+                  bus, which is locked to "name" | "description"). When
+                  Wave 3 lands we revisit whether to extend that bus
+                  or ship a sibling. */}
+              <input
+                form={FORM_ID}
+                name="sku_id"
+                placeholder="e.g. WD012, A400-PS, DCS-ECWC"
+                defaultValue={p?.sku_id ?? ""}
+                className={inputCls}
+              />
+            </Field>
             <Field label="Status" wide>
               {/* PillGrid (button-driven hidden input) instead of native
                   radios. Form-attribute-associated radios with
