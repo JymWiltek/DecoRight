@@ -7,47 +7,49 @@ import ModelViewerErrorBoundary from "./ModelViewerErrorBoundary";
 import ModelFallback from "./ModelFallback";
 
 /**
- * Product gallery — main image priority is "3D first, photo fallback":
+ * Wave 5 (mig 0038) — flat image-pool product gallery.
  *
- *   - With GLB:  slide 1 is the <model-viewer>. The styled-thumbnail
- *                cutout is NOT shown — once we can show the real 3D
- *                model, the gradient-composited 2D fallback is just
- *                noise. Original scene photos still follow as slides
- *                2+ for context.
+ * Slide order:
+ *   1. <model-viewer> if a GLB is present (always slot 1; GLB is the
+ *      hero affordance).
+ *   2. Every show_on_storefront image, server-resolved to public-or-
+ *      signed URLs, in the order:
+ *        • is_primary_thumbnail row first
+ *        • then by upload time (created_at ASC)
+ *      The customer-card cover (products.thumbnail_url, the unified
+ *      PNG of the primary cutout) is implicitly slide 2 because the
+ *      operator's primary_thumbnail toggle drives both: rembg's
+ *      first-cutout flow auto-promotes is_primary_thumbnail, the
+ *      unify route renders the unified PNG into products.thumbnail_url,
+ *      and the gallery query orders that same row first.
  *
- *   - Without GLB:  slide 1 is the styled-thumbnail (the cutout
- *                composited on a soft grey gradient — same look as
- *                the catalog tile so what was clicked is what shows).
- *                Silent degradation: the visitor never learns there's
- *                supposed to be a 3D viewer here.
+ * Empty state (no GLB and no show_on_storefront images): a centered
+ * camera-icon placeholder with the localized empty caption. Caller
+ * may also choose not to mount the gallery at all when the product
+ * has no media — both paths are valid.
  *
- *   - In both cases, original scene photos (the raw uploads) follow
- *                as the trailing slides for in-context shots.
- *
- * No slides → caller should not even mount this; it returns null.
- *
- * Why client-component: the slide selector is interactive (click a
- * thumbnail / press arrow keys), and ModelViewer is already a client
+ * Why client-component: slide selector (click thumbnail / press
+ * arrow keys) is interactive, and ModelViewer is already a client
  * component. Keeping the gallery client-side also lets the styled-
  * thumbnail composite swap immediately when ColorSwitcher recolors
  * the model — no round-trip.
  */
 
 type Slide =
-  | { kind: "styled-thumbnail"; cutoutUrl: string }
   | { kind: "model"; glbUrl: string; alt: string; poster: string | null }
-  | { kind: "original"; rawUrl: string };
+  | { kind: "image"; url: string };
 
 type Props = {
   productName: string;
-  /** Primary cutout (transparent PNG) — slide 1's source. Null if
-   *  the product has no approved primary image yet. */
-  primaryCutoutUrl: string | null;
-  /** Optional .glb — slide 2 if present. */
+  /** Mig 0038 — every show_on_storefront image, in display order
+   *  (primary thumbnail first, then by upload time). Already
+   *  resolved to public-or-signed URLs server-side. */
+  galleryUrls: string[];
+  /** Optional .glb URL — slot 1 when present. */
   glbUrl: string | null;
-  /** Signed raw-image URLs for the non-primary photos — slides 3+.
-   *  Empty array = no extra scene photos. */
-  originalRawUrls: string[];
+  /** products.thumbnail_url (unified.png) — used as the model-viewer
+   *  poster. Null OK; model-viewer will render with no poster. */
+  primaryThumbnailUrl: string | null;
   /** Hex colour override piped into ModelViewer (from ColorSwitcher). */
   overrideColorHex: string | null;
   /** Fallback caption shown when nothing can be displayed at all. */
@@ -56,30 +58,24 @@ type Props = {
 
 export default function ProductGallery({
   productName,
-  primaryCutoutUrl,
+  galleryUrls,
   glbUrl,
-  originalRawUrls,
+  primaryThumbnailUrl,
   overrideColorHex,
   emptyLabel,
 }: Props) {
   const t = useTranslations("product");
-  // 3D wins the main slot when present. The styled-thumbnail only
-  // appears as the silent fallback when there's no GLB — we never
-  // want to show both because the cutout-on-gradient composite is
-  // a stand-in for the 3D viewer, not a peer of it.
   const slides: Slide[] = [];
   if (glbUrl) {
     slides.push({
       kind: "model",
       glbUrl,
       alt: productName,
-      poster: primaryCutoutUrl,
+      poster: primaryThumbnailUrl,
     });
-  } else if (primaryCutoutUrl) {
-    slides.push({ kind: "styled-thumbnail", cutoutUrl: primaryCutoutUrl });
   }
-  for (const r of originalRawUrls) {
-    slides.push({ kind: "original", rawUrl: r });
+  for (const u of galleryUrls) {
+    slides.push({ kind: "image", url: u });
   }
 
   const [active, setActive] = useState(0);
@@ -100,27 +96,6 @@ export default function ProductGallery({
   return (
     <div className="flex flex-col gap-3">
       <div className="relative aspect-square w-full overflow-hidden rounded-lg">
-        {current.kind === "styled-thumbnail" && (
-          // Soft top-to-bottom grey gradient is the "studio backdrop"
-          // we composite the cutout onto. The cutout already has a
-          // transparent background (rembg output), so object-contain
-          // shows the product floating on the gradient — matches
-          // SPEC 2 slide #1.
-          <div
-            className="relative h-full w-full"
-            style={{
-              background:
-                "linear-gradient(180deg, #f6f6f6 0%, #e7e7e7 60%, #d8d8d8 100%)",
-            }}
-          >
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={current.cutoutUrl}
-              alt={productName}
-              className="h-full w-full object-contain p-6"
-            />
-          </div>
-        )}
         {current.kind === "model" && (
           // Render-phase / commit-phase errors inside <model-viewer>
           // (Draco decode throw, malformed GLB, WebGL refusal, etc.)
@@ -141,14 +116,27 @@ export default function ProductGallery({
             />
           </ModelViewerErrorBoundary>
         )}
-        {current.kind === "original" && (
-          // Original scene photo — full-bleed, no gradient backdrop.
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={current.rawUrl}
-            alt={t("gallerySceneAlt", { name: productName })}
-            className="h-full w-full object-cover"
-          />
+        {current.kind === "image" && (
+          // Background gradient mirrors the legacy "styled-thumbnail"
+          // backdrop so cutout PNGs (transparent silhouette) still
+          // float on a soft studio look. Real photos / spec sheets
+          // (with their own backgrounds) cover the gradient via
+          // object-cover; cutouts use object-contain so the silhouette
+          // doesn't get cropped.
+          <div
+            className="relative h-full w-full"
+            style={{
+              background:
+                "linear-gradient(180deg, #f6f6f6 0%, #e7e7e7 60%, #d8d8d8 100%)",
+            }}
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={current.url}
+              alt={productName}
+              className="h-full w-full object-contain p-3"
+            />
+          </div>
         )}
         {/* Tiny slide indicator top-right so the visitor knows there
             are more views. Hidden when there's only one slide. */}
@@ -190,9 +178,10 @@ function slideAriaLabel(
   i: number,
   t: (key: string, values?: Record<string, string | number>) => string,
 ): string {
-  if (s.kind === "styled-thumbnail") return t("galleryViewMain");
   if (s.kind === "model") return t("galleryViewModel");
-  return t("galleryViewScene", { n: i });
+  // i is 0-based; the indicator above is 1-based, so display i+1
+  // when narrating "scene N".
+  return t("galleryViewScene", { n: i + 1 });
 }
 
 function ThumbPreview({ slide }: { slide: Slide }) {
@@ -206,26 +195,8 @@ function ThumbPreview({ slide }: { slide: Slide }) {
       </div>
     );
   }
-  if (slide.kind === "styled-thumbnail") {
-    return (
-      <div
-        className="relative h-full w-full"
-        style={{
-          background:
-            "linear-gradient(180deg, #f6f6f6 0%, #d8d8d8 100%)",
-        }}
-      >
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src={slide.cutoutUrl}
-          alt=""
-          className="h-full w-full object-contain p-1"
-        />
-      </div>
-    );
-  }
   return (
     // eslint-disable-next-line @next/next/no-img-element
-    <img src={slide.rawUrl} alt="" className="h-full w-full object-cover" />
+    <img src={slide.url} alt="" className="h-full w-full object-cover" />
   );
 }

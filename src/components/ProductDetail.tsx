@@ -3,7 +3,6 @@
 import { useState } from "react";
 import { useTranslations, useLocale } from "next-intl";
 import ProductGallery from "./ProductGallery";
-import RealPhotoStrip from "./RealPhotoStrip";
 import ColorSwitcher, { type ColorOption } from "./ColorSwitcher";
 import { buildGlbDownload, formatMYR } from "@/lib/format";
 import { glbUrlForGallery } from "@/lib/glb-display";
@@ -20,14 +19,11 @@ type Props = {
    *  "Available in: …" line. Empty array = no regions = nationally
    *  available / unspecified, line is hidden. */
   regionLabels: string[];
-  /** Signed URLs for the non-primary raw photos — slot 3+ in the
-   *  gallery (scene shots after the styled thumbnail + 3D viewer). */
-  originalRawUrls: string[];
-  /** Wave 4 — signed URLs for operator-uploaded real product photos
-   *  (image_kind='real_photo'). Rendered in a dedicated strip below
-   *  the main gallery; click to open in a lightbox. Empty array
-   *  hides the section entirely. */
-  realPhotoUrls: string[];
+  /** Wave 5 (mig 0038) — flat image-pool model. Every show_on_storefront
+   *  image becomes a gallery slide, primary thumbnail first, then
+   *  by upload time. Server-resolved to public-or-signed URLs already.
+   *  Empty array → gallery falls back to its empty-state placeholder. */
+  galleryUrls: string[];
 };
 
 export default function ProductDetail({
@@ -38,8 +34,7 @@ export default function ProductDetail({
   materialLabels,
   colors,
   regionLabels,
-  originalRawUrls,
-  realPhotoUrls,
+  galleryUrls,
 }: Props) {
   const t = useTranslations("product");
   const locale = useLocale();
@@ -58,10 +53,8 @@ export default function ProductDetail({
 
   return (
     <div className="grid gap-8 md:grid-cols-[1.2fr_1fr]">
-      <div>
       <ProductGallery
         productName={product.name}
-        primaryCutoutUrl={product.thumbnail_url}
         // Decoded-budget gate (lib/glb-display): nulls the URL for
         // GLBs whose persisted vertex/texture/RAM metadata exceeds
         // iOS-Safari-safe thresholds, so <model-viewer> never mounts
@@ -70,12 +63,11 @@ export default function ProductDetail({
         // (e.g. the Download .glb button below) still see the real
         // URL — only the in-page 3D viewer is gated.
         glbUrl={glbUrlForGallery(product)}
-        originalRawUrls={originalRawUrls}
+        galleryUrls={galleryUrls}
+        primaryThumbnailUrl={product.thumbnail_url}
         overrideColorHex={overrideColorHex}
         emptyLabel={t("noImages")}
       />
-      <RealPhotoStrip urls={realPhotoUrls} alt={product.name} />
-      </div>
 
       <div className="flex flex-col gap-5">
         <div>

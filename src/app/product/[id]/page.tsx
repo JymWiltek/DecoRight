@@ -97,57 +97,44 @@ export default async function ProductPage({ params }: PageProps) {
     getLocale() as Promise<Locale>,
     supabase
       .from("product_images")
-      .select("id,is_primary,raw_image_url,state,image_kind")
+      .select("id,raw_image_url,cutout_image_url,state,show_on_storefront,is_primary_thumbnail,created_at")
       .eq("product_id", id)
       .eq("state", "cutout_approved")
-      .order("is_primary", { ascending: false })
+      .eq("show_on_storefront", true)
+      // Mig 0038 — primary thumbnail leads, then by upload time.
+      .order("is_primary_thumbnail", { ascending: false })
       .order("created_at", { ascending: true }),
   ]);
   if (!product) notFound();
 
-  // Mig 0034: split the gallery results by image_kind. Cutout rows
-  // feed the existing styled-thumbnail / scene-photo slides; real_photo
-  // rows feed the dedicated carousel below the main gallery.
-  const cutoutRows = (galleryResp.data ?? []).filter(
-    (img) => (img.image_kind ?? "cutout") === "cutout",
-  );
-  const realPhotoRows = (galleryResp.data ?? []).filter(
-    (img) => img.image_kind === "real_photo",
-  );
-
-  // Original scene photos = every approved cutout EXCEPT the primary
-  // (the primary's cutout is already shown as slide 1's styled
-  // thumbnail; showing its raw too would be redundant).
-  const originalCandidates = cutoutRows.filter(
-    (img) => !img.is_primary && img.raw_image_url,
-  );
-  const originalRawUrls = (
-    await Promise.all(
-      originalCandidates.map(async (img) => {
-        try {
-          return await getSignedRawUrl(img.raw_image_url!);
-        } catch {
-          return null;
-        }
-      }),
-    )
-  ).filter((u): u is string => u !== null);
-
-  // Wave 4 — real-photo URLs for the dedicated carousel below the
-  // main gallery. Same signed-URL flow as the originals.
-  const realPhotoUrls = (
-    await Promise.all(
-      realPhotoRows
-        .filter((img) => img.raw_image_url)
-        .map(async (img) => {
-          try {
-            return await getSignedRawUrl(img.raw_image_url!);
-          } catch {
-            return null;
-          }
-        }),
-    )
-  ).filter((u): u is string => u !== null);
+  // Wave 5 (mig 0038) — flat image-pool model. Every show_on_storefront
+  // row becomes a gallery slide, in order: primary thumbnail first,
+  // then by upload time.
+  //
+  // Primary-thumbnail row: substitute products.thumbnail_url (the
+  // unified 1500x1500 white-canvas PNG) so the gallery's lead slide
+  // looks identical to the customer card. Per Jym's Wave 5 spec
+  // "第 1 张默认显示 is_primary_thumbnail (跟产品卡封面一致)".
+  // Non-primary rows: prefer the cutout URL (already public CDN);
+  // fall back to a signed URL of the raw upload for rows without a
+  // cutout (real photos, spec sheets the operator chose to show).
+  const galleryUrls: string[] = [];
+  for (const img of galleryResp.data ?? []) {
+    if (img.is_primary_thumbnail && product.thumbnail_url) {
+      galleryUrls.push(product.thumbnail_url);
+      continue;
+    }
+    if (img.cutout_image_url) {
+      galleryUrls.push(img.cutout_image_url);
+    } else if (img.raw_image_url) {
+      try {
+        const signed = await getSignedRawUrl(img.raw_image_url);
+        galleryUrls.push(signed);
+      } catch {
+        // Skip rows we can't sign — better than crashing the page.
+      }
+    }
+  }
 
   const itemTypeLabels = labelMap(taxonomy.itemTypes, locale);
   const roomLabels = labelMap(taxonomy.rooms, locale);
@@ -223,8 +210,7 @@ export default async function ProductPage({ params }: PageProps) {
           materialLabels={materialLabelList}
           colors={colorOptions}
           regionLabels={regionLabelList}
-          originalRawUrls={originalRawUrls}
-          realPhotoUrls={realPhotoUrls}
+          galleryUrls={galleryUrls}
         />
       </main>
     </>
