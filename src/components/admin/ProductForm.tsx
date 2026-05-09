@@ -42,6 +42,7 @@ import RegionsPicker from "./RegionsPicker";
 import FileDropzone from "./FileDropzone";
 import { UploadDropzone } from "./UploadDropzone";
 import SpecSheetAutofillBlock from "./SpecSheetAutofillBlock";
+import ReunifyThumbnailButton from "./ReunifyThumbnailButton";
 import AIInferButton from "./AIInferButton";
 import { AutofillTextInput, AutofillTextarea } from "./AutofillTextInput";
 import DeleteButton from "./DeleteButton";
@@ -341,6 +342,17 @@ export default function ProductForm({
         */}
 
         {imagesSection}
+
+        {/* Manual recovery for the unify-thumbnail pipeline. The
+            pg_net trigger fires once per cutout-approval transition;
+            if its http_post fails the row stays at the prior URL.
+            This button re-runs the unify route on demand. */}
+        <Section
+          title="Unified thumbnail"
+          hint="Auto-runs after a cutout is approved. Use this if the storefront thumbnail looks stale or you re-cropped the cutout."
+        >
+          <ReunifyThumbnailButton productId={p?.id ?? null} />
+        </Section>
 
         <Section
           title="3D model"

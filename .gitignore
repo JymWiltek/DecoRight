@@ -57,3 +57,4 @@ next-env.d.ts
 /scripts/test-sign-tmp.mjs
 /scripts/grab-spec-tmp.mjs
 /scripts/test-spec-parse.ts
+/scripts/test-c3.mjs
