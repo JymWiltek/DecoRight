@@ -206,12 +206,29 @@ export const IMAGE_ERROR_KINDS = [
 ] as const;
 export type ImageErrorKind = (typeof IMAGE_ERROR_KINDS)[number];
 
+/** Mig 0034 — closed value space pinned by a DB CHECK constraint.
+ *
+ *   cutout      — operator-uploaded raw photo bound for the rembg
+ *                 cutout pipeline; resulting transparent PNG ends up
+ *                 as the storefront's styled-thumbnail slide.
+ *   real_photo  — operator-uploaded shot of the real product. NEVER
+ *                 goes through rembg. Storefront renders as-is in a
+ *                 dedicated carousel below the main gallery.
+ *   spec_sheet  — brand spec PDF/image for the GPT-4o vision parser
+ *                 (Wave 3). Private; never surfaced on storefront.
+ */
+export const IMAGE_KINDS = ["cutout", "real_photo", "spec_sheet"] as const;
+export type ImageKind = (typeof IMAGE_KINDS)[number];
+
 export type ProductImageRow = {
   id: string;
   product_id: string;
   raw_image_url: string | null;
   cutout_image_url: string | null;
   state: ImageState;
+  /** Mig 0034 — what this image is FOR. Drives whether rembg picks
+   *  it up + which storefront surface (if any) renders it. */
+  image_kind: ImageKind;
   is_primary: boolean;
   rembg_provider: string | null;
   rembg_cost_usd: number | null;
@@ -237,6 +254,8 @@ export type ProductImageInsert = {
   raw_image_url?: string | null;
   cutout_image_url?: string | null;
   state?: ImageState;
+  /** Mig 0034. Defaults to 'cutout' on the DB side. */
+  image_kind?: ImageKind;
   is_primary?: boolean;
   rembg_provider?: string | null;
   rembg_cost_usd?: number | null;

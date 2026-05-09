@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useTranslations, useLocale } from "next-intl";
 import ProductGallery from "./ProductGallery";
+import RealPhotoStrip from "./RealPhotoStrip";
 import ColorSwitcher, { type ColorOption } from "./ColorSwitcher";
 import { buildGlbDownload, formatMYR } from "@/lib/format";
 import { glbUrlForGallery } from "@/lib/glb-display";
@@ -22,6 +23,11 @@ type Props = {
   /** Signed URLs for the non-primary raw photos — slot 3+ in the
    *  gallery (scene shots after the styled thumbnail + 3D viewer). */
   originalRawUrls: string[];
+  /** Wave 4 — signed URLs for operator-uploaded real product photos
+   *  (image_kind='real_photo'). Rendered in a dedicated strip below
+   *  the main gallery; click to open in a lightbox. Empty array
+   *  hides the section entirely. */
+  realPhotoUrls: string[];
 };
 
 export default function ProductDetail({
@@ -33,6 +39,7 @@ export default function ProductDetail({
   colors,
   regionLabels,
   originalRawUrls,
+  realPhotoUrls,
 }: Props) {
   const t = useTranslations("product");
   const locale = useLocale();
@@ -51,6 +58,7 @@ export default function ProductDetail({
 
   return (
     <div className="grid gap-8 md:grid-cols-[1.2fr_1fr]">
+      <div>
       <ProductGallery
         productName={product.name}
         primaryCutoutUrl={product.thumbnail_url}
@@ -66,6 +74,8 @@ export default function ProductDetail({
         overrideColorHex={overrideColorHex}
         emptyLabel={t("noImages")}
       />
+      <RealPhotoStrip urls={realPhotoUrls} alt={product.name} />
+      </div>
 
       <div className="flex flex-col gap-5">
         <div>

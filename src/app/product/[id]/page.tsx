@@ -97,7 +97,7 @@ export default async function ProductPage({ params }: PageProps) {
     getLocale() as Promise<Locale>,
     supabase
       .from("product_images")
-      .select("id,is_primary,raw_image_url,state")
+      .select("id,is_primary,raw_image_url,state,image_kind")
       .eq("product_id", id)
       .eq("state", "cutout_approved")
       .order("is_primary", { ascending: false })
@@ -105,10 +105,20 @@ export default async function ProductPage({ params }: PageProps) {
   ]);
   if (!product) notFound();
 
-  // Original scene photos = every approved image EXCEPT the primary
+  // Mig 0034: split the gallery results by image_kind. Cutout rows
+  // feed the existing styled-thumbnail / scene-photo slides; real_photo
+  // rows feed the dedicated carousel below the main gallery.
+  const cutoutRows = (galleryResp.data ?? []).filter(
+    (img) => (img.image_kind ?? "cutout") === "cutout",
+  );
+  const realPhotoRows = (galleryResp.data ?? []).filter(
+    (img) => img.image_kind === "real_photo",
+  );
+
+  // Original scene photos = every approved cutout EXCEPT the primary
   // (the primary's cutout is already shown as slide 1's styled
   // thumbnail; showing its raw too would be redundant).
-  const originalCandidates = (galleryResp.data ?? []).filter(
+  const originalCandidates = cutoutRows.filter(
     (img) => !img.is_primary && img.raw_image_url,
   );
   const originalRawUrls = (
@@ -120,6 +130,22 @@ export default async function ProductPage({ params }: PageProps) {
           return null;
         }
       }),
+    )
+  ).filter((u): u is string => u !== null);
+
+  // Wave 4 — real-photo URLs for the dedicated carousel below the
+  // main gallery. Same signed-URL flow as the originals.
+  const realPhotoUrls = (
+    await Promise.all(
+      realPhotoRows
+        .filter((img) => img.raw_image_url)
+        .map(async (img) => {
+          try {
+            return await getSignedRawUrl(img.raw_image_url!);
+          } catch {
+            return null;
+          }
+        }),
     )
   ).filter((u): u is string => u !== null);
 
@@ -198,6 +224,7 @@ export default async function ProductPage({ params }: PageProps) {
           colors={colorOptions}
           regionLabels={regionLabelList}
           originalRawUrls={originalRawUrls}
+          realPhotoUrls={realPhotoUrls}
         />
       </main>
     </>

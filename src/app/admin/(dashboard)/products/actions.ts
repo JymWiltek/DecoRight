@@ -60,7 +60,17 @@ type RawImageEntry = { imageId: string; ext: string };
  * validated pieces.
  */
 function parseRawImageEntries(fd: FormData): RawImageEntry[] {
-  const raw = fd.get("raw_image_entries");
+  return parseImageEntriesField(fd, "raw_image_entries");
+}
+
+/** Wave 4: same JSON-array shape as `raw_image_entries`, different
+ *  FormData key. UploadDropzone with kind="real_photo" emits this. */
+function parseRealPhotoEntries(fd: FormData): RawImageEntry[] {
+  return parseImageEntriesField(fd, "real_photo_entries");
+}
+
+function parseImageEntriesField(fd: FormData, key: string): RawImageEntry[] {
+  const raw = fd.get(key);
   if (typeof raw !== "string" || !raw.trim()) return [];
   let parsed: unknown;
   try {
@@ -291,7 +301,55 @@ async function attachStagedRawImages(
     product_id: productId,
     state: "raw" as const,
     raw_image_url: `${productId}/${e.imageId}.${e.ext}`,
+    // Mig 0034 — explicit; matches DB default but documents intent.
+    image_kind: "cutout" as const,
   }));
+  const { error } = await supabase
+    .from("product_images")
+    .upsert(rows, { onConflict: "id" });
+  if (error) return { ok: false, error: error.message };
+  return { ok: true, ids: rows.map((r) => r.id) };
+}
+
+/**
+ * Wave 4 — insert one product_images row per staged real-photo entry.
+ *
+ * Differences vs. attachStagedRawImages:
+ *   • image_kind = 'real_photo' so the rembg processing scan
+ *     (processPendingImagesForPublish) skips these rows entirely.
+ *   • state = 'cutout_approved' lands the row at a terminal state
+ *     immediately — no admin-review queue, no rembg quota burn,
+ *     and the storefront SELECT (which filters cutout_approved)
+ *     surfaces them right away.
+ *   • cutout_image_url mirrors raw_image_url so any future code
+ *     path that prefers the cutout column still resolves to a
+ *     real URL. The storefront real-photo strip reads raw_image_url
+ *     directly so this dual-population is belt-and-braces.
+ *   • is_primary stays default false — real photos never drive the
+ *     thumbnail. The product's unified thumbnail (Wave 2) comes
+ *     from the cutout pipeline.
+ *
+ * Idempotent via upsert on id like the cutout path, so a client
+ * retry doesn't double-insert.
+ */
+async function attachStagedRealPhotos(
+  productId: string,
+  entries: RawImageEntry[],
+): Promise<{ ok: true; ids: string[] } | { ok: false; error: string }> {
+  if (entries.length === 0) return { ok: true, ids: [] };
+  const supabase = createServiceRoleClient();
+  const rows = entries.map((e) => {
+    const path = `${productId}/${e.imageId}.${e.ext}`;
+    return {
+      id: e.imageId,
+      product_id: productId,
+      state: "cutout_approved" as const,
+      raw_image_url: path,
+      cutout_image_url: path,
+      image_kind: "real_photo" as const,
+      is_primary: false,
+    };
+  });
   const { error } = await supabase
     .from("product_images")
     .upsert(rows, { onConflict: "id" });
@@ -319,10 +377,16 @@ async function processPendingImagesForPublish(
   productId: string,
 ): Promise<{ approved: number; failed: number; ran: number }> {
   const supabase = createServiceRoleClient();
+  // Mig 0034 — image_kind filter prevents real_photo / spec_sheet
+  // rows from accidentally being run through rembg. Real photos
+  // also land at state='cutout_approved' so the state filter
+  // already excludes them; spec_sheets get inserted similarly when
+  // Wave 3 ships. The image_kind clause is belt-and-braces.
   const { data, error } = await supabase
     .from("product_images")
     .select("id")
     .eq("product_id", productId)
+    .eq("image_kind", "cutout")
     .in("state", ["raw", "cutout_failed"]);
   if (error) return { approved: 0, failed: 0, ran: 0 };
   const ids = (data ?? []).map((r) => r.id);
@@ -630,6 +694,22 @@ export async function updateProduct(id: string, fd: FormData): Promise<void> {
     }
   }
 
+  // Wave 4 — staged real-photo uploads land alongside the cutouts in
+  // the same Storage path, but with image_kind='real_photo' and a
+  // terminal state so the rembg pipeline ignores them and the
+  // storefront's real-photo strip picks them up immediately.
+  const stagedRealPhotos = parseRealPhotoEntries(fd);
+  if (stagedRealPhotos.length > 0) {
+    const attach = await attachStagedRealPhotos(id, stagedRealPhotos);
+    if (!attach.ok) {
+      redirect(
+        `/admin/products/${id}/edit?err=db&msg=${encodeURIComponent(
+          `real-photo row insert failed: ${attach.error}`,
+        )}`,
+      );
+    }
+  }
+
   revalidatePath("/admin");
   revalidatePath("/");
   revalidatePath(`/product/${id}`);
@@ -637,6 +717,8 @@ export async function updateProduct(id: string, fd: FormData): Promise<void> {
 
   const qs = new URLSearchParams({ saved: "1" });
   if (stagedEntries.length > 0) qs.set("uploaded", String(stagedEntries.length));
+  if (stagedRealPhotos.length > 0)
+    qs.set("real_photos", String(stagedRealPhotos.length));
   redirect(`/admin/products/${id}/edit?${qs.toString()}`);
 }
 

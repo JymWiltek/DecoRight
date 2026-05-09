@@ -51,3 +51,7 @@ next-env.d.ts
 .claude/
 /scripts/test-w1.mjs
 /scripts/test-w1-storefront.mjs
+/scripts/test-sign-tmp.mjs
+/scripts/test-w4.mjs
+/scripts/test-w4-storefront.mjs
+/scripts/test-sign-tmp.mjs

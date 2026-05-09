@@ -47,6 +47,12 @@ type Props = {
    *  200 MB raw .tiff bounces locally instead of burning the signed
    *  URL and getting rejected by the storage bucket. */
   maxFileMb?: number;
+  /** What category this dropzone is uploading into. Drives the
+   *  staged-uploader registration key + the FormData field name +
+   *  the eventual product_images.image_kind value (Wave 4 / mig
+   *  0034). Defaults to 'cutout' for backward compat with the only
+   *  caller that existed pre-Wave-4. */
+  kind?: "cutout" | "real_photo";
 };
 
 const DEFAULT_ACCEPT = "image/jpeg,image/png,image/webp";
@@ -62,7 +68,15 @@ export function UploadDropzone({
   accept = DEFAULT_ACCEPT,
   multiple = true,
   maxFileMb = 8,
+  kind = "cutout",
 }: Props) {
+  // Wire the staged-uploader registration name + FormData field
+  // name to the kind. The cutout branch keeps the legacy field
+  // names so AIInferButton.peekFiles("raw_images") + the server
+  // action's existing parsePayload code continue working unchanged.
+  const stagedKey = kind === "real_photo" ? "real_photo_images" : "raw_images";
+  const formDataField =
+    kind === "real_photo" ? "real_photo_entries" : "raw_image_entries";
   const inputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [previews, setPreviews] = useState<Preview[]>([]);
@@ -87,8 +101,8 @@ export function UploadDropzone({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  useRegisterStagedUploader("raw_images", {
-    label: "images",
+  useRegisterStagedUploader(stagedKey, {
+    label: kind === "real_photo" ? "real photos" : "images",
     pendingCount: () => previewsRef.current.length,
     // Surface raw File handles for AIInferButton — it base64-encodes
     // staged photos so AI autofill works BEFORE the Save click that
@@ -142,7 +156,7 @@ export function UploadDropzone({
       if (entries.length === 0) return [];
 
       const result: StagedField[] = [
-        { name: "raw_image_entries", value: JSON.stringify(entries) },
+        { name: formDataField, value: JSON.stringify(entries) },
       ];
       return result;
     },

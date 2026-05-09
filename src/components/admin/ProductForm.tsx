@@ -40,6 +40,7 @@ import SubtypePicker from "./SubtypePicker";
 import RoomsPicker from "./RoomsPicker";
 import RegionsPicker from "./RegionsPicker";
 import FileDropzone from "./FileDropzone";
+import { UploadDropzone } from "./UploadDropzone";
 import AIInferButton from "./AIInferButton";
 import { AutofillTextInput, AutofillTextarea } from "./AutofillTextInput";
 import DeleteButton from "./DeleteButton";
@@ -355,6 +356,28 @@ export default function ProductForm({
             />
           </Field>
         </Section>
+
+        {/* Wave 4 — real product photos. NOT routed through rembg;
+            land at state='cutout_approved' immediately and surface
+            in a dedicated lightbox-strip below the storefront's
+            main gallery. Use this section for photographs of the
+            actual product — installed shots, packaging, detail
+            close-ups. The "Photos" section above is for sources
+            for the AI cutout pipeline; mixing the two would dilute
+            both. */}
+        {p?.id ? (
+          <Section
+            title="Real photos"
+            hint="Operator-uploaded photos of the actual product. NOT cutouts — these are shown as-is in a carousel below the 3D viewer on the storefront. Click Save / Publish to upload."
+          >
+            <UploadDropzone
+              productId={p.id}
+              kind="real_photo"
+              multiple
+              maxFileMb={8}
+            />
+          </Section>
+        ) : null}
 
         <Section title="AI assist">
           <AIInferButton productId={p?.id ?? null} form={FORM_ID} />
