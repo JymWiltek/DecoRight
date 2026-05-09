@@ -1,70 +1,226 @@
 /**
- * /api/admin/unify-thumbnail — Stage 2 placeholder.
+ * /api/admin/unify-thumbnail — POST { product_id }.
  *
- * Final shape (implemented in Stage 2):
- *   POST { product_id: string }
- *     1. Resolve the product's primary cutout_image_url.
- *     2. Download the cutout PNG bytes.
- *     3. sharp() pipeline:
- *          • .trim()                 — drop transparent padding
- *          • .extend(...)            — center on 1500×1500 canvas with
- *                                      ~8% padding (product fills 80-85%)
- *          • white background fill
- *          • soft elliptical drop-shadow (alpha 15%, blur 30px,
- *            ellipse width = bbox × 0.8)
- *     4. Upload the result to thumbnails/products/<product_id>.png.
- *     5. UPDATE products SET thumbnail_url = <new url>.
- *     6. Return { ok, thumbnail_url, original_bytes, unified_bytes }.
+ * Renders a 1500×1500 white-canvas thumbnail with a soft ground
+ * shadow from the product's primary cutout, uploads to
+ * thumbnails/products/<id>/unified.png, and updates
+ * products.thumbnail_url. See docs/wave-2-thumbnail-unify.md for the
+ * full design.
  *
- * Trigger surfaces (also Stage 2):
- *   • pg_net trigger on product_images UPDATE when state flips to
- *     cutout_approved AND is_primary=true.
- *   • Same trigger on the skip_cutout=true path.
- *   • Manual admin button on the edit page (re-trigger after the
- *     operator approves a different primary).
- *   • One-shot backfill script for the 13 published products that
- *     pre-date this feature.
+ * Auth — accepts EITHER:
+ *   • a logged-in admin session cookie (the proxy middleware lets
+ *     any /admin/* request through, server actions invoke this
+ *     endpoint with the cookie attached); or
+ *   • a matching `x-cron-secret` header for pg_net trigger calls
+ *     out of Postgres.
  *
- * Why route is committed Stage 1 even though impl is Stage 2:
- *   • Pins the URL contract early so the design doc can reference
- *     it (docs/wave-2-thumbnail-unify.md), the pg_net trigger SQL
- *     in Stage 2 has a stable target, and any frontend "Re-unify"
- *     button can be wired against a known endpoint.
- *   • Returning a 501 is the standard "not implemented" status
- *     code — better than a 404 (route exists) and better than a
- *     stub success (caller might believe the work happened).
+ * Both auth paths are independent — the trigger NEVER carries a
+ * session cookie, the manual admin button NEVER mints a cron secret.
  *
- * Auth: when the impl lands in Stage 2, this route MUST guard with
- *   `await requireAdmin()` (the same gate the admin server actions
- *   use) before reading product_id, hitting Storage, or burning
- *   sharp CPU. Adding that guard is part of Stage 2 — DO NOT
- *   skip it. Until impl, the 501 short-circuit means the route
- *   has no side effects to gate against, but a paranoid reader
- *   may want to layer the gate even on the placeholder.
+ * Failure modes — the route always returns JSON:
+ *   200 { ok: true, thumbnail_url, … }
+ *   400 invalid product_id
+ *   401 no session AND no/wrong cron secret
+ *   404 product not found OR no primary cutout to unify
+ *   500 sharp / fetch / upload threw
+ *   501 (replaced once impl lands; this file IS the impl now)
  */
 
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
+import { requireAdmin } from "@/lib/auth/require-admin";
+import { createServiceRoleClient } from "@/lib/supabase/service";
+import { unifyThumbnail } from "@/lib/admin/unify-thumbnail";
+import { uploadUnifiedThumbnailPng } from "@/lib/storage";
 
-export const runtime = "nodejs"; // sharp will need Node, not Edge.
+export const runtime = "nodejs"; // sharp is a Node addon.
+export const maxDuration = 60; // Vercel default is 10s; sharp on a
+// large cutout takes 5-15s, plus fetch/upload overhead.
 
-export async function POST() {
-  return NextResponse.json(
-    {
-      ok: false,
-      error: "not_implemented",
-      detail:
-        "Thumbnail unification is scheduled for Stage 2 — see docs/wave-2-thumbnail-unify.md.",
-    },
-    { status: 501 },
-  );
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export async function POST(req: NextRequest) {
+  // ── 1. authenticate ────────────────────────────────────────
+  // Prefer the cron-secret path for pg_net trigger calls (those
+  // arrive without a browser session cookie). Fall back to the
+  // admin session check.
+  const cronHeader = req.headers.get("x-cron-secret");
+  if (cronHeader) {
+    const ok = await verifyCronSecret(cronHeader);
+    if (!ok) {
+      return NextResponse.json(
+        { ok: false, error: "unauthorized" },
+        { status: 401 },
+      );
+    }
+  } else {
+    try {
+      await requireAdmin();
+    } catch {
+      return NextResponse.json(
+        { ok: false, error: "unauthorized" },
+        { status: 401 },
+      );
+    }
+  }
+
+  // ── 2. parse + validate body ───────────────────────────────
+  let body: unknown;
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json(
+      { ok: false, error: "invalid json body" },
+      { status: 400 },
+    );
+  }
+  const productId =
+    body && typeof body === "object" && "product_id" in body
+      ? String((body as Record<string, unknown>).product_id ?? "")
+      : "";
+  if (!UUID_RE.test(productId)) {
+    return NextResponse.json(
+      { ok: false, error: "invalid product_id" },
+      { status: 400 },
+    );
+  }
+
+  // ── 3. resolve primary cutout URL ──────────────────────────
+  const supabase = createServiceRoleClient();
+  const { data: img, error: imgErr } = await supabase
+    .from("product_images")
+    .select("id, cutout_image_url")
+    .eq("product_id", productId)
+    .eq("image_kind", "cutout")
+    .eq("state", "cutout_approved")
+    .eq("is_primary", true)
+    .limit(1)
+    .maybeSingle();
+  if (imgErr) {
+    return NextResponse.json(
+      { ok: false, error: "db error", detail: imgErr.message },
+      { status: 500 },
+    );
+  }
+  if (!img || !img.cutout_image_url) {
+    return NextResponse.json(
+      { ok: false, error: "no primary cutout" },
+      { status: 404 },
+    );
+  }
+
+  // ── 4. fetch the cutout PNG bytes ──────────────────────────
+  const cutoutResp = await fetch(img.cutout_image_url, {
+    cache: "no-store",
+  });
+  if (!cutoutResp.ok) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "cutout fetch failed",
+        detail: `${cutoutResp.status} ${cutoutResp.statusText}`,
+      },
+      { status: 502 },
+    );
+  }
+  const inputBytes = new Uint8Array(await cutoutResp.arrayBuffer());
+
+  // ── 5. sharp pipeline ──────────────────────────────────────
+  let unified;
+  try {
+    unified = await unifyThumbnail(inputBytes);
+  } catch (e) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "unify failed",
+        detail: e instanceof Error ? e.message : String(e),
+      },
+      { status: 500 },
+    );
+  }
+
+  // ── 6. upload to thumbnails bucket ─────────────────────────
+  let publicUrl: string;
+  try {
+    publicUrl = await uploadUnifiedThumbnailPng(
+      productId,
+      new Uint8Array(unified.png),
+    );
+  } catch (e) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "upload failed",
+        detail: e instanceof Error ? e.message : String(e),
+      },
+      { status: 500 },
+    );
+  }
+
+  // ── 7. update products.thumbnail_url with cache-bust query ─
+  // The bucket sends 1-year Cache-Control; without a version query
+  // the CDN keeps serving the old bytes after a re-unify.
+  const versioned = `${publicUrl}?v=${Date.now()}`;
+  const { error: updErr } = await supabase
+    .from("products")
+    .update({ thumbnail_url: versioned })
+    .eq("id", productId);
+  if (updErr) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "db update failed",
+        detail: updErr.message,
+      },
+      { status: 500 },
+    );
+  }
+
+  return NextResponse.json({
+    ok: true,
+    product_id: productId,
+    thumbnail_url: versioned,
+    unified_bytes: unified.png.length,
+    product_bbox: { w: unified.productWidthPx, h: unified.productHeightPx },
+  });
 }
 
-// Explicit 405 on every other method so a stray GET doesn't return
-// the framework's HTML error page (which can confuse curl-based
-// callers comparing against the 501 we expect).
+// 405 on every other method so curl-based callers don't get the
+// framework's HTML error page.
 export async function GET() {
   return new NextResponse("Method Not Allowed", {
     status: 405,
     headers: { Allow: "POST" },
   });
+}
+
+/**
+ * Compare the incoming `x-cron-secret` header against the value
+ * stored in private._app_config.cron_secret (mig 0018) via the
+ * SECURITY DEFINER RPC `public.get_cron_secret()` (mig 0036).
+ *
+ * PostgREST does not expose the `private` schema, so the RPC bridge
+ * is necessary. Same cron secret as the existing poll-meshy edge
+ * function — single rotation surface.
+ */
+async function verifyCronSecret(provided: string): Promise<boolean> {
+  if (!provided) return false;
+  const supabase = createServiceRoleClient();
+  const { data, error } = await supabase.rpc(
+    "get_cron_secret" as never,
+  );
+  if (error) return false;
+  // The mig 0036 RPC returns `text`. supabase-js's generated types
+  // don't know about it (we haven't regen'd), so the response is
+  // typed `never` — cast through unknown.
+  const expected =
+    typeof (data as unknown) === "string" ? (data as unknown as string) : "";
+  if (!expected) return false;
+  // Constant-time compare via length-equal early return + xor accumulator.
+  if (expected.length !== provided.length) return false;
+  let r = 0;
+  for (let i = 0; i < expected.length; i++) {
+    r |= expected.charCodeAt(i) ^ provided.charCodeAt(i);
+  }
+  return r === 0;
 }

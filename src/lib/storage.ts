@@ -389,3 +389,35 @@ export async function uploadThumbnail(productId: string, file: File): Promise<st
   const { data } = supabase.storage.from(THUMBS_BUCKET).getPublicUrl(path);
   return data.publicUrl;
 }
+
+/**
+ * Wave 2 — write a unified PNG to thumbnails/products/<id>/unified.png.
+ * Same bucket, separate filename so the existing uploadThumbnail()
+ * (manual upload) can coexist on its own filename without collision.
+ *
+ * Caller is expected to append `?v=<timestamp>` for cache-busting on
+ * subsequent re-unifies; THUMBS_BUCKET is public with 1-year
+ * Cache-Control, same as the cutouts bucket.
+ */
+export async function uploadUnifiedThumbnailPng(
+  productId: string,
+  bytes: Uint8Array,
+): Promise<string> {
+  const supabase = createServiceRoleClient();
+  const path = `products/${productId}/unified.png`;
+  const { error } = await supabase.storage
+    .from(THUMBS_BUCKET)
+    .upload(
+      path,
+      // Wrap in Blob so supabase-js accepts the buffer in every runtime.
+      new Blob([bytes as BlobPart], { type: "image/png" }),
+      {
+        upsert: true,
+        contentType: "image/png",
+        cacheControl: "31536000",
+      },
+    );
+  if (error) throw error;
+  const { data } = supabase.storage.from(THUMBS_BUCKET).getPublicUrl(path);
+  return data.publicUrl;
+}
