@@ -87,6 +87,12 @@ export async function POST(req: NextRequest) {
   }
 
   // ── 3. resolve primary cutout URL ──────────────────────────
+  // Mig 0038 — filter on `is_primary_thumbnail` (operator-controlled
+  // toggle) instead of `is_primary` (cutout-pipeline marker) so the
+  // operator's "Primary thumbnail" choice in admin actually drives
+  // which cutout becomes the storefront card. They start equal via
+  // backfill + the auto_set_primary_thumbnail trigger; they diverge
+  // only when the operator explicitly toggles a different cutout.
   const supabase = createServiceRoleClient();
   const { data: img, error: imgErr } = await supabase
     .from("product_images")
@@ -94,7 +100,7 @@ export async function POST(req: NextRequest) {
     .eq("product_id", productId)
     .eq("image_kind", "cutout")
     .eq("state", "cutout_approved")
-    .eq("is_primary", true)
+    .eq("is_primary_thumbnail", true)
     .limit(1)
     .maybeSingle();
   if (imgErr) {

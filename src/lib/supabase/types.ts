@@ -227,9 +227,25 @@ export type ProductImageRow = {
   cutout_image_url: string | null;
   state: ImageState;
   /** Mig 0034 — what this image is FOR. Drives whether rembg picks
-   *  it up + which storefront surface (if any) renders it. */
+   *  it up + which storefront surface (if any) renders it.
+   *
+   *  Note (mig 0038 / Wave 5): no longer a display gate. The flat
+   *  pool model uses the 3 booleans below for that. image_kind
+   *  remains as the rembg-pipeline classifier. */
   image_kind: ImageKind;
   is_primary: boolean;
+  /** Mig 0038 — operator-toggled "include this image in the
+   *  storefront product-page gallery". Default true. */
+  show_on_storefront: boolean;
+  /** Mig 0038 — operator-toggled "this image is the customer card
+   *  cover". Max 1 per product (partial unique index +
+   *  maintain_primary_thumbnail trigger). Drives the unify route's
+   *  selector and the gallery's lead slide. Distinct from
+   *  is_primary, which stays the cutout-pipeline marker. */
+  is_primary_thumbnail: boolean;
+  /** Mig 0038 — operator-toggled "selectable as input to the GPT-4o
+   *  spec parser". Default true. */
+  feed_to_ai: boolean;
   rembg_provider: string | null;
   rembg_cost_usd: number | null;
   /** Populated when state is cutout_failed; cleared on success. See
@@ -257,6 +273,12 @@ export type ProductImageInsert = {
   /** Mig 0034. Defaults to 'cutout' on the DB side. */
   image_kind?: ImageKind;
   is_primary?: boolean;
+  /** Mig 0038. */
+  show_on_storefront?: boolean;
+  /** Mig 0038. */
+  is_primary_thumbnail?: boolean;
+  /** Mig 0038. */
+  feed_to_ai?: boolean;
   rembg_provider?: string | null;
   rembg_cost_usd?: number | null;
   last_error_kind?: ImageErrorKind | null;
