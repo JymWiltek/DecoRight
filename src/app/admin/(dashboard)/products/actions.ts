@@ -2,6 +2,7 @@
 
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { createServiceRoleClient } from "@/lib/supabase/service";
 import {
   glbPublicUrl,
@@ -1653,4 +1654,331 @@ export async function parseSpecSheetMergedAction(
     imagesParsed: parsed.imageCount,
     estCostUsd: parsed.usage.estCostUsd,
   };
+}
+
+// ────────────────────────────────────────────────────────────
+// Wave 6 · Commit 3 — bulk-create draft products
+// ────────────────────────────────────────────────────────────
+
+/** Sync upper bound on a single bulk-create call. The bulk page caps
+ *  the operator at this number too, but server-side enforcement
+ *  matters because server actions are URL-addressable. */
+const BULK_CREATE_MAX = 10;
+
+export type BulkCreateDraft = {
+  /** Pre-minted product UUID. The client uses this id when calling
+   *  getSignedUploadUrl, so the storage paths line up exactly with
+   *  what the existing single-product pipeline expects. */
+  productId: string;
+  /** 1-5 photos already direct-uploaded via signed URLs. */
+  images: Array<{ imageId: string; ext: string }>;
+  /** Optional GLB metadata. The client direct-uploaded bytes to
+   *  `products/<productId>/model.glb` via the existing signed-URL
+   *  flow; we just persist the budget metadata + glb_url here.
+   *  Null / undefined → no GLB attached. */
+  glb?: {
+    sizeKb: number | null;
+    vertexCount: number | null;
+    maxTextureDim: number | null;
+    decodedRamMb: number | null;
+  } | null;
+};
+
+export type BulkCreateResult =
+  | { ok: true; created: Array<{ productId: string }> }
+  | { ok: false; error: string };
+
+/** Wave 6 · Commit 3 — create up to 10 draft products in one call.
+ *
+ *  Synchronous part:
+ *    1. INSERT products (status='draft', name='Untitled product')
+ *    2. INSERT product_images (state='raw', feed_to_ai=true,
+ *       show_on_storefront=true, first row is_primary_thumbnail=true)
+ *    3. UPDATE products.glb_url + budget metadata when a GLB landed
+ *
+ *  Asynchronous tail (next/server `after`):
+ *    4. Run rembg AUTO on each image of each new product. The DB
+ *       maintain_primary_thumbnail trigger + the unify-thumbnail
+ *       pg_net hook fire automatically once cutouts land — same
+ *       single-product pipeline.
+ *    5. After rembg, run parseImagesMerged on the cutouts and UPDATE
+ *       the product with the parsed name/sku_id/brand/description/
+ *       dimensions_mm/weight_kg + bump ai_filled_fields.
+ *
+ *  Bytes are NOT copied — the client direct-uploaded via signed URLs
+ *  to the canonical paths the single-product flow uses, since the
+ *  productId is minted client-side and shipped here.
+ */
+export async function bulkCreateProducts(
+  drafts: BulkCreateDraft[],
+): Promise<BulkCreateResult> {
+  await requireAdmin();
+
+  if (!Array.isArray(drafts) || drafts.length === 0) {
+    return { ok: false, error: "no drafts provided" };
+  }
+  if (drafts.length > BULK_CREATE_MAX) {
+    return { ok: false, error: `max ${BULK_CREATE_MAX} drafts per request` };
+  }
+
+  // Per-draft validation. Reject the WHOLE batch on any malformed
+  // entry — bulk create is meant for happy-path scanning; partial
+  // recovery just leaves a half-broken batch the operator has to clean
+  // up. Defense-in-depth against a hand-crafted POST that tries to
+  // wedge a `../` into raw_image_url or point at someone else's GLB.
+  for (const d of drafts) {
+    if (!UUID_RE.test(d.productId)) {
+      return { ok: false, error: `invalid productId: ${d.productId}` };
+    }
+    if (!Array.isArray(d.images) || d.images.length === 0) {
+      return {
+        ok: false,
+        error: `draft ${d.productId} has no images (need at least 1)`,
+      };
+    }
+    if (d.images.length > MAX_IMAGES_PER_PRODUCT) {
+      return {
+        ok: false,
+        error: `draft ${d.productId} has more than ${MAX_IMAGES_PER_PRODUCT} images`,
+      };
+    }
+    for (const img of d.images) {
+      if (!UUID_RE.test(img.imageId)) {
+        return { ok: false, error: `invalid imageId: ${img.imageId}` };
+      }
+      if (!ALLOWED_IMAGE_EXTS.has(img.ext.toLowerCase())) {
+        return { ok: false, error: `unsupported ext: ${img.ext}` };
+      }
+    }
+  }
+
+  const supabase = createServiceRoleClient();
+
+  // 1. Insert products. One INSERT per row keeps error messages
+  //    targeted (the client gets which productId failed); insert-many
+  //    coalesces to one error and we'd lose the binding. ~10 rows so
+  //    the latency penalty is negligible.
+  for (const d of drafts) {
+    const { error } = await supabase.from("products").insert({
+      id: d.productId,
+      name: "Untitled product",
+      status: "draft",
+      room_slugs: [],
+      styles: [],
+      colors: [],
+      materials: [],
+      store_locations: [],
+      ai_filled_fields: [],
+    });
+    if (error) {
+      return {
+        ok: false,
+        error: `product insert ${d.productId} failed: ${error.message}`,
+      };
+    }
+  }
+
+  // 2. Insert product_images. First image of each draft becomes the
+  //    primary thumbnail (Wave 5 spec — gallery's lead slide). All
+  //    images get feed_to_ai=true so the async tail can pick them up.
+  for (const d of drafts) {
+    const rows = d.images.map((img, i) => ({
+      id: img.imageId,
+      product_id: d.productId,
+      state: "raw" as const,
+      raw_image_url: `${d.productId}/${img.imageId}.${img.ext.toLowerCase()}`,
+      image_kind: "cutout" as const,
+      feed_to_ai: true,
+      show_on_storefront: true,
+      is_primary_thumbnail: i === 0,
+    }));
+    const { error } = await supabase.from("product_images").insert(rows);
+    if (error) {
+      return {
+        ok: false,
+        error: `image insert for ${d.productId} failed: ${error.message}`,
+      };
+    }
+  }
+
+  // 3. GLB columns. Bytes already live at
+  //    `products/<productId>/model.glb` (signed-URL flow). We just
+  //    write the public URL + budget metadata the dropzone computed.
+  for (const d of drafts) {
+    if (!d.glb) continue;
+    const { error } = await supabase
+      .from("products")
+      .update({
+        glb_url: glbPublicUrl(d.productId),
+        glb_size_kb: d.glb.sizeKb,
+        glb_vertex_count: d.glb.vertexCount,
+        glb_max_texture_dim: d.glb.maxTextureDim,
+        glb_decoded_ram_mb: d.glb.decodedRamMb,
+        glb_source: "manual_upload" as const,
+        glb_generated_at: new Date().toISOString(),
+      })
+      .eq("id", d.productId);
+    if (error) {
+      return {
+        ok: false,
+        error: `glb update ${d.productId} failed: ${error.message}`,
+      };
+    }
+  }
+
+  // Cache invalidations for the list page.
+  revalidatePath("/admin");
+  invalidatePublishedCountsCache();
+
+  // 4 + 5. Async tail. Per-draft: rembg one image at a time (the rembg
+  //    layer's advisory-lock quota gate makes concurrent calls
+  //    effectively serial anyway), then merged parse against the
+  //    cutouts that landed. Failures get logged and don't crash the
+  //    batch — operator can retry from the list page.
+  after(async () => {
+    for (const d of drafts) {
+      try {
+        await processDraftAsync(d);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.error(
+          `[bulkCreateProducts] async tail for ${d.productId} threw: ${msg}`,
+        );
+      }
+    }
+  });
+
+  return {
+    ok: true,
+    created: drafts.map((d) => ({ productId: d.productId })),
+  };
+}
+
+/** Per-product async tail. Runs rembg AUTO on each image, then merges
+ *  the cutout URLs into one parseImagesMerged call, applies the parsed
+ *  fields back to the product row, and bumps ai_filled_fields. Errors
+ *  log + return — they don't propagate so a single bad draft doesn't
+ *  poison the rest of the batch. */
+async function processDraftAsync(d: BulkCreateDraft): Promise<void> {
+  const supabase = createServiceRoleClient();
+
+  // Sequential rembg AUTO. Failures leave the row in cutout_failed
+  // and are surfaced by the admin list's "Retry rembg" chip, so we
+  // don't block the batch on a single bad photo.
+  for (const img of d.images) {
+    await runRembgForImage(d.productId, img.imageId, undefined, "auto");
+  }
+
+  // Pull URLs to send to GPT-4o. Prefer cutout_image_url (public CDN,
+  // no signing); fall back to a signed raw URL for cutout_failed rows
+  // so the operator still gets a parse attempt.
+  const { data: imgs } = await supabase
+    .from("product_images")
+    .select("id, raw_image_url, cutout_image_url, feed_to_ai")
+    .eq("product_id", d.productId)
+    .eq("feed_to_ai", true)
+    .order("created_at", { ascending: true })
+    .limit(MERGED_PARSE_MAX_IMAGES);
+  if (!imgs || imgs.length === 0) return;
+
+  const inputs: { url: string }[] = [];
+  for (const img of imgs) {
+    if (img.cutout_image_url) {
+      inputs.push({ url: img.cutout_image_url });
+    } else if (img.raw_image_url) {
+      try {
+        const signed = await getSignedRawUrl(img.raw_image_url);
+        inputs.push({ url: signed });
+      } catch {
+        // skip rows we can't sign; keep the rest going
+      }
+    }
+  }
+  if (inputs.length === 0) return;
+
+  let parsed: Awaited<ReturnType<typeof parseImagesMerged>>;
+  try {
+    parsed = await parseImagesMerged(inputs);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error(
+      `[bulkCreateProducts] parse for ${d.productId} failed: ${msg}`,
+    );
+    return;
+  }
+
+  await supabase.from("api_usage").insert({
+    service: "gpt4o_vision_spec_merged",
+    product_id: d.productId,
+    product_image_id: null,
+    cost_usd: Number(parsed.usage.estCostUsd.toFixed(6)),
+    status: "ok",
+    note: `bulk-create images=${inputs.length} prompt=${parsed.usage.promptTokens} completion=${parsed.usage.completionTokens}`,
+  });
+
+  // Apply parsed fields. Only OVERWRITE on a non-null parsed value —
+  // a model that couldn't read a field returns null for it, and we
+  // don't want to clobber the DB default with that. ai_filled_fields
+  // records exactly what we set so the operator can scan ⚠️/✅ on
+  // /admin and trust the badge.
+  const r = parsed.result;
+  const updates: ProductUpdate = {};
+  const filled: string[] = [];
+  if (r.name && r.name.trim()) {
+    updates.name = r.name.trim();
+    filled.push("name");
+  }
+  if (r.brand && r.brand.trim()) {
+    updates.brand = r.brand.trim();
+    filled.push("brand");
+  }
+  if (r.sku_id && r.sku_id.trim()) {
+    updates.sku_id = r.sku_id.trim();
+    filled.push("sku_id");
+  }
+  if (r.description && r.description.trim()) {
+    updates.description = r.description.trim();
+    filled.push("description");
+  }
+  if (
+    r.dimensions_mm &&
+    [r.dimensions_mm.length, r.dimensions_mm.width, r.dimensions_mm.height].some(
+      (v) => typeof v === "number" && v > 0,
+    )
+  ) {
+    const dims: Record<string, number> = {};
+    if (
+      typeof r.dimensions_mm.length === "number" &&
+      r.dimensions_mm.length > 0
+    ) {
+      dims.length = r.dimensions_mm.length;
+    }
+    if (
+      typeof r.dimensions_mm.width === "number" &&
+      r.dimensions_mm.width > 0
+    ) {
+      dims.width = r.dimensions_mm.width;
+    }
+    if (
+      typeof r.dimensions_mm.height === "number" &&
+      r.dimensions_mm.height > 0
+    ) {
+      dims.height = r.dimensions_mm.height;
+    }
+    updates.dimensions_mm = dims;
+    filled.push("dimensions_mm");
+  }
+  if (typeof r.weight_kg === "number" && r.weight_kg > 0) {
+    updates.weight_kg = r.weight_kg;
+    filled.push("weight_kg");
+  }
+
+  if (filled.length === 0) return;
+
+  updates.ai_filled_fields = filled;
+  await supabase.from("products").update(updates).eq("id", d.productId);
+
+  // Re-revalidate so the operator's list page reflects the AI fill
+  // once the async tail finishes.
+  revalidatePath("/admin");
 }
