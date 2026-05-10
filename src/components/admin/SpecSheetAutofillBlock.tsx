@@ -31,10 +31,15 @@
 
 import { useState, useTransition } from "react";
 import {
-  parseSpecSheetAction,
-  type ParseSpecSheetResult,
+  parseSpecSheetMergedAction,
+  type ParseImagesMergedResult,
 } from "@/app/admin/(dashboard)/products/actions";
 import { emitAutofillApply } from "@/lib/ai/autofill-bus";
+
+/** Wave 6 — match lib/ai/parse-spec.ts MERGED_PARSE_MAX_IMAGES.
+ *  Mirrored client-side so we can render the cap in the UI without
+ *  importing a server-only module. */
+const MERGED_PARSE_MAX_IMAGES = 5;
 
 type SuggestionRow = {
   /** Field key — also the FormData input name in ProductForm. */
@@ -83,8 +88,11 @@ export default function SpecSheetAutofillBlock({
   formId,
   candidates,
 }: Props) {
-  const [pickedId, setPickedId] = useState<string | null>(
-    candidates[0]?.id ?? null,
+  // Wave 6 — multi-select. Default: every candidate is picked so
+  // the operator can hit Parse on first load if they want all
+  // feed_to_ai images merged. They can de-select to narrow.
+  const [pickedIds, setPickedIds] = useState<Set<string>>(
+    () => new Set(candidates.slice(0, MERGED_PARSE_MAX_IMAGES).map((c) => c.id)),
   );
   const [pending, startTransition] = useTransition();
   const [suggestions, setSuggestions] = useState<SuggestionRow[] | null>(null);
@@ -93,21 +101,32 @@ export default function SpecSheetAutofillBlock({
   const [notes, setNotes] = useState<string>("");
   const [appliedAt, setAppliedAt] = useState<number | null>(null);
 
-  const disabled = !productId || pending || !pickedId;
+  const pickedCount = pickedIds.size;
+  const disabled = !productId || pending || pickedCount === 0;
+
+  function togglePick(id: string) {
+    setPickedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else if (next.size < MERGED_PARSE_MAX_IMAGES) next.add(id);
+      return next;
+    });
+  }
 
   function onParse() {
-    if (!productId || !pickedId) return;
+    if (!productId || pickedCount === 0) return;
     setError(null);
     setSuggestions(null);
     setCostUsd(null);
     setNotes("");
     setAppliedAt(null);
     startTransition(async () => {
-      const fd = new FormData();
-      fd.set("imageId", pickedId);
-      let res: ParseSpecSheetResult;
+      let res: ParseImagesMergedResult;
       try {
-        res = await parseSpecSheetAction(productId, fd);
+        res = await parseSpecSheetMergedAction(
+          productId,
+          [...pickedIds],
+        );
       } catch (e) {
         setError(
           `request failed: ${e instanceof Error ? e.message : String(e)}`,
@@ -250,27 +269,32 @@ export default function SpecSheetAutofillBlock({
       ) : (
         <div className="flex flex-col gap-2">
           <div className="text-[11px] font-medium text-neutral-700">
-            Pick an image:
+            Pick images to merge into one parse (max{" "}
+            {MERGED_PARSE_MAX_IMAGES}):
           </div>
           <div
             className="grid grid-cols-3 gap-2 sm:grid-cols-5"
-            role="radiogroup"
-            aria-label="Image to parse"
+            role="group"
+            aria-label="Images to parse"
           >
             {candidates.map((c) => {
-              const selected = pickedId === c.id;
+              const selected = pickedIds.has(c.id);
+              const atCap =
+                !selected && pickedIds.size >= MERGED_PARSE_MAX_IMAGES;
               return (
                 <button
                   key={c.id}
                   type="button"
-                  role="radio"
+                  role="checkbox"
                   aria-checked={selected}
-                  onClick={() => setPickedId(c.id)}
+                  disabled={atCap}
+                  onClick={() => togglePick(c.id)}
+                  title={atCap ? `cap of ${MERGED_PARSE_MAX_IMAGES} reached` : undefined}
                   className={`relative aspect-square overflow-hidden rounded-md border-2 bg-neutral-50 transition ${
                     selected
                       ? "border-violet-500 ring-1 ring-violet-200"
                       : "border-neutral-200 hover:border-neutral-400"
-                  }`}
+                  } ${atCap ? "cursor-not-allowed opacity-40" : ""}`}
                 >
                   {c.previewUrl ? (
                     // eslint-disable-next-line @next/next/no-img-element
@@ -285,6 +309,18 @@ export default function SpecSheetAutofillBlock({
                       no preview
                     </div>
                   )}
+                  {/* Selected-state checkmark badge — top-right.
+                      Visible only on selected. The check icon makes
+                      "is this picked" obvious at a glance, the violet
+                      ring is reinforcement. */}
+                  {selected && (
+                    <span
+                      aria-hidden
+                      className="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full bg-violet-600 text-[11px] font-bold text-white"
+                    >
+                      ✓
+                    </span>
+                  )}
                 </button>
               );
             })}
@@ -295,7 +331,9 @@ export default function SpecSheetAutofillBlock({
             disabled={disabled}
             className="self-start rounded-md border border-violet-300 bg-violet-100 px-3 py-1.5 text-xs font-medium text-violet-800 transition hover:border-violet-500 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {pending ? "Parsing…" : "Parse selected image"}
+            {pending
+              ? `Parsing ${pickedCount} image${pickedCount === 1 ? "" : "s"}…`
+              : `Parse selected images (${pickedCount})`}
           </button>
         </div>
       )}

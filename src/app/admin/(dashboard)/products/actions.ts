@@ -10,7 +10,12 @@ import {
   thumbnailPublicUrl,
 } from "@/lib/storage";
 import { inferProductFields } from "@/lib/ai/infer";
-import { parseSpecSheet, type SpecSheetParse } from "@/lib/ai/parse-spec";
+import {
+  parseSpecSheet,
+  parseImagesMerged,
+  MERGED_PARSE_MAX_IMAGES,
+  type SpecSheetParse,
+} from "@/lib/ai/parse-spec";
 import { requireAdmin } from "@/lib/auth/require-admin";
 import { invalidatePublishedCountsCache } from "@/lib/products";
 import { runRembgForImage } from "@/lib/rembg/pipeline";
@@ -1521,6 +1526,131 @@ export async function parseSpecSheetAction(
     ok: true,
     result: parsed.result,
     specImagePath: img.cutout_image_url ?? img.raw_image_url ?? "",
+    estCostUsd: parsed.usage.estCostUsd,
+  };
+}
+
+// ────────────────────────────────────────────────────────────
+// Wave 6 — multi-image merged parse
+// ────────────────────────────────────────────────────────────
+
+export type ParseImagesMergedResult =
+  | {
+      ok: true;
+      result: SpecSheetParse;
+      imagesParsed: number;
+      estCostUsd: number;
+    }
+  | { ok: false; error: string };
+
+/** Wave 6 — operator picks 1–5 of the product's feed_to_ai images,
+ *  the action sends them all to GPT-4o in one call. Used by the
+ *  single-product Auto-fill block (multi-select) AND by Wave 6's
+ *  bulkCreateProducts post-create AI fill.
+ *
+ *  Differences vs. parseSpecSheetAction:
+ *   • Accepts an array of imageIds, not one.
+ *   • Logs ONE api_usage row tagged 'gpt4o_vision_spec_merged' with
+ *     all imageIds in the note field (the column is 1-to-1 on
+ *     product_image_id, so we leave it null and put the list in
+ *     note instead).
+ *   • Uses public cutout_image_url when present (no signing round-
+ *     trip; OpenAI fetches directly). Falls back to short-lived
+ *     signed URLs for raw-only rows. */
+export async function parseSpecSheetMergedAction(
+  productId: string,
+  imageIds: string[],
+): Promise<ParseImagesMergedResult> {
+  await requireAdmin();
+  if (!productId || !UUID_RE.test(productId)) {
+    return { ok: false, error: "invalid product id" };
+  }
+  if (imageIds.length === 0) {
+    return { ok: false, error: "pick at least one image" };
+  }
+  if (imageIds.length > MERGED_PARSE_MAX_IMAGES) {
+    return {
+      ok: false,
+      error: `pick up to ${MERGED_PARSE_MAX_IMAGES} images per call`,
+    };
+  }
+  for (const id of imageIds) {
+    if (!UUID_RE.test(id)) {
+      return { ok: false, error: "invalid image id" };
+    }
+  }
+
+  const supabase = createServiceRoleClient();
+  const { data: imgs, error: imgErr } = await supabase
+    .from("product_images")
+    .select("id, product_id, raw_image_url, cutout_image_url, feed_to_ai")
+    .in("id", imageIds);
+  if (imgErr) {
+    return { ok: false, error: `db error: ${imgErr.message}` };
+  }
+  if (!imgs || imgs.length !== imageIds.length) {
+    return { ok: false, error: "one or more images not found" };
+  }
+  for (const img of imgs) {
+    if (img.product_id !== productId) {
+      return {
+        ok: false,
+        error: "an image belongs to a different product",
+      };
+    }
+    if (!img.feed_to_ai) {
+      return {
+        ok: false,
+        error:
+          "an image has Feed to AI parser turned off — toggle it on first",
+      };
+    }
+  }
+
+  // Resolve URLs for the GPT call. Prefer public cutout URL; fall
+  // back to a short-lived signed URL for raw-only rows.
+  const inputs: { url: string }[] = [];
+  for (const img of imgs) {
+    if (img.cutout_image_url) {
+      inputs.push({ url: img.cutout_image_url });
+    } else if (img.raw_image_url) {
+      try {
+        const signed = await getSignedRawUrl(img.raw_image_url);
+        inputs.push({ url: signed });
+      } catch (e) {
+        return {
+          ok: false,
+          error: `signed-url failed: ${e instanceof Error ? e.message : String(e)}`,
+        };
+      }
+    } else {
+      return { ok: false, error: "an image has no fetchable URL" };
+    }
+  }
+
+  let parsed: Awaited<ReturnType<typeof parseImagesMerged>>;
+  try {
+    parsed = await parseImagesMerged(inputs);
+  } catch (e) {
+    return {
+      ok: false,
+      error: `gpt-4o call failed: ${e instanceof Error ? e.message : String(e)}`,
+    };
+  }
+
+  await supabase.from("api_usage").insert({
+    service: "gpt4o_vision_spec_merged",
+    product_id: productId,
+    product_image_id: null, // multi — not tied to a single image
+    cost_usd: Number(parsed.usage.estCostUsd.toFixed(6)),
+    status: "ok",
+    note: `images=${imageIds.length} prompt=${parsed.usage.promptTokens} completion=${parsed.usage.completionTokens} ids=${imageIds.join(",")}`,
+  });
+
+  return {
+    ok: true,
+    result: parsed.result,
+    imagesParsed: parsed.imageCount,
     estCostUsd: parsed.usage.estCostUsd,
   };
 }

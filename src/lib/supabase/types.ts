@@ -442,6 +442,10 @@ export const API_SERVICES = [
    *  operator-driven, not auto-fired, so a runaway loop is
    *  implausible). */
   "gpt4o_vision_spec",
+  /** Wave 6 — merged multi-image parse (1 call, 1-5 images). Same
+   *  cost-per-token as the single variant; we tag separately so the
+   *  api_usage rollup can split single vs. merged calls. */
+  "gpt4o_vision_spec_merged",
 ] as const;
 export type ApiService = (typeof API_SERVICES)[number];
 

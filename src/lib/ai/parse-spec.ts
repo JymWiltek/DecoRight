@@ -188,3 +188,116 @@ export async function parseSpecSheet(
     usage: { promptTokens, completionTokens, estCostUsd },
   };
 }
+
+/** Wave 6 — bound on how many images go into one merged GPT-4o call.
+ *  Per Jym's spec. Each image consumes ~700-1500 prompt tokens at
+ *  high detail; 5 images puts us in the 4-8k token range, comfortably
+ *  inside gpt-4o's 128k window without ballooning per-call cost. */
+export const MERGED_PARSE_MAX_IMAGES = 5;
+
+/** Wave 6 — merged multi-image parse result. Same SpecSheetParse
+ *  shape (every field nullable). The notes field becomes especially
+ *  useful here: it can flag conflicts between images ("image 2 says
+ *  680mm but image 4 says 685mm"). */
+export type MergedParseInput = {
+  /** Public/signed URL OR base64 data URL. The OpenAI client accepts
+   *  either. We prefer real URLs to avoid the b64 round-trip in our
+   *  process; the route-side caller can opt for data: URLs when the
+   *  bytes are easier to fetch server-side. */
+  url: string;
+  /** Optional MIME type — only used when constructing data URLs.
+   *  Real http(s) URLs ignore this. */
+  mimeType?: string;
+};
+
+const MERGED_SYSTEM_PROMPT = `${SYSTEM_PROMPT}
+
+This time you are looking at MULTIPLE images of the SAME product (a brand spec sheet, a manufacturer product page screenshot, photos of the actual installed product, even close-ups of dimension diagrams). Merge the information across all images:
+- If image A shows a dimension and image B shows the same dimension, prefer the more legible one and use its value.
+- If two images conflict on a value, pick the one most likely to be a brand spec (datasheet > photo) and note the conflict in notes.
+- If the SKU appears on multiple images, use the verbatim string.
+- For descriptions, weave together the factual specs you can see across images.
+- A photo of the installed product without text on it adds zero information — don't penalize it; just don't try to read fields off it.
+`;
+
+/**
+ * Wave 6 — multi-image merged parse. Sends multiple images to GPT-4o
+ * as a single user message and asks for one merged result.
+ *
+ * Use this when the operator has photographed a brand spec sheet from
+ * multiple angles, OR has separate diagrams for dimensions vs.
+ * description vs. SKU label. ONE api_usage row is logged for the
+ * whole call (the caller writes it; this module is pure compute).
+ *
+ * Throws on transport / decode failure. Caller surfaces a friendly
+ * error and does NOT persist anything on throw.
+ */
+export async function parseImagesMerged(
+  inputs: MergedParseInput[],
+): Promise<{
+  result: SpecSheetParse;
+  usage: { promptTokens: number; completionTokens: number; estCostUsd: number };
+  imageCount: number;
+}> {
+  if (inputs.length === 0) {
+    throw new Error("parseImagesMerged: at least 1 image required");
+  }
+  if (inputs.length > MERGED_PARSE_MAX_IMAGES) {
+    throw new Error(
+      `parseImagesMerged: at most ${MERGED_PARSE_MAX_IMAGES} images per call (got ${inputs.length})`,
+    );
+  }
+  const openai = getOpenAI();
+  const userContent: Array<
+    | { type: "text"; text: string }
+    | { type: "image_url"; image_url: { url: string; detail: "high" | "low" } }
+  > = [
+    {
+      type: "text",
+      text: `Extract product spec data from these ${inputs.length} image${inputs.length === 1 ? "" : "s"} of one product:`,
+    },
+  ];
+  for (const inp of inputs) {
+    userContent.push({
+      type: "image_url",
+      image_url: { url: inp.url, detail: "high" },
+    });
+  }
+
+  const completion = await openai.chat.completions.create({
+    model: "gpt-4o",
+    temperature: 0,
+    messages: [
+      { role: "system", content: MERGED_SYSTEM_PROMPT },
+      { role: "user", content: userContent },
+    ],
+    response_format: {
+      type: "json_schema",
+      json_schema: {
+        name: "spec_sheet_parse",
+        strict: true,
+        schema: RESPONSE_SCHEMA,
+      },
+    },
+  });
+
+  const text = completion.choices[0]?.message?.content ?? "{}";
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch (e) {
+    throw new Error(
+      `parseImagesMerged: GPT returned non-JSON: ${text.slice(0, 200)} (${e instanceof Error ? e.message : String(e)})`,
+    );
+  }
+  const result = parsed as SpecSheetParse;
+  const promptTokens = completion.usage?.prompt_tokens ?? 0;
+  const completionTokens = completion.usage?.completion_tokens ?? 0;
+  const estCostUsd =
+    (promptTokens / 1_000_000) * 2.5 + (completionTokens / 1_000_000) * 10;
+  return {
+    result,
+    usage: { promptTokens, completionTokens, estCostUsd },
+    imageCount: inputs.length,
+  };
+}
