@@ -59,3 +59,6 @@ next-env.d.ts
 /scripts/test-spec-parse.ts
 /scripts/test-c3.mjs
 /scripts/test-w6c1.ts
+/scripts/test-w6c1-ui.mjs
+/scripts/test-w6c2.mjs
+/scripts/test-w6c2-click.mjs

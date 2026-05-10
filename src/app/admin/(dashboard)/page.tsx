@@ -20,6 +20,51 @@ import BulkBar from "@/components/admin/BulkBar";
 import SelectAllCheckbox from "@/components/admin/SelectAllCheckbox";
 import RetryRembgInlineButton from "@/components/admin/RetryRembgInlineButton";
 import ThumbnailSwapButton from "@/components/admin/ThumbnailSwapButton";
+import PublishButton from "@/components/admin/PublishButton";
+
+// Wave 6 · Commit 2 — "AI completeness" column on the admin list.
+//
+// Five fields the operator (and the AI auto-fill) routinely leave
+// empty on freshly-created drafts: name, sku_id, brand, dimensions,
+// description. A draft missing any of these isn't shippable — the
+// product detail page will render with em-dashes where text should
+// live, and search filters can't see it (sku/brand are searchable).
+// The list shows ✅ when all five are filled and ⚠️ <missing list>
+// otherwise so the operator can scan a long catalog for half-finished
+// rows. "Untitled" is treated as missing — that's what /admin/products/new
+// inserts when the operator clicks +New without typing anything.
+const AI_COMPLETENESS_FIELDS = [
+  "name",
+  "sku_id",
+  "brand",
+  "dimensions",
+  "description",
+] as const;
+type AiCompletenessField = (typeof AI_COMPLETENESS_FIELDS)[number];
+
+function aiCompletenessMissing(
+  p: import("@/lib/supabase/types").ProductRow,
+): AiCompletenessField[] {
+  const missing: AiCompletenessField[] = [];
+  if (!p.name || !p.name.trim() || p.name.trim() === "Untitled") {
+    missing.push("name");
+  }
+  if (!p.sku_id || !p.sku_id.trim()) missing.push("sku_id");
+  if (!p.brand || !p.brand.trim()) missing.push("brand");
+  // dimensions_mm is { length?, width?, height? } — call it filled
+  // when at least one axis has a positive number. An empty {} or all-
+  // zero values count as missing because the spec block on the product
+  // detail page wouldn't print anything.
+  const d = p.dimensions_mm;
+  const dimsFilled =
+    d != null &&
+    [d.length, d.width, d.height].some(
+      (v) => typeof v === "number" && v > 0,
+    );
+  if (!dimsFilled) missing.push("dimensions");
+  if (!p.description || !p.description.trim()) missing.push("description");
+  return missing;
+}
 
 export const dynamic = "force-dynamic";
 
@@ -255,15 +300,17 @@ export default async function AdminProductsPage({
           : "bg-emerald-50 text-emerald-700";
         return (
           <div className={`mb-4 rounded-md px-4 py-2 text-sm ${tone}`}>
-            {sp.err
-              ? `Error (${sp.err}): ${sp.msg ?? ""}`
-              : sp.bulk_deleted
-                ? `Deleted ${sp.bulk_deleted} product(s).`
-                : sp.bulk
-                  ? `Updated ${sp.bulk} product(s).`
-                  : sp.deleted
-                    ? `Deleted.`
-                    : null}
+            {sp.err === "publish_blocked"
+              ? `Publish blocked: ${reasonLabel}. Open Edit to fix.`
+              : sp.err
+                ? `Error (${sp.err}): ${sp.msg ?? ""}`
+                : sp.bulk_deleted
+                  ? `Deleted ${sp.bulk_deleted} product(s).`
+                  : sp.bulk
+                    ? `Updated ${sp.bulk} product(s).`
+                    : sp.deleted
+                      ? `Deleted.`
+                      : null}
             {!sp.err && blocked > 0 && (
               <span className="ml-2 rounded-md bg-amber-100 px-2 py-0.5 text-xs text-amber-800">
                 {blocked} skipped ({reasonLabel})
@@ -352,6 +399,7 @@ export default async function AdminProductsPage({
                     preserveParams={preserve}
                   />
                 </th>
+                <th className="px-4 py-3">SKU</th>
                 <th className="px-4 py-3">Item / Subtype</th>
                 <th className="px-4 py-3">
                   <SortableHeader
@@ -369,6 +417,8 @@ export default async function AdminProductsPage({
                     preserveParams={preserve}
                   />
                 </th>
+                <th className="px-4 py-3">3D</th>
+                <th className="px-4 py-3">AI</th>
                 <th className="px-4 py-3">3D / Imgs</th>
                 <th className="px-4 py-3">
                   <SortableHeader
@@ -424,6 +474,15 @@ export default async function AdminProductsPage({
                         </div>
                       </div>
                     </td>
+                    <td className="px-4 py-3 align-middle text-xs">
+                      {p.sku_id ? (
+                        <span className="font-mono text-neutral-700">
+                          {p.sku_id}
+                        </span>
+                      ) : (
+                        <span className="text-neutral-400">—</span>
+                      )}
+                    </td>
                     <td className="px-4 py-3 align-middle">
                       <div className="flex flex-col gap-0.5">
                         <ItemTypeCell
@@ -443,6 +502,40 @@ export default async function AdminProductsPage({
                     </td>
                     <td className="px-4 py-3 align-middle">
                       <StatusCell productId={p.id} current={p.status} />
+                    </td>
+                    <td className="px-4 py-3 align-middle text-center text-sm">
+                      {p.glb_url ? (
+                        <span title="GLB attached" aria-label="3D model present">
+                          ✅
+                        </span>
+                      ) : (
+                        <span title="No GLB" aria-label="No 3D model">
+                          ❌
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 align-middle text-xs">
+                      {(() => {
+                        const missing = aiCompletenessMissing(p);
+                        if (missing.length === 0) {
+                          return (
+                            <span title="All key fields filled" aria-label="AI complete">
+                              ✅
+                            </span>
+                          );
+                        }
+                        return (
+                          <span
+                            className="inline-flex items-center gap-1 text-amber-700"
+                            title={`Missing: ${missing.join(", ")}`}
+                          >
+                            <span aria-hidden>⚠️</span>
+                            <span className="text-[11px] text-amber-800">
+                              {missing.join(", ")}
+                            </span>
+                          </span>
+                        );
+                      })()}
                     </td>
                     <td className="px-4 py-3 align-middle text-xs text-neutral-500">
                       <div>
@@ -502,12 +595,17 @@ export default async function AdminProductsPage({
                       {new Date(p.updated_at).toLocaleString("en-MY")}
                     </td>
                     <td className="px-4 py-3 text-right align-middle">
-                      <Link
-                        href={`/admin/products/${p.id}/edit`}
-                        className="text-sm text-neutral-700 hover:text-black"
-                      >
-                        Edit
-                      </Link>
+                      <div className="flex items-center justify-end gap-2">
+                        {p.status === "draft" && (
+                          <PublishButton productId={p.id} />
+                        )}
+                        <Link
+                          href={`/admin/products/${p.id}/edit`}
+                          className="text-sm text-neutral-700 hover:text-black"
+                        >
+                          Edit
+                        </Link>
+                      </div>
                     </td>
                   </tr>
                 );
@@ -515,7 +613,7 @@ export default async function AdminProductsPage({
               {products.length === 0 && (
                 <tr>
                   <td
-                    colSpan={8}
+                    colSpan={11}
                     className="px-4 py-12 text-center text-sm text-neutral-500"
                   >
                     {sp.q || statusFilter ? (
