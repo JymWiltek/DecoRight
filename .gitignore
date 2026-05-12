@@ -64,3 +64,5 @@ next-env.d.ts
 /scripts/test-w6c2-click.mjs
 /scripts/test-w6c4.mjs
 /scripts/test-w6c5.mjs
+/scripts/test-w6-prod.mjs
+/scripts/test-w6-drag.mjs
