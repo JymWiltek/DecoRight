@@ -422,17 +422,23 @@ export default async function AdminProductsPage({
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <Link
-            href="/admin/products/bulk-create"
-            className="rounded-md border border-neutral-300 bg-white px-4 py-2 text-sm font-medium text-neutral-700 hover:border-neutral-500"
-          >
-            + Bulk create
-          </Link>
+          {/* Wave 7 · Commit 5 — bulk is now the primary flow.
+              Single-product create stays as a secondary option for
+              the rare "I only have ONE thing to add" case. Order
+              flipped (single on LEFT, bulk on RIGHT) so the heavier
+              primary button anchors the right edge where the eye
+              lands after scanning the header. */}
           <Link
             href="/admin/products/new"
-            className="rounded-md bg-black px-4 py-2 text-sm font-medium text-white hover:bg-neutral-800"
+            className="rounded-md border border-neutral-300 bg-white px-4 py-2 text-sm font-medium text-neutral-700 hover:border-neutral-500"
           >
             + New product
+          </Link>
+          <Link
+            href="/admin/products/bulk-create"
+            className="rounded-md bg-black px-4 py-2 text-sm font-medium text-white hover:bg-neutral-800"
+          >
+            + Bulk create
           </Link>
         </div>
       </div>
