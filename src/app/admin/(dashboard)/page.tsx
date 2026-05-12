@@ -42,6 +42,100 @@ const AI_COMPLETENESS_FIELDS = [
 ] as const;
 type AiCompletenessField = (typeof AI_COMPLETENESS_FIELDS)[number];
 
+// Wave 7 · Commit 3 — chip list helper for Rooms / Style columns.
+// Renders the first two slug labels and a "+N more" tail when more
+// exist. Empty input renders an em-dash. Pure function; called from
+// the server-component render path, no client JS shipped.
+function SlugChips({
+  slugs,
+  labelMap,
+}: {
+  slugs: string[];
+  labelMap: Record<string, string>;
+}) {
+  if (!slugs || slugs.length === 0) {
+    return <span className="text-neutral-400 text-xs">—</span>;
+  }
+  const visible = slugs.slice(0, 2);
+  const rest = slugs.length - visible.length;
+  return (
+    <div className="flex flex-wrap items-center gap-1">
+      {visible.map((s) => (
+        <span
+          key={s}
+          className="inline-block rounded-full bg-neutral-100 px-2 py-0.5 text-[11px] text-neutral-700"
+        >
+          {labelMap[s] ?? s}
+        </span>
+      ))}
+      {rest > 0 && (
+        <span
+          className="text-[11px] text-neutral-500"
+          title={slugs.slice(2).map((s) => labelMap[s] ?? s).join(", ")}
+        >
+          +{rest} more
+        </span>
+      )}
+    </div>
+  );
+}
+
+// Wave 7 · Commit 3 — Missing column cell.
+// Two kinds of "missing" info, both stored in products.missing_fields
+// (mig 0039) by the V2 auto-publish tail:
+//   • plain field names (e.g. "name", "dimensions_mm") — AI couldn't
+//     fill these, operator must.
+//   • "<field>_low_confidence" pseudo-keys — AI filled but flagged
+//     low; operator should verify before publish.
+//   • "publish_gate_<reason>" — non-AI gate failure (rooms / cutouts
+//     / glb).
+// Published rows render an em-dash; nothing to do.
+function MissingCell({
+  product,
+}: {
+  product: import("@/lib/supabase/types").ProductRow;
+}) {
+  if (product.status === "published") {
+    return <span className="text-neutral-400 text-xs">—</span>;
+  }
+  const arr = product.missing_fields ?? [];
+  if (arr.length === 0) {
+    return <span className="text-neutral-400 text-xs">—</span>;
+  }
+  const missing: string[] = [];
+  const lowConf: string[] = [];
+  const gates: string[] = [];
+  for (const key of arr) {
+    if (key.endsWith("_low_confidence")) {
+      lowConf.push(key.replace(/_low_confidence$/, ""));
+    } else if (key.startsWith("publish_gate_")) {
+      gates.push(key.replace(/^publish_gate_/, ""));
+    } else {
+      missing.push(key);
+    }
+  }
+  return (
+    <div className="flex flex-col gap-0.5 text-[11px]">
+      {missing.length > 0 && (
+        <div className="text-rose-700">
+          <span className="font-semibold">Missing:</span> {missing.join(", ")}
+        </div>
+      )}
+      {lowConf.length > 0 && (
+        <div className="text-amber-700">
+          <span className="font-semibold">Low confidence:</span>{" "}
+          {lowConf.join(", ")}
+        </div>
+      )}
+      {gates.length > 0 && (
+        <div className="text-rose-700">
+          <span className="font-semibold">Gate:</span> {gates.join(", ")}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function aiCompletenessMissing(
   p: import("@/lib/supabase/types").ProductRow,
 ): AiCompletenessField[] {
@@ -184,6 +278,11 @@ export default async function AdminProductsPage({
     slug: r.slug,
     label: r.label_en,
   }));
+  // Wave 7 · Commit 3 — label maps for the new Rooms / Style columns.
+  // Both render as chip lists (first 2 + "+N more") so the label needs
+  // to be available without a per-row taxonomy lookup.
+  const roomLabelMap = labelMap(taxonomy.rooms, "en");
+  const styleLabelMap = labelMap(taxonomy.styles, "en");
 
   // The Item Type filter dropdown wants the full tri-lingual rows so
   // each chip can show EN/ZH/MS. Stable alpha order by label_en keeps
@@ -408,7 +507,10 @@ export default async function AdminProductsPage({
                   />
                 </th>
                 <th className="px-4 py-3">SKU</th>
+                <th className="px-4 py-3">Brand</th>
                 <th className="px-4 py-3">Item / Subtype</th>
+                <th className="px-4 py-3">Rooms</th>
+                <th className="px-4 py-3">Style</th>
                 <th className="px-4 py-3">
                   <SortableHeader
                     label="Price"
@@ -427,6 +529,7 @@ export default async function AdminProductsPage({
                 </th>
                 <th className="px-4 py-3">3D</th>
                 <th className="px-4 py-3">AI</th>
+                <th className="px-4 py-3">Missing</th>
                 <th className="px-4 py-3">3D / Imgs</th>
                 <th className="px-4 py-3">
                   <SortableHeader
@@ -467,18 +570,13 @@ export default async function AdminProductsPage({
                           productId={p.id}
                           currentUrl={p.thumbnail_url}
                         />
-                        <div>
-                          <div className="font-medium text-neutral-900">
-                            <Link
-                              href={`/admin/products/${p.id}/edit`}
-                              className="hover:underline"
-                            >
-                              {p.name}
-                            </Link>
-                          </div>
-                          <div className="text-xs text-neutral-500">
-                            {p.brand ?? "—"}
-                          </div>
+                        <div className="font-medium text-neutral-900">
+                          <Link
+                            href={`/admin/products/${p.id}/edit`}
+                            className="hover:underline"
+                          >
+                            {p.name}
+                          </Link>
                         </div>
                       </div>
                     </td>
@@ -487,6 +585,13 @@ export default async function AdminProductsPage({
                         <span className="font-mono text-neutral-700">
                           {p.sku_id}
                         </span>
+                      ) : (
+                        <span className="text-neutral-400">—</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 align-middle text-xs">
+                      {p.brand ? (
+                        <span className="text-neutral-700">{p.brand}</span>
                       ) : (
                         <span className="text-neutral-400">—</span>
                       )}
@@ -504,6 +609,18 @@ export default async function AdminProductsPage({
                           </span>
                         )}
                       </div>
+                    </td>
+                    <td className="px-4 py-3 align-middle">
+                      <SlugChips
+                        slugs={p.room_slugs ?? []}
+                        labelMap={roomLabelMap}
+                      />
+                    </td>
+                    <td className="px-4 py-3 align-middle">
+                      <SlugChips
+                        slugs={p.styles ?? []}
+                        labelMap={styleLabelMap}
+                      />
                     </td>
                     <td className="px-4 py-3 align-middle">
                       <PriceCell productId={p.id} current={p.price_myr} />
@@ -544,6 +661,9 @@ export default async function AdminProductsPage({
                           </span>
                         );
                       })()}
+                    </td>
+                    <td className="px-4 py-3 align-middle">
+                      <MissingCell product={p} />
                     </td>
                     <td className="px-4 py-3 align-middle text-xs text-neutral-500">
                       <div>
@@ -621,7 +741,7 @@ export default async function AdminProductsPage({
               {products.length === 0 && (
                 <tr>
                   <td
-                    colSpan={11}
+                    colSpan={15}
                     className="px-4 py-12 text-center text-sm text-neutral-500"
                   >
                     {sp.q || statusFilter ? (
