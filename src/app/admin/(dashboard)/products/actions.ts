@@ -14,8 +14,13 @@ import { inferProductFields } from "@/lib/ai/infer";
 import {
   parseSpecSheet,
   parseImagesMerged,
+  parseImagesMergedV2,
+  sanitizeV2Slugs,
   MERGED_PARSE_MAX_IMAGES,
   type SpecSheetParse,
+  type SpecSheetParseV2,
+  type TaxonomyHints,
+  type Confidence,
 } from "@/lib/ai/parse-spec";
 import { requireAdmin } from "@/lib/auth/require-admin";
 import { invalidatePublishedCountsCache } from "@/lib/products";
@@ -1854,11 +1859,47 @@ export async function bulkCreateProducts(
   };
 }
 
-/** Per-product async tail. Runs rembg AUTO on each image, then merges
- *  the cutout URLs into one parseImagesMerged call, applies the parsed
- *  fields back to the product row, and bumps ai_filled_fields. Errors
- *  log + return — they don't propagate so a single bad draft doesn't
- *  poison the rest of the batch. */
+/** Load the taxonomy slug dictionary the V2 parser needs. Uses the
+ *  service-role client (no RLS surprises) and picks only the columns
+ *  the V2 prompt renders. */
+async function loadTaxonomyHints(): Promise<TaxonomyHints> {
+  const supabase = createServiceRoleClient();
+  const [it, sub, rm, st, mt, co] = await Promise.all([
+    supabase.from("item_types").select("slug,label_en"),
+    supabase.from("item_subtypes").select("slug,label_en,item_type_slug"),
+    supabase.from("rooms").select("slug,label_en"),
+    supabase.from("styles").select("slug,label_en"),
+    supabase.from("materials").select("slug,label_en"),
+    supabase.from("colors").select("slug,label_en"),
+  ]);
+  return {
+    itemTypes: it.data ?? [],
+    itemSubtypes: sub.data ?? [],
+    rooms: rm.data ?? [],
+    styles: st.data ?? [],
+    materials: mt.data ?? [],
+    colors: co.data ?? [],
+  };
+}
+
+/** Wave 7 · Commit 2 — per-product async tail. Runs rembg AUTO, then
+ *  V2 parse + apply ALL fields (scalars + taxonomy), then attempts
+ *  confidence-gated auto-publish.
+ *
+ *  Auto-publish requires:
+ *    1. name + item_type + at least 1 room  (the V2-only "filled enough"
+ *       check — Wave 6's processDraftAsync was scalar-only)
+ *    2. zero fields with confidence='low' across the fields the V2
+ *       parser was responsible for filling
+ *    3. existing 3-gate Publish check (rooms + cutout_approved >= 1 +
+ *       glb_url) — reuses checkPublishGates
+ *
+ *  Any of these failing → product stays at status='draft' AND
+ *  missing_fields is populated so the /admin list "Missing: …" line
+ *  tells the operator exactly what to add.
+ *
+ *  Errors log + return — they don't propagate so a single bad draft
+ *  doesn't poison the rest of the batch. */
 async function processDraftAsync(d: BulkCreateDraft): Promise<void> {
   const supabase = createServiceRoleClient();
 
@@ -1896,89 +1937,217 @@ async function processDraftAsync(d: BulkCreateDraft): Promise<void> {
   }
   if (inputs.length === 0) return;
 
-  let parsed: Awaited<ReturnType<typeof parseImagesMerged>>;
+  let taxonomy: TaxonomyHints;
   try {
-    parsed = await parseImagesMerged(inputs);
+    taxonomy = await loadTaxonomyHints();
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
     console.error(
-      `[bulkCreateProducts] parse for ${d.productId} failed: ${msg}`,
+      `[bulkCreateProducts] taxonomy load failed for ${d.productId}: ${e instanceof Error ? e.message : String(e)}`,
     );
     return;
   }
 
+  let parsed: Awaited<ReturnType<typeof parseImagesMergedV2>>;
+  try {
+    parsed = await parseImagesMergedV2(inputs, taxonomy);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error(
+      `[bulkCreateProducts] V2 parse for ${d.productId} failed: ${msg}`,
+    );
+    return;
+  }
+
+  // Drop hallucinated slugs (defense-in-depth — strict-mode schema
+  // already constrains shape, but the prompt could in principle leak
+  // a slug not in the allowed set).
+  const sanitized = sanitizeV2Slugs(parsed.result, taxonomy);
+
   await supabase.from("api_usage").insert({
-    service: "gpt4o_vision_spec_merged",
+    service: "gpt4o_vision_spec_v2",
     product_id: d.productId,
     product_image_id: null,
     cost_usd: Number(parsed.usage.estCostUsd.toFixed(6)),
     status: "ok",
-    note: `bulk-create images=${inputs.length} prompt=${parsed.usage.promptTokens} completion=${parsed.usage.completionTokens}`,
+    note: `bulk-v2 images=${inputs.length} prompt=${parsed.usage.promptTokens} completion=${parsed.usage.completionTokens}`,
   });
 
   // Apply parsed fields. Only OVERWRITE on a non-null parsed value —
-  // a model that couldn't read a field returns null for it, and we
-  // don't want to clobber the DB default with that. ai_filled_fields
-  // records exactly what we set so the operator can scan ⚠️/✅ on
-  // /admin and trust the badge.
-  const r = parsed.result;
+  // a model that couldn't read a field returns null, and we don't
+  // want to clobber the DB default with that. Track each field's
+  // confidence in ai_confidences, and the truly-null ones in
+  // missing_fields.
+  const f = sanitized.fields;
   const updates: ProductUpdate = {};
   const filled: string[] = [];
-  if (r.name && r.name.trim()) {
-    updates.name = r.name.trim();
+  const confidences: Record<string, Confidence> = {};
+  const missing: string[] = [];
+
+  // Scalars
+  if (f.name.value && f.name.value.trim()) {
+    updates.name = f.name.value.trim();
     filled.push("name");
+    confidences.name = f.name.confidence;
+  } else {
+    missing.push("name");
   }
-  if (r.brand && r.brand.trim()) {
-    updates.brand = r.brand.trim();
+  if (f.brand.value && f.brand.value.trim()) {
+    updates.brand = f.brand.value.trim();
     filled.push("brand");
+    confidences.brand = f.brand.confidence;
+  } else {
+    missing.push("brand");
   }
-  if (r.sku_id && r.sku_id.trim()) {
-    updates.sku_id = r.sku_id.trim();
+  if (f.sku_id.value && f.sku_id.value.trim()) {
+    updates.sku_id = f.sku_id.value.trim();
     filled.push("sku_id");
+    confidences.sku_id = f.sku_id.confidence;
+  } else {
+    missing.push("sku_id");
   }
-  if (r.description && r.description.trim()) {
-    updates.description = r.description.trim();
+  if (f.description.value && f.description.value.trim()) {
+    updates.description = f.description.value.trim();
     filled.push("description");
-  }
-  if (
-    r.dimensions_mm &&
-    [r.dimensions_mm.length, r.dimensions_mm.width, r.dimensions_mm.height].some(
-      (v) => typeof v === "number" && v > 0,
-    )
-  ) {
-    const dims: Record<string, number> = {};
-    if (
-      typeof r.dimensions_mm.length === "number" &&
-      r.dimensions_mm.length > 0
-    ) {
-      dims.length = r.dimensions_mm.length;
-    }
-    if (
-      typeof r.dimensions_mm.width === "number" &&
-      r.dimensions_mm.width > 0
-    ) {
-      dims.width = r.dimensions_mm.width;
-    }
-    if (
-      typeof r.dimensions_mm.height === "number" &&
-      r.dimensions_mm.height > 0
-    ) {
-      dims.height = r.dimensions_mm.height;
-    }
-    updates.dimensions_mm = dims;
-    filled.push("dimensions_mm");
-  }
-  if (typeof r.weight_kg === "number" && r.weight_kg > 0) {
-    updates.weight_kg = r.weight_kg;
-    filled.push("weight_kg");
+    confidences.description = f.description.confidence;
+  } else {
+    missing.push("description");
   }
 
-  if (filled.length === 0) return;
+  // Dimensions: only persist when at least one axis is > 0.
+  const dims = f.dimensions_mm.value;
+  const dimsFilled =
+    dims &&
+    [dims.length, dims.width, dims.height].some(
+      (v) => typeof v === "number" && v > 0,
+    );
+  if (dims && dimsFilled) {
+    const out: { length?: number; width?: number; height?: number } = {};
+    if (typeof dims.length === "number" && dims.length > 0)
+      out.length = dims.length;
+    if (typeof dims.width === "number" && dims.width > 0) out.width = dims.width;
+    if (typeof dims.height === "number" && dims.height > 0)
+      out.height = dims.height;
+    updates.dimensions_mm = out;
+    filled.push("dimensions_mm");
+    confidences.dimensions_mm = f.dimensions_mm.confidence;
+  } else {
+    missing.push("dimensions_mm");
+  }
+  if (typeof f.weight_kg.value === "number" && f.weight_kg.value > 0) {
+    updates.weight_kg = f.weight_kg.value;
+    filled.push("weight_kg");
+    confidences.weight_kg = f.weight_kg.confidence;
+  } else {
+    missing.push("weight_kg");
+  }
+
+  // Taxonomy
+  if (f.item_type_slug.value) {
+    updates.item_type = f.item_type_slug.value;
+    filled.push("item_type");
+    confidences.item_type = f.item_type_slug.confidence;
+  } else {
+    missing.push("item_type");
+  }
+  if (f.subtype_slug.value) {
+    updates.subtype_slug = f.subtype_slug.value;
+    filled.push("subtype_slug");
+    confidences.subtype_slug = f.subtype_slug.confidence;
+  }
+  // subtype is genuinely optional on many item_types, so we don't
+  // add it to `missing` when null.
+
+  if (f.room_slugs.value && f.room_slugs.value.length > 0) {
+    updates.room_slugs = f.room_slugs.value;
+    filled.push("room_slugs");
+    confidences.room_slugs = f.room_slugs.confidence;
+  } else {
+    missing.push("room_slugs");
+  }
+  if (f.style_slugs.value && f.style_slugs.value.length > 0) {
+    updates.styles = f.style_slugs.value;
+    filled.push("styles");
+    confidences.styles = f.style_slugs.confidence;
+  }
+  if (f.material_slugs.value && f.material_slugs.value.length > 0) {
+    updates.materials = f.material_slugs.value;
+    filled.push("materials");
+    confidences.materials = f.material_slugs.confidence;
+  }
+  if (f.color_slugs.value && f.color_slugs.value.length > 0) {
+    updates.colors = f.color_slugs.value;
+    filled.push("colors");
+    confidences.colors = f.color_slugs.confidence;
+  }
 
   updates.ai_filled_fields = filled;
-  await supabase.from("products").update(updates).eq("id", d.productId);
+  updates.ai_confidences = confidences;
+  updates.missing_fields = missing;
 
-  // Re-revalidate so the operator's list page reflects the AI fill
-  // once the async tail finishes.
+  const { error: applyErr } = await supabase
+    .from("products")
+    .update(updates)
+    .eq("id", d.productId);
+  if (applyErr) {
+    console.error(
+      `[bulkCreateProducts] apply for ${d.productId} failed: ${applyErr.message}`,
+    );
+    return;
+  }
+
+  // ── Confidence-gated auto-publish ───────────────────────────────
+  // Required to even attempt: name + item_type + 1+ rooms (Wave 7
+  // spec's "minimum publishable" set). Without these the storefront
+  // surfaces wouldn't make sense.
+  const hasMinimum =
+    !!updates.name && !!updates.item_type && (updates.room_slugs?.length ?? 0) > 0;
+  // ANY low-confidence field disqualifies — operator should see it
+  // first.
+  const anyLow = Object.values(confidences).some((c) => c === "low");
+
+  if (!hasMinimum || anyLow) {
+    // Persist a reason on missing_fields so the list explains why we
+    // didn't auto-publish.
+    const reasons = [...missing];
+    if (anyLow) {
+      for (const [k, c] of Object.entries(confidences)) {
+        if (c === "low") reasons.push(`${k}_low_confidence`);
+      }
+    }
+    await supabase
+      .from("products")
+      .update({ missing_fields: [...new Set(reasons)] })
+      .eq("id", d.productId);
+    revalidatePath("/admin");
+    return;
+  }
+
+  // Existing 3-gate check: rooms + cutout_approved >= 1 + glb_url.
+  const facts = await loadPublishGateFacts(d.productId);
+  // Fresh values from this run override stale DB reads where possible.
+  const gate = checkPublishGates({
+    rooms: updates.room_slugs ?? facts.rooms,
+    cutoutApprovedCount: facts.cutoutApprovedCount,
+    glbUrl: facts.glbUrl,
+  });
+  if (!gate.ok) {
+    await supabase
+      .from("products")
+      .update({
+        missing_fields: [...new Set([...missing, `publish_gate_${gate.reason}`])],
+      })
+      .eq("id", d.productId);
+    revalidatePath("/admin");
+    return;
+  }
+
+  // All green — flip to published.
+  await supabase
+    .from("products")
+    .update({ status: "published" })
+    .eq("id", d.productId);
+  invalidatePublishedCountsCache();
   revalidatePath("/admin");
+  revalidatePath("/");
+  revalidatePath(`/product/${d.productId}`);
 }

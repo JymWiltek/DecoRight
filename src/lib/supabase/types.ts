@@ -68,6 +68,14 @@ export type ProductRow = {
   thumbnail_url: string | null;
   status: ProductStatus;
   ai_filled_fields: string[];
+  /** Mig 0039 — per-field confidence the V2 parser returned for this
+   *  product. Shape: { "name": "high", "sku_id": "high", … }. Empty
+   *  object means "never ran V2 AI" (pre-Wave-7 rows + manual creates). */
+  ai_confidences: Record<string, "high" | "medium" | "low">;
+  /** Mig 0039 — fields the V2 parser couldn't fill (null value). The
+   *  /admin list reads this to render the "Missing: …" sub-line on
+   *  draft rows. Empty array = nothing tracked yet. */
+  missing_fields: string[];
   link_reported_broken_count: number;
   // ── Meshy / GLB pipeline fields (post-0014) ─────────────────
   // meshy_task_id: Meshy's task id from createMeshyTask. Renamed
@@ -135,6 +143,8 @@ export type ProductInsert = {
   thumbnail_url?: string | null;
   status?: ProductStatus;
   ai_filled_fields?: string[];
+  ai_confidences?: Record<string, "high" | "medium" | "low">;
+  missing_fields?: string[];
   link_reported_broken_count?: number;
   meshy_task_id?: string | null;
   meshy_status?: "pending" | "generating" | "succeeded" | "failed" | null;
@@ -446,6 +456,11 @@ export const API_SERVICES = [
    *  cost-per-token as the single variant; we tag separately so the
    *  api_usage rollup can split single vs. merged calls. */
   "gpt4o_vision_spec_merged",
+  /** Wave 7 — V2 prompt with per-field confidence + taxonomy slugs.
+   *  Slightly larger prompt (~500 extra tokens for the slug
+   *  dictionary) so cost-per-call is ~$0.01-$0.015 instead of $0.005.
+   *  Tagged separately so the rollup can split V1 vs V2 calls. */
+  "gpt4o_vision_spec_v2",
 ] as const;
 export type ApiService = (typeof API_SERVICES)[number];
 
