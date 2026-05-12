@@ -33,14 +33,11 @@ import PublishButton from "@/components/admin/PublishButton";
 // otherwise so the operator can scan a long catalog for half-finished
 // rows. "Untitled" is treated as missing — that's what /admin/products/new
 // inserts when the operator clicks +New without typing anything.
-const AI_COMPLETENESS_FIELDS = [
-  "name",
-  "sku_id",
-  "brand",
-  "dimensions",
-  "description",
-] as const;
-type AiCompletenessField = (typeof AI_COMPLETENESS_FIELDS)[number];
+// Wave 7 · Commit 4 retired the strict `AiCompletenessField` union —
+// the AI column now reads products.missing_fields (which can carry
+// any string key including taxonomy fields and pseudo-keys) and
+// validates each against the live row. See `aiCompletenessMissing`
+// below.
 
 // Wave 7 · Commit 3 — chip list helper for Rooms / Style columns.
 // Renders the first two slug labels and a "+N more" tail when more
@@ -136,28 +133,83 @@ function MissingCell({
   );
 }
 
+// Wave 7 · Commit 4 — bind AI completeness to products.missing_fields
+// (mig 0039) instead of recomputing every render. The Wave 6 client-
+// side compute was buggy: if an operator MANUALLY filled dimensions
+// after AI fill, the column kept claiming "missing dimensions" because
+// it was reading the stale `aiCompletenessFields` snapshot semantics
+// instead of the live row.
+//
+// New rule:
+//   1. If V2 ran on this product (any ai_confidences entries), read
+//      products.missing_fields as the seed of what V2 said is missing.
+//      Strip pseudo-keys (`_low_confidence`, `publish_gate_*`) — those
+//      surface in the Missing column, not the AI column.
+//   2. For each seed entry, RE-VERIFY against the current row value.
+//      If the operator filled it manually, drop it from the displayed
+//      "missing" list. This is the "AI column self-corrects" behavior
+//      the bug was masking.
+//   3. If V2 never ran (legacy product, no ai_confidences), fall back
+//      to the same client-side check — same 5 fields the audit
+//      readers expected.
+function isFieldFilled(
+  p: import("@/lib/supabase/types").ProductRow,
+  key: string,
+): boolean {
+  switch (key) {
+    case "name":
+      return !!p.name && !!p.name.trim() && p.name.trim() !== "Untitled";
+    case "sku_id":
+      return !!p.sku_id && !!p.sku_id.trim();
+    case "brand":
+      return !!p.brand && !!p.brand.trim();
+    case "description":
+      return !!p.description && !!p.description.trim();
+    case "dimensions_mm":
+    case "dimensions": {
+      const d = p.dimensions_mm;
+      return (
+        d != null &&
+        [d.length, d.width, d.height].some(
+          (v) => typeof v === "number" && v > 0,
+        )
+      );
+    }
+    case "weight_kg":
+      return typeof p.weight_kg === "number" && p.weight_kg > 0;
+    case "item_type":
+      return !!p.item_type && !!p.item_type.trim();
+    case "room_slugs":
+      return (p.room_slugs?.length ?? 0) > 0;
+    default:
+      // Anything else (subtype, styles, etc.) — call it filled when
+      // the corresponding row column has any value. Conservative.
+      return true;
+  }
+}
+
 function aiCompletenessMissing(
   p: import("@/lib/supabase/types").ProductRow,
-): AiCompletenessField[] {
-  const missing: AiCompletenessField[] = [];
-  if (!p.name || !p.name.trim() || p.name.trim() === "Untitled") {
-    missing.push("name");
+): string[] {
+  // V2 ran? Use missing_fields as the seed.
+  const v2Ran = Object.keys(p.ai_confidences ?? {}).length > 0;
+  if (v2Ran) {
+    return (p.missing_fields ?? [])
+      .filter(
+        (k) =>
+          !k.endsWith("_low_confidence") && !k.startsWith("publish_gate_"),
+      )
+      .filter((k) => !isFieldFilled(p, k));
   }
-  if (!p.sku_id || !p.sku_id.trim()) missing.push("sku_id");
-  if (!p.brand || !p.brand.trim()) missing.push("brand");
-  // dimensions_mm is { length?, width?, height? } — call it filled
-  // when at least one axis has a positive number. An empty {} or all-
-  // zero values count as missing because the spec block on the product
-  // detail page wouldn't print anything.
-  const d = p.dimensions_mm;
-  const dimsFilled =
-    d != null &&
-    [d.length, d.width, d.height].some(
-      (v) => typeof v === "number" && v > 0,
-    );
-  if (!dimsFilled) missing.push("dimensions");
-  if (!p.description || !p.description.trim()) missing.push("description");
-  return missing;
+  // Legacy compute — same 5-field set the Wave 6 column displayed.
+  const legacyFields = [
+    "name",
+    "sku_id",
+    "brand",
+    "dimensions_mm",
+    "description",
+  ];
+  return legacyFields.filter((k) => !isFieldFilled(p, k));
 }
 
 export const dynamic = "force-dynamic";
