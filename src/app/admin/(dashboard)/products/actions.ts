@@ -1886,56 +1886,77 @@ async function loadTaxonomyHints(): Promise<TaxonomyHints> {
  *  V2 parse + apply ALL fields (scalars + taxonomy), then attempts
  *  confidence-gated auto-publish.
  *
+ *  ── Hotfix (Wave 7 follow-up) — parallelize rembg + V2 ──
+ *
+ *  Original implementation ran rembg sequentially THEN called V2.
+ *  At 5 photos × ~12s rembg = 60s + V2 5-10s + apply = 65-75s. The
+ *  Vercel after() callback budget is the function's maxDuration (60s
+ *  default on Pro). Five-photo bulk-creates were getting killed
+ *  mid-loop with the products stuck at name='Untitled product' /
+ *  empty ai_filled_fields and images at state='raw' (the operator
+ *  saw "Retry rembg" labels — the UI doesn't distinguish "in
+ *  progress" from "stuck").
+ *
+ *  V2 doesn't depend on cutouts being approved — it accepts signed
+ *  raw URLs as a documented fallback. So we kick off rembg AND V2
+ *  in parallel:
+ *    • Promise.all(image[] -> runRembgForImage) for rembg.
+ *    • Resolve V2-input URLs from raw_image_url (signed), call V2
+ *      against those.
+ *  Both branches share the after() budget but finish in max(rembg,
+ *  V2) ≈ 12-15s for typical 5-photo loads, comfortably under 60s.
+ *
  *  Auto-publish requires:
- *    1. name + item_type + at least 1 room  (the V2-only "filled enough"
- *       check — Wave 6's processDraftAsync was scalar-only)
- *    2. zero fields with confidence='low' across the fields the V2
- *       parser was responsible for filling
+ *    1. name + item_type + at least 1 room
+ *    2. zero fields with confidence='low'
  *    3. existing 3-gate Publish check (rooms + cutout_approved >= 1 +
- *       glb_url) — reuses checkPublishGates
+ *       glb_url)
  *
  *  Any of these failing → product stays at status='draft' AND
- *  missing_fields is populated so the /admin list "Missing: …" line
- *  tells the operator exactly what to add.
+ *  missing_fields is populated.
  *
- *  Errors log + return — they don't propagate so a single bad draft
- *  doesn't poison the rest of the batch. */
+ *  Errors log + return — they don't propagate. */
 async function processDraftAsync(d: BulkCreateDraft): Promise<void> {
   const supabase = createServiceRoleClient();
 
-  // Sequential rembg AUTO. Failures leave the row in cutout_failed
-  // and are surfaced by the admin list's "Retry rembg" chip, so we
-  // don't block the batch on a single bad photo.
-  for (const img of d.images) {
-    await runRembgForImage(d.productId, img.imageId, undefined, "auto");
-  }
-
-  // Pull URLs to send to GPT-4o. Prefer cutout_image_url (public CDN,
-  // no signing); fall back to a signed raw URL for cutout_failed rows
-  // so the operator still gets a parse attempt.
+  // ── V2 input URL resolution (raw signed URLs, no cutout wait) ──
+  //
+  // We sign raw_image_url for each feed_to_ai image and hand those to
+  // GPT-4o. Read raw_image_url straight from the product_images rows
+  // we already INSERTed in the sync part — they're guaranteed to
+  // exist (state='raw' at this point).
   const { data: imgs } = await supabase
     .from("product_images")
-    .select("id, raw_image_url, cutout_image_url, feed_to_ai")
+    .select("id, raw_image_url, feed_to_ai")
     .eq("product_id", d.productId)
     .eq("feed_to_ai", true)
     .order("created_at", { ascending: true })
     .limit(MERGED_PARSE_MAX_IMAGES);
   if (!imgs || imgs.length === 0) return;
 
-  const inputs: { url: string }[] = [];
+  const v2Inputs: { url: string }[] = [];
   for (const img of imgs) {
-    if (img.cutout_image_url) {
-      inputs.push({ url: img.cutout_image_url });
-    } else if (img.raw_image_url) {
-      try {
-        const signed = await getSignedRawUrl(img.raw_image_url);
-        inputs.push({ url: signed });
-      } catch {
-        // skip rows we can't sign; keep the rest going
-      }
+    if (!img.raw_image_url) continue;
+    try {
+      const signed = await getSignedRawUrl(img.raw_image_url);
+      v2Inputs.push({ url: signed });
+    } catch {
+      // skip rows we can't sign; keep the rest going
     }
   }
-  if (inputs.length === 0) return;
+
+  // ── Run rembg (parallel) AND V2 (parallel) concurrently ──
+  //
+  // Promise.allSettled so a single rembg failure (e.g. Replicate 5xx)
+  // doesn't reject the whole tail — failed images land at
+  // state='cutout_failed' via runRembgForImage's own bookkeeping and
+  // are surfaced by the "Retry rembg" chip. V2 still applies its
+  // fields against the rest.
+  const rembgPromise = Promise.allSettled(
+    d.images.map((img) =>
+      runRembgForImage(d.productId, img.imageId, undefined, "auto"),
+    ),
+  );
 
   let taxonomy: TaxonomyHints;
   try {
@@ -1944,33 +1965,51 @@ async function processDraftAsync(d: BulkCreateDraft): Promise<void> {
     console.error(
       `[bulkCreateProducts] taxonomy load failed for ${d.productId}: ${e instanceof Error ? e.message : String(e)}`,
     );
+    // Even if taxonomy load fails, still wait for rembg to finish so
+    // images aren't left hanging.
+    await rembgPromise;
     return;
   }
 
-  let parsed: Awaited<ReturnType<typeof parseImagesMergedV2>>;
-  try {
-    parsed = await parseImagesMergedV2(inputs, taxonomy);
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    console.error(
-      `[bulkCreateProducts] V2 parse for ${d.productId} failed: ${msg}`,
-    );
-    return;
-  }
+  const v2Promise =
+    v2Inputs.length > 0
+      ? parseImagesMergedV2(v2Inputs, taxonomy).catch((e) => {
+          const msg = e instanceof Error ? e.message : String(e);
+          console.error(
+            `[bulkCreateProducts] V2 parse for ${d.productId} failed: ${msg}`,
+          );
+          return null;
+        })
+      : Promise.resolve(null);
+
+  // Wait for BOTH branches — rembg landing cutout_approved before the
+  // auto-publish gate check, V2 returning so we can apply its fields.
+  const [parsed] = await Promise.all([v2Promise, rembgPromise]);
+  if (!parsed) return;
 
   // Drop hallucinated slugs (defense-in-depth — strict-mode schema
   // already constrains shape, but the prompt could in principle leak
   // a slug not in the allowed set).
   const sanitized = sanitizeV2Slugs(parsed.result, taxonomy);
 
-  await supabase.from("api_usage").insert({
+  const { error: usageErr } = await supabase.from("api_usage").insert({
     service: "gpt4o_vision_spec_v2",
     product_id: d.productId,
     product_image_id: null,
     cost_usd: Number(parsed.usage.estCostUsd.toFixed(6)),
     status: "ok",
-    note: `bulk-v2 images=${inputs.length} prompt=${parsed.usage.promptTokens} completion=${parsed.usage.completionTokens}`,
+    note: `bulk-v2 images=${v2Inputs.length} prompt=${parsed.usage.promptTokens} completion=${parsed.usage.completionTokens}`,
   });
+  if (usageErr) {
+    // Telemetry-only — don't fail the product apply on a usage write
+    // miss. But DO log it: the original bug here was that the
+    // api_usage CHECK constraint silently dropped writes for years
+    // because supabase-js returns {error} (no throw) and the call-site
+    // didn't inspect it. Logging closes that blind spot.
+    console.error(
+      `[bulkCreateProducts] api_usage write failed for ${d.productId}: ${usageErr.message}`,
+    );
+  }
 
   // Apply parsed fields. Only OVERWRITE on a non-null parsed value —
   // a model that couldn't read a field returns null, and we don't

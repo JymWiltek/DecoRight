@@ -70,3 +70,5 @@ next-env.d.ts
 /scripts/audit-bulk-finish.mjs
 /scripts/audit-single-ai.mjs
 /scripts/test-w7c1-real-gpt.ts
+/scripts/test-w7-e2e.mjs
+/scripts/test-w7-bug-repro.mjs
