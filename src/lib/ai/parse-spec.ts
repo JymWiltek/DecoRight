@@ -301,3 +301,386 @@ export async function parseImagesMerged(
     imageCount: inputs.length,
   };
 }
+
+// ────────────────────────────────────────────────────────────
+// Wave 7 · Commit 1 — V2 parser (per-field confidence + taxonomy)
+// ────────────────────────────────────────────────────────────
+//
+// Why V2: bulk-create uploads 10 products at once. Operator can't
+// realistically vet each one — the AI fill needs to confidently pick
+// item_type, rooms, styles, materials, colors from the live taxonomy
+// AND tell us how sure it is per field. The downstream
+// confidence-gated auto-publish (commit 2) reads `confidence` to
+// decide auto-publish vs hold-for-review.
+//
+// V1 is preserved unchanged for any caller that still wants the old
+// shape; the single-product Autofill block and bulkCreateProducts
+// both move to V2 in this commit and Commit 2 respectively.
+
+export type Confidence = "high" | "medium" | "low";
+
+export type FieldV2<T> = {
+  /** AI-extracted value. null = AI couldn't see/guess this field. */
+  value: T | null;
+  /** How sure the model is:
+   *   - high   : printed verbatim on the image / very strong visual cue
+   *   - medium : reasonable inference from product appearance
+   *   - low    : guess; operator should verify */
+  confidence: Confidence;
+};
+
+export type SpecSheetParseV2 = {
+  fields: {
+    name: FieldV2<string>;
+    brand: FieldV2<string>;
+    sku_id: FieldV2<string>;
+    description: FieldV2<string>;
+    dimensions_mm: FieldV2<{
+      length: number | null;
+      width: number | null;
+      height: number | null;
+    }>;
+    weight_kg: FieldV2<number>;
+    /** Taxonomy slug from the provided allowed list. Null = no
+     *  match. NEVER a made-up slug. */
+    item_type_slug: FieldV2<string>;
+    subtype_slug: FieldV2<string>;
+    /** Plural taxonomy fields: AI picks 0+ from the provided allowed
+     *  set. Empty array (not null) = none applicable.
+     *  FieldV2<string[]> with value=[] is "AI looked and decided
+     *  nothing applies"; value=null is "AI couldn't tell". */
+    room_slugs: FieldV2<string[]>;
+    style_slugs: FieldV2<string[]>;
+    material_slugs: FieldV2<string[]>;
+    color_slugs: FieldV2<string[]>;
+  };
+  notes: string;
+};
+
+/** Allowed taxonomy slug lists, passed to GPT-4o so it picks from
+ *  what the DB has rather than inventing slugs. Each slug is a stable
+ *  identifier; labels are not sent — the model maps from image
+ *  evidence to slugs via a static prompt-side dictionary we build at
+ *  call time. */
+export type TaxonomyHints = {
+  itemTypes: { slug: string; label_en: string }[];
+  /** Subtypes grouped by item_type_slug — `subtype.item_type_slug` is
+   *  encoded into the prompt so the model knows e.g. `two_piece_toilet`
+   *  is only valid when item_type=`toilet`. */
+  itemSubtypes: { slug: string; label_en: string; item_type_slug: string }[];
+  rooms: { slug: string; label_en: string }[];
+  styles: { slug: string; label_en: string }[];
+  materials: { slug: string; label_en: string }[];
+  colors: { slug: string; label_en: string }[];
+};
+
+function fieldSchema(valueSchema: Record<string, unknown>) {
+  // Each field row is { value: T|null, confidence: enum }. The
+  // strict-mode schema requires `additionalProperties:false` + all
+  // properties listed in `required`.
+  return {
+    type: "object",
+    additionalProperties: false,
+    required: ["value", "confidence"],
+    properties: {
+      value: valueSchema,
+      confidence: { type: "string", enum: ["high", "medium", "low"] },
+    },
+  };
+}
+
+const RESPONSE_SCHEMA_V2 = {
+  type: "object",
+  additionalProperties: false,
+  required: ["fields", "notes"],
+  properties: {
+    fields: {
+      type: "object",
+      additionalProperties: false,
+      required: [
+        "name",
+        "brand",
+        "sku_id",
+        "description",
+        "dimensions_mm",
+        "weight_kg",
+        "item_type_slug",
+        "subtype_slug",
+        "room_slugs",
+        "style_slugs",
+        "material_slugs",
+        "color_slugs",
+      ],
+      properties: {
+        name: fieldSchema({ type: ["string", "null"] }),
+        brand: fieldSchema({ type: ["string", "null"] }),
+        sku_id: fieldSchema({ type: ["string", "null"] }),
+        description: fieldSchema({ type: ["string", "null"] }),
+        dimensions_mm: fieldSchema({
+          type: ["object", "null"],
+          additionalProperties: false,
+          required: ["length", "width", "height"],
+          properties: {
+            length: { type: ["number", "null"] },
+            width: { type: ["number", "null"] },
+            height: { type: ["number", "null"] },
+          },
+        }),
+        weight_kg: fieldSchema({ type: ["number", "null"] }),
+        item_type_slug: fieldSchema({ type: ["string", "null"] }),
+        subtype_slug: fieldSchema({ type: ["string", "null"] }),
+        room_slugs: fieldSchema({
+          type: ["array", "null"],
+          items: { type: "string" },
+        }),
+        style_slugs: fieldSchema({
+          type: ["array", "null"],
+          items: { type: "string" },
+        }),
+        material_slugs: fieldSchema({
+          type: ["array", "null"],
+          items: { type: "string" },
+        }),
+        color_slugs: fieldSchema({
+          type: ["array", "null"],
+          items: { type: "string" },
+        }),
+      },
+    },
+    notes: { type: "string" },
+  },
+} as const;
+
+function renderTaxonomyDictionary(t: TaxonomyHints): string {
+  // Compact "<slug>: <label>" lines so token bloat is minimal. Skip
+  // labels for colors (they're hex-driven anyway and the slug is
+  // usually obvious: "white", "black", "matte_black"). Subtypes are
+  // grouped under their parent item_type to encode the parent
+  // constraint in the prompt itself.
+  const lines: string[] = [];
+  lines.push("### item_types (pick ONE, or null):");
+  for (const r of t.itemTypes) lines.push(`  ${r.slug} — ${r.label_en}`);
+
+  if (t.itemSubtypes.length) {
+    lines.push("");
+    lines.push(
+      "### item_subtypes (pick ONE, or null; only valid when item_type matches):",
+    );
+    const byParent = new Map<string, typeof t.itemSubtypes>();
+    for (const s of t.itemSubtypes) {
+      const list = byParent.get(s.item_type_slug) ?? [];
+      list.push(s);
+      byParent.set(s.item_type_slug, list);
+    }
+    for (const [parent, subs] of byParent) {
+      lines.push(`  ${parent}:`);
+      for (const s of subs) lines.push(`    - ${s.slug} (${s.label_en})`);
+    }
+  }
+
+  lines.push("");
+  lines.push("### rooms (pick 0+ that apply, NEVER make up new slugs):");
+  for (const r of t.rooms) lines.push(`  ${r.slug} — ${r.label_en}`);
+
+  lines.push("");
+  lines.push("### styles (pick 0+, only the ones with visual evidence):");
+  for (const r of t.styles) lines.push(`  ${r.slug} — ${r.label_en}`);
+
+  lines.push("");
+  lines.push("### materials (pick 0+, only visible/labeled materials):");
+  for (const r of t.materials) lines.push(`  ${r.slug} — ${r.label_en}`);
+
+  lines.push("");
+  lines.push("### colors (pick 0+, dominant product colors):");
+  for (const r of t.colors) lines.push(`  ${r.slug} — ${r.label_en}`);
+
+  return lines.join("\n");
+}
+
+const V2_SYSTEM_PROMPT_BASE = `You extract product spec data from MULTIPLE product images at once (these are different views / spec sheet pages / installed photos of the same single product, for a Malaysian bathroom & sanitary-ware retailer).
+
+Be CONFIDENT. The retailer would rather have a medium-confidence "Black Freestanding Bathtub" than a null. Make educated guesses based on product appearance, then mark your confidence:
+  - "high"   = printed verbatim on the image / unambiguous visual evidence
+  - "medium" = inferred from product shape, color, materials with reasonable certainty
+  - "low"    = guess; operator may need to review
+
+Output ONLY a JSON object matching the provided schema.
+
+Field-by-field rules:
+
+- name: a 2–6 word generic product name. Generate it from what you see if not printed. Examples: "Black Freestanding Bathtub", "Round Marble Counter Top Basin", "Two-piece Washdown Toilet". NEVER null unless image is truly unparseable. mark "high" if printed verbatim, "medium" if you generated it from appearance.
+
+- brand: identify the brand from any visible logo, tag, or label. Common brands you'll see: DOCASA, Roca, TOTO, Kohler, Wiltek, American Standard, Duravit, Hansgrohe, Ideal Standard. mark "high" if a logo or text proves it; "low" otherwise. null if no evidence at all.
+
+- sku_id: ONLY extract if a SKU/model code is explicitly written on the image (e.g. "WC-2090", "A400-PS"). NEVER guess SKUs. confidence is always "high" if extracted; null if not visible.
+
+- description: 1–3 plain factual sentences. Combine evidence across images. mark "high" if from a spec sheet, "medium" if inferred from photos.
+
+- dimensions_mm: ALWAYS millimeters; convert from inches/cm/feet. Read from dimension diagrams if present. null any axis you can't confidently read. If fewer than 3 axes are legible, return null for the whole object. mark "high" if all 3 axes are printed, "medium" if you inferred 1–2.
+
+- weight_kg: kilograms; convert from lb. null if not stated. mark "high" if printed.
+
+- item_type_slug: pick from the allowed list. Look at product shape: a bathtub picture → toilet/basin/bathtub/etc. mark "high" if obvious; "medium" if borderline. NEVER invent a slug — use null instead.
+
+- subtype_slug: pick from the allowed list under the chosen item_type. null if none fits. mark "high" if obvious (e.g. clearly two-piece toilet); "medium" otherwise.
+
+- room_slugs: pick 0+ rooms where this product naturally lives. A toilet lives in bathroom — pick ["bathroom"]. A kitchen sink → ["kitchen"]. Outdoor tap → ["garden", "balcony"] if both fit. confidence applies to the whole array.
+
+- style_slugs: pick 0+ styles with visual evidence (modern, traditional, minimalist, industrial, …). Empty array if no clear style cue.
+
+- material_slugs: pick 0+ materials you can see / are labeled (ceramic, stainless_steel, glass, …).
+
+- color_slugs: pick 0+ dominant colors. Don't over-pick — a 95% white toilet with a 1cm chrome trim is "white", not "white" + "silver".
+
+- notes: empty string by default. Use only for cross-image conflicts ("image 2 says 680mm, image 4 says 685mm — used 685mm") or "image is purely decorative, no extractable spec data".
+
+DO NOT invent slugs. DO NOT add markdown. Output JSON only.`;
+
+/** V2 — multi-image merged parse returning per-field confidence +
+ *  taxonomy slugs. Caller MUST provide TaxonomyHints loaded from the
+ *  DB; the model picks slugs from those lists.
+ *
+ *  Cost: ~$0.01–$0.015 per call (longer prompt due to slug
+ *  dictionary; same 1-call request pattern).
+ */
+export async function parseImagesMergedV2(
+  inputs: MergedParseInput[],
+  taxonomy: TaxonomyHints,
+): Promise<{
+  result: SpecSheetParseV2;
+  usage: { promptTokens: number; completionTokens: number; estCostUsd: number };
+  imageCount: number;
+}> {
+  if (inputs.length === 0) {
+    throw new Error("parseImagesMergedV2: at least 1 image required");
+  }
+  if (inputs.length > MERGED_PARSE_MAX_IMAGES) {
+    throw new Error(
+      `parseImagesMergedV2: at most ${MERGED_PARSE_MAX_IMAGES} images per call (got ${inputs.length})`,
+    );
+  }
+  const openai = getOpenAI();
+  const systemPrompt = `${V2_SYSTEM_PROMPT_BASE}
+
+ALLOWED TAXONOMY (use these exact slugs; never invent):
+
+${renderTaxonomyDictionary(taxonomy)}`;
+
+  const userContent: Array<
+    | { type: "text"; text: string }
+    | { type: "image_url"; image_url: { url: string; detail: "high" | "low" } }
+  > = [
+    {
+      type: "text",
+      text: `Extract product spec data + taxonomy from these ${inputs.length} image${inputs.length === 1 ? "" : "s"} of one product. Be confident — guess from appearance when needed and mark confidence honestly.`,
+    },
+  ];
+  for (const inp of inputs) {
+    userContent.push({
+      type: "image_url",
+      image_url: { url: inp.url, detail: "high" },
+    });
+  }
+
+  const completion = await openai.chat.completions.create({
+    model: "gpt-4o",
+    temperature: 0,
+    messages: [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userContent },
+    ],
+    response_format: {
+      type: "json_schema",
+      json_schema: {
+        name: "spec_sheet_parse_v2",
+        strict: true,
+        schema: RESPONSE_SCHEMA_V2,
+      },
+    },
+  });
+
+  const text = completion.choices[0]?.message?.content ?? "{}";
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch (e) {
+    throw new Error(
+      `parseImagesMergedV2: GPT returned non-JSON: ${text.slice(0, 200)} (${e instanceof Error ? e.message : String(e)})`,
+    );
+  }
+  const result = parsed as SpecSheetParseV2;
+  const promptTokens = completion.usage?.prompt_tokens ?? 0;
+  const completionTokens = completion.usage?.completion_tokens ?? 0;
+  const estCostUsd =
+    (promptTokens / 1_000_000) * 2.5 + (completionTokens / 1_000_000) * 10;
+  return {
+    result,
+    usage: { promptTokens, completionTokens, estCostUsd },
+    imageCount: inputs.length,
+  };
+}
+
+/** Validate AI-returned slugs against the allowed sets and drop any
+ *  hallucinated ones. Returns a copy with `value` arrays/strings
+ *  filtered to only legal slugs. Confidence stays as the model
+ *  reported. */
+export function sanitizeV2Slugs(
+  result: SpecSheetParseV2,
+  taxonomy: TaxonomyHints,
+): SpecSheetParseV2 {
+  const itemTypeSet = new Set(taxonomy.itemTypes.map((r) => r.slug));
+  const subtypesByItemType = new Map<string, Set<string>>();
+  for (const s of taxonomy.itemSubtypes) {
+    const set = subtypesByItemType.get(s.item_type_slug) ?? new Set<string>();
+    set.add(s.slug);
+    subtypesByItemType.set(s.item_type_slug, set);
+  }
+  const roomSet = new Set(taxonomy.rooms.map((r) => r.slug));
+  const styleSet = new Set(taxonomy.styles.map((r) => r.slug));
+  const materialSet = new Set(taxonomy.materials.map((r) => r.slug));
+  const colorSet = new Set(taxonomy.colors.map((r) => r.slug));
+
+  const f = result.fields;
+  const itemTypeVal =
+    f.item_type_slug.value && itemTypeSet.has(f.item_type_slug.value)
+      ? f.item_type_slug.value
+      : null;
+  const subtypeVal =
+    f.subtype_slug.value && itemTypeVal &&
+    subtypesByItemType.get(itemTypeVal)?.has(f.subtype_slug.value)
+      ? f.subtype_slug.value
+      : null;
+
+  function filterArr(
+    v: string[] | null,
+    set: Set<string>,
+  ): string[] | null {
+    if (v == null) return null;
+    return v.filter((s) => set.has(s));
+  }
+
+  return {
+    ...result,
+    fields: {
+      ...f,
+      item_type_slug: { ...f.item_type_slug, value: itemTypeVal },
+      subtype_slug: { ...f.subtype_slug, value: subtypeVal },
+      room_slugs: {
+        ...f.room_slugs,
+        value: filterArr(f.room_slugs.value, roomSet),
+      },
+      style_slugs: {
+        ...f.style_slugs,
+        value: filterArr(f.style_slugs.value, styleSet),
+      },
+      material_slugs: {
+        ...f.material_slugs,
+        value: filterArr(f.material_slugs.value, materialSet),
+      },
+      color_slugs: {
+        ...f.color_slugs,
+        value: filterArr(f.color_slugs.value, colorSet),
+      },
+    },
+  };
+}

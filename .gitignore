@@ -66,3 +66,7 @@ next-env.d.ts
 /scripts/test-w6c5.mjs
 /scripts/test-w6-prod.mjs
 /scripts/test-w6-drag.mjs
+/scripts/audit-bulk-flow.mjs
+/scripts/audit-bulk-finish.mjs
+/scripts/audit-single-ai.mjs
+/scripts/test-w7c1-real-gpt.ts
