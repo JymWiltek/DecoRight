@@ -44,13 +44,41 @@ export type GlbBudgetMeta = {
   decodedRamMb: number;
 };
 
+/** Wave 7 fix-2 — per-photo "what role does this image play".
+ *
+ *  "product"   — actual product photo. Goes through rembg →
+ *                cutout_image_url, shown in the storefront gallery,
+ *                feed_to_ai=true so the V2 parser can read it.
+ *                image_kind='cutout' on the row.
+ *  "reference" — spec sheet / web screenshot / dimension diagram
+ *                kind of thing the operator wants the AI to READ
+ *                but never display to customers. Skips rembg (which
+ *                would shred the text), feed_to_ai=true, but
+ *                show_on_storefront=false. image_kind='real_photo'
+ *                — reusing the Wave 4 enum value whose pipeline
+ *                semantics already mean "skip rembg".
+ *
+ *  Default per slot: index 0 = product (the cover), index 1-4 =
+ *  reference (operator typically drops the hero shot first, then
+ *  spec sheets / extra angles). Operator can flip any slot. */
+export type PhotoType = "product" | "reference";
+
 export type DraftCardState = {
   /** Stable card key for React + parent map. */
   cardId: string;
   photos: File[];
+  /** Parallel array to `photos`. Same length, same order. */
+  photoTypes: PhotoType[];
   glbFile: File | null;
   glbBudget: GlbBudgetMeta | null;
 };
+
+/** Default the per-photo type. First slot is the hero (Product),
+ *  the rest start as Reference because the bulk-upload pattern is
+ *  "1 hero photo + spec sheets + web screenshots". */
+export function defaultPhotoType(slotIndex: number): PhotoType {
+  return slotIndex === 0 ? "product" : "reference";
+}
 
 type Props = {
   index: number;
@@ -112,7 +140,18 @@ export default function ProductDraftCard({
     if (vetted.length === 0) return;
     const remaining = PHOTO_MAX - state.photos.length;
     const accepted = vetted.slice(0, remaining);
-    onChange({ ...state, photos: [...state.photos, ...accepted] });
+    // Assign each new photo the default type for the slot it lands
+    // in (index = current length + i). This is why operator
+    // experience is "drop the hero photo first" — it auto-picks
+    // Product. Slots 1+ default to Reference.
+    const newTypes = accepted.map((_, i) =>
+      defaultPhotoType(state.photos.length + i),
+    );
+    onChange({
+      ...state,
+      photos: [...state.photos, ...accepted],
+      photoTypes: [...state.photoTypes, ...newTypes],
+    });
   }
 
   function onPhotoPick(e: ChangeEvent<HTMLInputElement>) {
@@ -140,9 +179,17 @@ export default function ProductDraftCard({
   }
 
   function removePhoto(i: number) {
-    const next = state.photos.slice();
-    next.splice(i, 1);
-    onChange({ ...state, photos: next });
+    const nextPhotos = state.photos.slice();
+    const nextTypes = state.photoTypes.slice();
+    nextPhotos.splice(i, 1);
+    nextTypes.splice(i, 1);
+    onChange({ ...state, photos: nextPhotos, photoTypes: nextTypes });
+  }
+
+  function setPhotoType(i: number, t: PhotoType) {
+    const nextTypes = state.photoTypes.slice();
+    nextTypes[i] = t;
+    onChange({ ...state, photoTypes: nextTypes });
   }
 
   async function acceptGlb(file: File | null) {
@@ -303,37 +350,66 @@ export default function ProductDraftCard({
           ) : (
             <>
               <div className="grid grid-cols-5 gap-2">
-                {photoUrls.map((url, i) => (
-                  <div
-                    key={`${state.cardId}-photo-${i}`}
-                    className="group relative aspect-square overflow-hidden rounded border border-neutral-200 bg-white"
-                  >
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={url}
-                      alt={`Photo ${i + 1}`}
-                      className="h-full w-full object-cover"
-                    />
-                    {!busy && (
-                      <button
-                        type="button"
-                        onClick={(e) => {
+                {photoUrls.map((url, i) => {
+                  const type =
+                    state.photoTypes[i] ?? defaultPhotoType(i);
+                  return (
+                    <div
+                      key={`${state.cardId}-photo-${i}`}
+                      className="flex flex-col gap-1"
+                    >
+                      <div className="group relative aspect-square overflow-hidden rounded border border-neutral-200 bg-white">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={url}
+                          alt={`Photo ${i + 1}`}
+                          className="h-full w-full object-cover"
+                        />
+                        {!busy && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              removePhoto(i);
+                            }}
+                            aria-label={`Remove photo ${i + 1}`}
+                            className="absolute right-0.5 top-0.5 rounded-full bg-black/70 px-1.5 text-xs text-white opacity-0 group-hover:opacity-100"
+                          >
+                            ×
+                          </button>
+                        )}
+                        {i === 0 && type === "product" && (
+                          <span className="absolute left-1 top-1 rounded bg-emerald-600 px-1 text-[10px] font-medium text-white">
+                            cover
+                          </span>
+                        )}
+                        {type === "reference" && (
+                          <span className="absolute left-1 top-1 rounded bg-amber-600 px-1 text-[10px] font-medium text-white">
+                            ref
+                          </span>
+                        )}
+                      </div>
+                      {/* Wave 7 fix-2 — per-slot type dropdown.
+                          Native <select> for zero extra component
+                          deps. Stop propagation so clicks don't
+                          re-trigger the parent file picker. */}
+                      <select
+                        value={type}
+                        onChange={(e) => {
                           e.stopPropagation();
-                          removePhoto(i);
+                          setPhotoType(i, e.target.value as PhotoType);
                         }}
-                        aria-label={`Remove photo ${i + 1}`}
-                        className="absolute right-0.5 top-0.5 rounded-full bg-black/70 px-1.5 text-xs text-white opacity-0 group-hover:opacity-100"
+                        onClick={(e) => e.stopPropagation()}
+                        disabled={busy}
+                        aria-label={`Type for photo ${i + 1}`}
+                        className="w-full rounded border border-neutral-300 bg-white px-1 py-0.5 text-[10px] text-neutral-700 disabled:opacity-50"
                       >
-                        ×
-                      </button>
-                    )}
-                    {i === 0 && (
-                      <span className="absolute left-1 top-1 rounded bg-emerald-600 px-1 text-[10px] font-medium text-white">
-                        cover
-                      </span>
-                    )}
-                  </div>
-                ))}
+                        <option value="product">Product photo</option>
+                        <option value="reference">Reference</option>
+                      </select>
+                    </div>
+                  );
+                })}
               </div>
               {!photoCapReached && (
                 <div className="mt-2 text-center text-[11px] text-neutral-500">
@@ -341,6 +417,12 @@ export default function ProductDraftCard({
                   {PHOTO_MAX - state.photos.length === 1 ? "" : "s"} left.
                 </div>
               )}
+              <div className="mt-2 rounded bg-neutral-50 px-2 py-1 text-[10px] leading-tight text-neutral-500">
+                <strong className="text-neutral-700">Product photo</strong> = shown on
+                storefront, background removed.{" "}
+                <strong className="text-neutral-700">Reference</strong> = spec sheet /
+                screenshot, AI reads it but customers don&apos;t see it.
+              </div>
             </>
           )}
         </div>

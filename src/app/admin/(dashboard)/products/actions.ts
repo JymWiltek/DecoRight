@@ -581,7 +581,13 @@ async function loadPublishGateFacts(
       .from("product_images")
       .select("id", { count: "exact", head: true })
       .eq("product_id", productId)
-      .eq("state", "cutout_approved"),
+      .eq("state", "cutout_approved")
+      // Wave 7 fix-2 — only product-photo cutouts satisfy gate 2.
+      // image_kind='real_photo' rows (Wave 4 "skip rembg" pattern,
+      // now also used for Wave-7 Reference uploads) land at
+      // 'cutout_approved' immediately and would otherwise let an
+      // all-reference draft auto-publish without a storefront image.
+      .eq("image_kind", "cutout"),
   ]);
   return {
     rooms: rowRes.data?.room_slugs ?? [],
@@ -1670,13 +1676,29 @@ export async function parseSpecSheetMergedAction(
  *  matters because server actions are URL-addressable. */
 const BULK_CREATE_MAX = 10;
 
+/** Wave 7 fix-2 — per-photo type the operator picked in the
+ *  bulk-create card dropdown.
+ *
+ *   "product"   — show in storefront, run through rembg,
+ *                 image_kind='cutout'
+ *   "reference" — spec sheet / web screenshot. SKIP rembg (otherwise
+ *                 text gets shredded), HIDE from storefront,
+ *                 image_kind='real_photo' (Wave 4's enum value whose
+ *                 documented semantics already mean "skip rembg")
+ *
+ *  feed_to_ai is true for BOTH so V2 reads everything (V2 wants the
+ *  spec sheet too — that's where the SKU usually lives).
+ */
+export type BulkPhotoType = "product" | "reference";
+
 export type BulkCreateDraft = {
   /** Pre-minted product UUID. The client uses this id when calling
    *  getSignedUploadUrl, so the storage paths line up exactly with
    *  what the existing single-product pipeline expects. */
   productId: string;
-  /** 1-5 photos already direct-uploaded via signed URLs. */
-  images: Array<{ imageId: string; ext: string }>;
+  /** 1-5 photos already direct-uploaded via signed URLs. `type`
+   *  drives the per-row pipeline branch (see BulkPhotoType). */
+  images: Array<{ imageId: string; ext: string; type?: BulkPhotoType }>;
   /** Optional GLB metadata. The client direct-uploaded bytes to
    *  `products/<productId>/model.glb` via the existing signed-URL
    *  flow; we just persist the budget metadata + glb_url here.
@@ -1754,6 +1776,9 @@ export async function bulkCreateProducts(
       if (!ALLOWED_IMAGE_EXTS.has(img.ext.toLowerCase())) {
         return { ok: false, error: `unsupported ext: ${img.ext}` };
       }
+      if (img.type != null && img.type !== "product" && img.type !== "reference") {
+        return { ok: false, error: `invalid image type: ${img.type}` };
+      }
     }
   }
 
@@ -1783,20 +1808,49 @@ export async function bulkCreateProducts(
     }
   }
 
-  // 2. Insert product_images. First image of each draft becomes the
-  //    primary thumbnail (Wave 5 spec — gallery's lead slide). All
-  //    images get feed_to_ai=true so the async tail can pick them up.
+  // 2. Insert product_images. Wave 7 fix-2: per-row pipeline branch
+  //    on img.type.
+  //
+  //    type='product'   — image_kind='cutout', show_on_storefront=true,
+  //                       feed_to_ai=true. Rembg fires on this row
+  //                       in the async tail.
+  //    type='reference' — image_kind='real_photo' (Wave 4 enum value
+  //                       whose pipeline rule is "skip rembg"),
+  //                       show_on_storefront=false (operator-only),
+  //                       feed_to_ai=true (V2 still reads spec sheets;
+  //                       that's where SKUs live).
+  //
+  //    is_primary_thumbnail is reserved for the FIRST product-type
+  //    photo in the deck — a draft with all-reference photos has no
+  //    storefront cover and won't auto-publish (the publish gate
+  //    requires cutout_approved≥1 anyway, which Reference rows skip).
   for (const d of drafts) {
-    const rows = d.images.map((img, i) => ({
-      id: img.imageId,
-      product_id: d.productId,
-      state: "raw" as const,
-      raw_image_url: `${d.productId}/${img.imageId}.${img.ext.toLowerCase()}`,
-      image_kind: "cutout" as const,
-      feed_to_ai: true,
-      show_on_storefront: true,
-      is_primary_thumbnail: i === 0,
-    }));
+    let primaryAssigned = false;
+    const rows = d.images.map((img) => {
+      const type: BulkPhotoType = img.type ?? "product";
+      const isProduct = type === "product";
+      const isPrimary = isProduct && !primaryAssigned;
+      if (isPrimary) primaryAssigned = true;
+      return {
+        id: img.imageId,
+        product_id: d.productId,
+        // Product rows start at 'raw' so the rembg pipeline picks
+        // them up. Reference rows land at 'cutout_approved' right
+        // away (Wave 4 pattern for image_kind='real_photo') — they
+        // skip rembg, and we don't want the /admin "Retry rembg"
+        // chip showing on them.
+        state: (isProduct ? "raw" : "cutout_approved") as
+          | "raw"
+          | "cutout_approved",
+        raw_image_url: `${d.productId}/${img.imageId}.${img.ext.toLowerCase()}`,
+        image_kind: (isProduct ? "cutout" : "real_photo") as
+          | "cutout"
+          | "real_photo",
+        feed_to_ai: true,
+        show_on_storefront: isProduct,
+        is_primary_thumbnail: isPrimary,
+      };
+    });
     const { error } = await supabase.from("product_images").insert(rows);
     if (error) {
       return {
@@ -1947,13 +2001,27 @@ async function processDraftAsync(d: BulkCreateDraft): Promise<void> {
 
   // ── Run rembg (parallel) AND V2 (parallel) concurrently ──
   //
+  // Wave 7 fix-2 — rembg only fires for type='product' images. The
+  // image_kind='real_photo' rows the operator marked as Reference
+  // would otherwise have their text shredded by background removal
+  // (spec sheets / web screenshots). image_kind='real_photo' lands
+  // them at state='cutout_approved' immediately via the INSERT loop
+  // above; rembg has nothing to do here.
+  //
+  // V2 input loop is UNCHANGED — it reads feed_to_ai=true rows, which
+  // includes BOTH Product and Reference photos. That's the whole
+  // point: the SKU sits on the spec sheet (Reference), the visual
+  // identity sits on the hero photo (Product); V2 merges across both.
+  //
   // Promise.allSettled so a single rembg failure (e.g. Replicate 5xx)
   // doesn't reject the whole tail — failed images land at
   // state='cutout_failed' via runRembgForImage's own bookkeeping and
-  // are surfaced by the "Retry rembg" chip. V2 still applies its
-  // fields against the rest.
+  // are surfaced by the "Retry rembg" chip.
+  const productImages = d.images.filter(
+    (img) => (img.type ?? "product") === "product",
+  );
   const rembgPromise = Promise.allSettled(
-    d.images.map((img) =>
+    productImages.map((img) =>
       runRembgForImage(d.productId, img.imageId, undefined, "auto"),
     ),
   );
