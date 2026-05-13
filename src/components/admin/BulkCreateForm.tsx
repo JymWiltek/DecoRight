@@ -28,7 +28,10 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import ProductDraftCard, { type DraftCardState } from "./ProductDraftCard";
+import ProductDraftCard, {
+  type DraftCardState,
+  defaultPhotoType,
+} from "./ProductDraftCard";
 import { getSignedUploadUrl } from "@/app/admin/(dashboard)/products/upload-actions";
 import {
   bulkCreateProducts,
@@ -41,6 +44,7 @@ function newCard(): DraftCardState {
   return {
     cardId: crypto.randomUUID(),
     photos: [],
+    photoTypes: [],
     glbFile: null,
     glbBudget: null,
   };
@@ -86,9 +90,11 @@ export default function BulkCreateForm() {
         setProgress(`Uploading product ${i + 1}/${submittable.length}…`);
         const productId = crypto.randomUUID();
 
-        // Photos: parallel within a card.
+        // Photos: parallel within a card. Each photo carries its
+        // operator-picked `type` so the server action can decide
+        // image_kind + show_on_storefront + whether to fire rembg.
         const imageEntries = await Promise.all(
-          card.photos.map(async (file) => {
+          card.photos.map(async (file, idx) => {
             const ticket = await getSignedUploadUrl(
               "raw_image",
               productId,
@@ -101,9 +107,12 @@ export default function BulkCreateForm() {
             await putBytes(ticket.ticket.signedUrl, file);
             const ext =
               ticket.ticket.path.split(".").pop()?.toLowerCase() ?? "jpg";
+            const type =
+              card.photoTypes[idx] ?? defaultPhotoType(idx);
             return {
               imageId: ticket.ticket.imageId!,
               ext,
+              type,
             };
           }),
         );
