@@ -356,7 +356,10 @@ export default function ProductForm({
           title="Unified thumbnail"
           hint="Auto-runs after a cutout is approved. Use this if the storefront thumbnail looks stale or you re-cropped the cutout."
         >
-          <ReunifyThumbnailButton productId={p?.id ?? null} />
+          <ReunifyThumbnailButton
+            productId={p?.id ?? null}
+            currentThumbnailUrl={p?.thumbnail_url ?? null}
+          />
         </Section>
 
         <Section

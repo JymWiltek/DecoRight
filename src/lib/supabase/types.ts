@@ -269,6 +269,16 @@ export type ProductImageRow = {
    *  in publish gates, RLS, or storefront queries — only powers the
    *  "skipped" admin badge and the $0-spend cost-reporting branch. */
   skip_cutout: boolean;
+  /** Mig 0041 (Wave 8) — non-transparent bbox area ÷ cutout canvas
+   *  area, range [0,1]. Measured after each rembg run by
+   *  lib/rembg/bbox.ts. NULL = never measured (legacy rows, or rows
+   *  that skip rembg like image_kind='real_photo' references). */
+  bbox_ratio: number | null;
+  /** Mig 0041 (Wave 8) — soft cutout warning. 'bbox_too_small' when
+   *  bbox_ratio < BBOX_WARN_THRESHOLD (rembg likely ate a low-contrast
+   *  product's edges). NULL = no warning. Free text, not an enum, so
+   *  future detectors don't need a constraint migration. */
+  cutout_warning: string | null;
   sort_order: number;
   created_at: string;
   updated_at: string;

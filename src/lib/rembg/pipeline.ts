@@ -2,6 +2,7 @@ import "server-only";
 
 import { createServiceRoleClient } from "@/lib/supabase/service";
 import { getSignedRawUrl, uploadCutout } from "@/lib/storage";
+import { computeCutoutBbox } from "./bbox";
 import {
   getDefaultProvider,
   getProvider,
@@ -156,6 +157,13 @@ export async function runRembgForImage(
     });
     const cutoutUrl = await uploadCutout(productId, imageId, result.bytes);
 
+    // Wave 8 — measure how much of the cutout canvas the product
+    // actually fills. A low ratio means rembg ate a low-contrast
+    // product's edges; we tag the row so the edit page shows a soft,
+    // non-blocking warning. Measurement never fails the pipeline
+    // (computeCutoutBbox fails open).
+    const bbox = await computeCutoutBbox(result.bytes);
+
     if (mode === "review") {
       const { error: updErr } = await supabase
         .from("product_images")
@@ -166,6 +174,8 @@ export async function runRembgForImage(
           rembg_cost_usd: result.costUsd,
           // Clear any prior failure tag — the row is healthy again.
           last_error_kind: null,
+          bbox_ratio: bbox.ratio,
+          cutout_warning: bbox.warning,
         })
         .eq("id", imageId);
       if (updErr) return { ok: false, error: { kind: "db", msg: updErr.message } };
@@ -186,6 +196,8 @@ export async function runRembgForImage(
       rembg_provider: string;
       rembg_cost_usd: number | null;
       last_error_kind: null;
+      bbox_ratio: number;
+      cutout_warning: "bbox_too_small" | null;
       is_primary?: boolean;
     } = {
       cutout_image_url: cutoutUrl,
@@ -194,6 +206,8 @@ export async function runRembgForImage(
       rembg_cost_usd: result.costUsd,
       // Clear any prior failure tag — the row is healthy again.
       last_error_kind: null,
+      bbox_ratio: bbox.ratio,
+      cutout_warning: bbox.warning,
     };
     if (!existingPrimary) patch.is_primary = true;
 
