@@ -72,3 +72,5 @@ next-env.d.ts
 /scripts/test-w7c1-real-gpt.ts
 /scripts/test-w7-e2e.mjs
 /scripts/test-w7-bug-repro.mjs
+/scripts/test-w8-ui.mjs
+/scripts/w8-measure-greymarble.mjs

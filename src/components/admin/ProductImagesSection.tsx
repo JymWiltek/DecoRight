@@ -70,6 +70,11 @@ type ImageWithPreview = {
    *  raw bytes in the public cutouts bucket. Drives the "skipped"
    *  badge on the approved card and the $0-spend cost line. */
   skip_cutout: boolean;
+  /** Mig 0041 (Wave 8) — cutout shrink detection. bbox_ratio is the
+   *  fraction of canvas the product fills; cutout_warning is
+   *  'bbox_too_small' when rembg likely ate a low-contrast edge. */
+  bbox_ratio: number | null;
+  cutout_warning: string | null;
   created_at: string;
   raw_preview_url: string | null;
 };
@@ -431,6 +436,22 @@ function ImageCard({
       {image.state === "cutout_approved" && (
         <ImageToggleRow image={image} returnTo={returnTo} />
       )}
+
+      {/* Wave 8 — low-contrast cutout shrink warning. Soft + non-
+          blocking: the operator can still publish. Shows the measured
+          fill percentage so they can judge whether to re-shoot, retry
+          rembg, or accept it. Only on approved rows that carry the
+          'bbox_too_small' tag (mig 0041). */}
+      {image.state === "cutout_approved" &&
+        image.cutout_warning === "bbox_too_small" && (
+          <p className="mt-2 rounded bg-rose-50 px-2 py-1 text-[11px] leading-snug text-rose-700">
+            ⚠️ Cutout 可能缩水 (产品占
+            {image.bbox_ratio != null
+              ? ` ${Math.round(image.bbox_ratio * 100)}%`
+              : ""}
+            )，建议重抠或手动处理
+          </p>
+        )}
 
       {/* state-specific inline actions — kept minimal. The happy path
           (cutout_approved) needs no buttons; the × on the thumbnail
