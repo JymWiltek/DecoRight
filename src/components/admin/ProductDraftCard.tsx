@@ -34,14 +34,35 @@ const PHOTO_MAX = 5;
 const PHOTO_ACCEPT = "image/jpeg,image/png,image/webp";
 const PHOTO_MIMES = new Set(["image/jpeg", "image/png", "image/webp"]);
 const GLB_ACCEPT = ".glb,model/gltf-binary,application/octet-stream";
+const FBX_ACCEPT = ".fbx,application/octet-stream";
 const PHOTO_MAX_MB = 8;
 const GLB_MAX_MB = 60;
+// Wave 9 — FBX original for paid designer downloads. 100MB cap is
+// the same Wave 9 admin edit page uses; the models bucket was bumped
+// to 120MB in mig 0042 so this fits with headroom.
+const FBX_MAX_MB = 100;
+// Wave 9 — hard cap on real dimensions to keep typos from producing
+// absurd AR scales. 10 m matches the single-product action's check.
+const REAL_DIM_MAX_MM = 10_000;
 
 export type GlbBudgetMeta = {
   sizeKb: number;
   vertexCount: number;
   maxTextureDim: number;
   decodedRamMb: number;
+};
+
+/**
+ * Wave 9 — real product dimensions in mm, per-card. Same shape the
+ * single-product edit page's Price & dimensions section writes into
+ * products.dimensions_mm. NULL means "operator hasn't entered it
+ * yet" — the storefront ModelViewer falls back to the GLB's
+ * intrinsic scale, which is wrong but not broken.
+ */
+export type RealDimensionsMm = {
+  length?: number;
+  width?: number;
+  height?: number;
 };
 
 /** Wave 7 fix-2 — per-photo "what role does this image play".
@@ -71,6 +92,14 @@ export type DraftCardState = {
   photoTypes: PhotoType[];
   glbFile: File | null;
   glbBudget: GlbBudgetMeta | null;
+  /** Wave 9 — FBX original for paid designer downloads. Independent
+   *  of the GLB (operator can attach either, both, or neither). No
+   *  budget metadata: FBX is never rendered in the storefront. */
+  fbxFile: File | null;
+  /** Wave 9 — real-world dimensions in mm. Operator types these from
+   *  the product spec sheet; the storefront ModelViewer rescales
+   *  the loaded GLB so AR placement matches true size. */
+  realDimensions: RealDimensionsMm;
 };
 
 /** Default the per-photo type. First slot is the hero (Product),
@@ -101,11 +130,14 @@ export default function ProductDraftCard({
 }: Props) {
   const photoInputRef = useRef<HTMLInputElement>(null);
   const glbInputRef = useRef<HTMLInputElement>(null);
+  const fbxInputRef = useRef<HTMLInputElement>(null);
   const [photoUrls, setPhotoUrls] = useState<string[]>([]);
   const [photoErrors, setPhotoErrors] = useState<string[]>([]);
   const [glbError, setGlbError] = useState<string | null>(null);
+  const [fbxError, setFbxError] = useState<string | null>(null);
   const [photoDragging, setPhotoDragging] = useState(false);
   const [glbDragging, setGlbDragging] = useState(false);
+  const [fbxDragging, setFbxDragging] = useState(false);
 
   // Object URLs for previews. Revoke on unmount + on photo list
   // change to avoid leaking blob URLs.
@@ -265,6 +297,86 @@ export default function ProductDraftCard({
   function clearGlb() {
     onChange({ ...state, glbFile: null, glbBudget: null });
     setGlbError(null);
+  }
+
+  // ─── Wave 9 — FBX dropzone handlers ───────────────────────
+  //
+  // Mirrors the GLB handlers but skips the decoded-budget pre-check
+  // (FBX never renders in the storefront, so the iOS Safari OOM
+  // gate doesn't apply). Extension-gated rather than MIME-gated
+  // because browsers report "" or "application/octet-stream" for
+  // .fbx in practice.
+
+  function acceptFbx(file: File | null) {
+    setFbxError(null);
+    if (!file) return;
+    if (!/\.fbx$/i.test(file.name)) {
+      setFbxError(`${file.name}: not a .fbx file`);
+      return;
+    }
+    if (file.size > FBX_MAX_MB * 1024 * 1024) {
+      setFbxError(
+        `${file.name}: ${(file.size / 1024 / 1024).toFixed(1)} MB > ${FBX_MAX_MB} MB`,
+      );
+      return;
+    }
+    onChange({ ...state, fbxFile: file });
+  }
+
+  function onFbxPick(e: ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0] ?? null;
+    e.target.value = "";
+    acceptFbx(f);
+  }
+
+  function onFbxDrop(e: DragEvent<HTMLDivElement>) {
+    e.preventDefault();
+    setFbxDragging(false);
+    if (busy) return;
+    const f = e.dataTransfer.files?.[0];
+    acceptFbx(f ?? null);
+  }
+
+  function onFbxDragOver(e: DragEvent<HTMLDivElement>) {
+    e.preventDefault();
+    if (busy) return;
+    if (!fbxDragging) setFbxDragging(true);
+  }
+
+  function onFbxDragLeave(e: DragEvent<HTMLDivElement>) {
+    if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+    setFbxDragging(false);
+  }
+
+  function clearFbx() {
+    onChange({ ...state, fbxFile: null });
+    setFbxError(null);
+  }
+
+  // ─── Wave 9 — real dimensions handler ─────────────────────
+  //
+  // Per-axis numeric input. Empty string clears the axis. Values
+  // outside [1, 10000] mm reject silently — the server-side
+  // validation in bulkCreateProducts is the authoritative gate; this
+  // is just UX defense against typos.
+
+  function setDim(axis: keyof RealDimensionsMm, raw: string) {
+    const trimmed = raw.trim();
+    const next: RealDimensionsMm = { ...state.realDimensions };
+    if (trimmed === "") {
+      delete next[axis];
+    } else {
+      const n = Number(trimmed);
+      if (Number.isFinite(n) && n > 0 && n <= REAL_DIM_MAX_MM) {
+        next[axis] = Math.round(n);
+      } else {
+        // Reject the value; leave the previous good one in state.
+        // No setState path; React will still rerender with the
+        // user's typed string in the controlled-input value below.
+        return;
+      }
+    }
+    onChange({ ...state, realDimensions: next });
   }
 
   const photoCapReached = state.photos.length >= PHOTO_MAX;
@@ -521,6 +633,160 @@ export default function ProductDraftCard({
             {glbError}
           </div>
         )}
+      </div>
+
+      {/* Wave 9 — FBX dropzone (optional, paid designer download).
+          Mirrors the GLB dropzone shape for visual parity with the
+          single-product edit page's 3D MODELS section. */}
+      <div className="mt-3">
+        <div className="mb-1.5 flex items-center justify-between">
+          <span className="text-xs font-medium uppercase tracking-wide text-neutral-500">
+            FBX original (optional)
+          </span>
+          {state.fbxFile ? (
+            <button
+              type="button"
+              onClick={clearFbx}
+              disabled={busy}
+              className="text-xs text-rose-600 hover:text-rose-800 disabled:opacity-40"
+            >
+              Clear
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => fbxInputRef.current?.click()}
+              disabled={busy}
+              className="text-xs text-sky-700 hover:text-sky-900 disabled:opacity-40"
+            >
+              + Add FBX
+            </button>
+          )}
+        </div>
+        <input
+          ref={fbxInputRef}
+          type="file"
+          accept={FBX_ACCEPT}
+          onChange={onFbxPick}
+          className="hidden"
+          data-testid={`fbx-input-${index}`}
+        />
+        <div
+          onDrop={onFbxDrop}
+          onDragOver={onFbxDragOver}
+          onDragLeave={onFbxDragLeave}
+          onClick={() => {
+            if (!busy && !state.fbxFile) fbxInputRef.current?.click();
+          }}
+          role="button"
+          tabIndex={0}
+          aria-label={`Drop FBX for product ${index + 1}`}
+          onKeyDown={(e) => {
+            if (
+              (e.key === "Enter" || e.key === " ") &&
+              !busy &&
+              !state.fbxFile
+            ) {
+              e.preventDefault();
+              fbxInputRef.current?.click();
+            }
+          }}
+          className={`rounded-md border-2 border-dashed p-3 transition ${
+            busy
+              ? "cursor-not-allowed border-neutral-300 bg-neutral-50 opacity-60"
+              : state.fbxFile
+                ? "cursor-default border-neutral-200 bg-neutral-50"
+                : fbxDragging
+                  ? "cursor-pointer border-black bg-neutral-100"
+                  : "cursor-pointer border-neutral-300 bg-neutral-50 hover:border-neutral-500"
+          }`}
+        >
+          {state.fbxFile ? (
+            <div className="text-xs text-neutral-700">
+              <div className="font-mono">{state.fbxFile.name}</div>
+              <div className="mt-0.5 text-[11px] text-neutral-500">
+                {(state.fbxFile.size / 1024).toFixed(0)} KB · designer download
+              </div>
+            </div>
+          ) : (
+            <div className="px-3 py-3 text-center text-xs text-neutral-500">
+              Drop a .fbx here, or click — for designer downloads (3ds Max
+              / Maya / SketchUp). Max {FBX_MAX_MB} MB.
+            </div>
+          )}
+        </div>
+        {fbxError && (
+          <div className="mt-1 rounded bg-rose-50 px-2 py-1 text-[11px] text-rose-700">
+            {fbxError}
+          </div>
+        )}
+      </div>
+
+      {/* Wave 9 — real product dimensions in mm. Same shape as the
+          single-product Price & dimensions section (length / width /
+          height), persisted to products.dimensions_mm JSONB. The
+          storefront ModelViewer rescales the loaded GLB uniformly
+          so AR placement matches true size. Optional — null fields
+          fall back to the GLB's intrinsic scale. */}
+      <div className="mt-3">
+        <div className="mb-1.5 flex items-center justify-between">
+          <span className="text-xs font-medium uppercase tracking-wide text-neutral-500">
+            Real dimensions (mm) — optional, drives AR scale
+          </span>
+        </div>
+        <div className="grid grid-cols-3 gap-2">
+          <label className="flex flex-col gap-1">
+            <span className="text-[10px] uppercase text-neutral-500">
+              Length
+            </span>
+            <input
+              type="number"
+              inputMode="numeric"
+              min={1}
+              max={REAL_DIM_MAX_MM}
+              value={state.realDimensions.length ?? ""}
+              onChange={(e) => setDim("length", e.target.value)}
+              disabled={busy}
+              placeholder="mm"
+              data-testid={`dim-length-${index}`}
+              className="w-full rounded border border-neutral-300 bg-white px-2 py-1 text-xs text-neutral-800 disabled:opacity-50"
+            />
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-[10px] uppercase text-neutral-500">
+              Width
+            </span>
+            <input
+              type="number"
+              inputMode="numeric"
+              min={1}
+              max={REAL_DIM_MAX_MM}
+              value={state.realDimensions.width ?? ""}
+              onChange={(e) => setDim("width", e.target.value)}
+              disabled={busy}
+              placeholder="mm"
+              data-testid={`dim-width-${index}`}
+              className="w-full rounded border border-neutral-300 bg-white px-2 py-1 text-xs text-neutral-800 disabled:opacity-50"
+            />
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-[10px] uppercase text-neutral-500">
+              Height
+            </span>
+            <input
+              type="number"
+              inputMode="numeric"
+              min={1}
+              max={REAL_DIM_MAX_MM}
+              value={state.realDimensions.height ?? ""}
+              onChange={(e) => setDim("height", e.target.value)}
+              disabled={busy}
+              placeholder="mm"
+              data-testid={`dim-height-${index}`}
+              className="w-full rounded border border-neutral-300 bg-white px-2 py-1 text-xs text-neutral-800 disabled:opacity-50"
+            />
+          </label>
+        </div>
       </div>
     </div>
   );

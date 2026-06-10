@@ -1757,6 +1757,21 @@ export type BulkCreateDraft = {
     maxTextureDim: number | null;
     decodedRamMb: number | null;
   } | null;
+  /** Wave 9 — optional FBX original. Bytes direct-uploaded to
+   *  `products/<productId>/model.fbx` via the new "fbx" signed-URL
+   *  kind. We just persist fbx_url + fbx_size_kb. Independent of
+   *  the GLB block. */
+  fbx?: {
+    sizeKb: number;
+  } | null;
+  /** Wave 9 — optional real-world dimensions in mm. Same shape as
+   *  the existing dimensions_mm JSONB column; the storefront
+   *  ModelViewer reads this to rescale AR placement. */
+  dimensions_mm?: {
+    length?: number;
+    width?: number;
+    height?: number;
+  } | null;
 };
 
 export type BulkCreateResult =
@@ -1908,27 +1923,53 @@ export async function bulkCreateProducts(
     }
   }
 
-  // 3. GLB columns. Bytes already live at
-  //    `products/<productId>/model.glb` (signed-URL flow). We just
-  //    write the public URL + budget metadata the dropzone computed.
+  // 3. Wave 9 — GLB + FBX + dimensions columns, in one UPDATE per
+  //    draft so the row reaches its final shape in one round-trip.
+  //    Bytes already live at the canonical storage paths via the
+  //    signed-URL flow (model.glb / model.fbx).
+  //
+  //    glb_url + budget metadata → for storefront iOS OOM gate
+  //    fbx_url + fbx_size_kb     → for paid designer download button
+  //    dimensions_mm             → drives ModelViewer real-scale prop
+  //    compression_status        → pending, triggers Draco worker
+  //                                in the async tail
   for (const d of drafts) {
-    if (!d.glb) continue;
+    if (!d.glb && !d.fbx && !d.dimensions_mm) continue;
+
+    const update: ProductUpdate = {};
+    if (d.glb) {
+      update.glb_url = glbPublicUrl(d.productId);
+      update.glb_size_kb = d.glb.sizeKb;
+      update.glb_vertex_count = d.glb.vertexCount;
+      update.glb_max_texture_dim = d.glb.maxTextureDim;
+      update.glb_decoded_ram_mb = d.glb.decodedRamMb;
+      update.glb_source = "manual_upload" as const;
+      update.glb_generated_at = new Date().toISOString();
+      // Queue compression. The async tail below fires the dispatcher
+      // after the rembg loop so the operator's response returns
+      // before either worker starts; the compression banner on the
+      // single-product edit page polls and shows progress.
+      update.compression_status = "pending";
+      update.compression_error = null;
+      update.glb_compressed_url = null;
+      update.glb_compressed_size_kb = null;
+    }
+    if (d.fbx) {
+      update.fbx_url = fbxPublicUrl(d.productId);
+      update.fbx_size_kb = d.fbx.sizeKb;
+    }
+    if (d.dimensions_mm) {
+      update.dimensions_mm = d.dimensions_mm;
+    }
+
     const { error } = await supabase
       .from("products")
-      .update({
-        glb_url: glbPublicUrl(d.productId),
-        glb_size_kb: d.glb.sizeKb,
-        glb_vertex_count: d.glb.vertexCount,
-        glb_max_texture_dim: d.glb.maxTextureDim,
-        glb_decoded_ram_mb: d.glb.decodedRamMb,
-        glb_source: "manual_upload" as const,
-        glb_generated_at: new Date().toISOString(),
-      })
+      .update(update)
       .eq("id", d.productId);
     if (error) {
       return {
         ok: false,
-        error: `glb update ${d.productId} failed: ${error.message}`,
+        error: `glb/fbx/dims update ${d.productId} failed: ${error.message}`,
       };
     }
   }
@@ -1951,6 +1992,21 @@ export async function bulkCreateProducts(
         console.error(
           `[bulkCreateProducts] async tail for ${d.productId} threw: ${msg}`,
         );
+      }
+      // Wave 9 — fire Draco compression for drafts that landed a
+      // GLB. Independent of the rembg loop above; the dispatcher
+      // just POSTs to /api/admin/compress-glb with the cron secret,
+      // which has its own maxDuration=120 budget. Fire-and-forget
+      // so a failed compression doesn't block the next draft.
+      if (d.glb) {
+        try {
+          await dispatchGlbCompression(d.productId);
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          console.error(
+            `[bulkCreateProducts] compression dispatch for ${d.productId} threw: ${msg}`,
+          );
+        }
       }
     }
   });

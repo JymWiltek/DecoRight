@@ -47,6 +47,12 @@ function newCard(): DraftCardState {
     photoTypes: [],
     glbFile: null,
     glbBudget: null,
+    // Wave 9 — bulk-create now matches the single-product edit page:
+    // FBX original (for paid designer downloads) + real dimensions
+    // (drives storefront AR scale). Both optional; empty values fall
+    // through to the same defaults a legacy product gets.
+    fbxFile: null,
+    realDimensions: {},
   };
 }
 
@@ -138,7 +144,42 @@ export default function BulkCreateForm() {
           };
         }
 
-        drafts.push({ productId, images: imageEntries, glb: glbMeta });
+        // Wave 9 — FBX original (optional, paid designer download).
+        // Independent of the GLB: operator can attach either, both,
+        // or neither. Same signed-URL flow as single-product edit.
+        let fbxMeta: BulkCreateDraft["fbx"] = null;
+        if (card.fbxFile) {
+          const ticket = await getSignedUploadUrl(
+            "fbx",
+            productId,
+            card.fbxFile.name,
+            card.fbxFile.type || "application/octet-stream",
+          );
+          if (!ticket.ok) {
+            throw new Error(`FBX signed URL: ${ticket.error}`);
+          }
+          await putBytes(ticket.ticket.signedUrl, card.fbxFile);
+          fbxMeta = {
+            sizeKb: Math.round(card.fbxFile.size / 1024),
+          };
+        }
+
+        // Wave 9 — real dimensions (mm). Null when the operator left
+        // every field empty; the server treats that as "use the GLB's
+        // intrinsic scale on the storefront" (legacy fallback).
+        const dims = card.realDimensions;
+        const dimensions_mm =
+          dims.length != null || dims.width != null || dims.height != null
+            ? dims
+            : null;
+
+        drafts.push({
+          productId,
+          images: imageEntries,
+          glb: glbMeta,
+          fbx: fbxMeta,
+          dimensions_mm,
+        });
       }
 
       setProgress(
