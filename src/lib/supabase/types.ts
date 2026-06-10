@@ -65,6 +65,31 @@ export type ProductRow = {
   glb_vertex_count: number | null;
   glb_max_texture_dim: number | null;
   glb_decoded_ram_mb: number | null;
+  // ── Wave 9 dual-file pipeline (mig 0042) ────────────────────
+  // glb_url above stores the HIGH-QUALITY original (40 MB+,
+  // dual-upload path) OR the legacy Meshy-generated GLB.
+  // glb_compressed_url is the Draco-compressed AR file
+  // (3-5 MB) produced server-side by lib/glb-compression.
+  // Storefront prefers compressed when compression_status='done';
+  // legacy/Meshy products with NULL compressed fields keep
+  // rendering via glb_url + the iOS OOM gate. The two paths
+  // co-exist so old products never break.
+  glb_compressed_url: string | null;
+  glb_compressed_size_kb: number | null;
+  // FBX original — paid designer download (3ds Max / Maya /
+  // SketchUp / Blender). Bit-exact, never touched by the
+  // pipeline. Path: models/products/<id>/model.fbx.
+  fbx_url: string | null;
+  fbx_size_kb: number | null;
+  // Compression worker lifecycle. CHECK constraint in mig 0042
+  // pins the allowed values; the TS union mirrors that.
+  //   NULL          — no Wave 9 upload (legacy / Meshy-only row)
+  //   'pending'     — operator just uploaded, worker not started
+  //   'processing'  — Draco compression in flight
+  //   'done'        — glb_compressed_url populated, storefront uses it
+  //   'failed'      — see compression_error; Retry button available
+  compression_status: "pending" | "processing" | "done" | "failed" | null;
+  compression_error: string | null;
   thumbnail_url: string | null;
   status: ProductStatus;
   ai_filled_fields: string[];
@@ -140,6 +165,13 @@ export type ProductInsert = {
   glb_vertex_count?: number | null;
   glb_max_texture_dim?: number | null;
   glb_decoded_ram_mb?: number | null;
+  // Wave 9 — mig 0042. See ProductRow above for semantics.
+  glb_compressed_url?: string | null;
+  glb_compressed_size_kb?: number | null;
+  fbx_url?: string | null;
+  fbx_size_kb?: number | null;
+  compression_status?: "pending" | "processing" | "done" | "failed" | null;
+  compression_error?: string | null;
   thumbnail_url?: string | null;
   status?: ProductStatus;
   ai_filled_fields?: string[];

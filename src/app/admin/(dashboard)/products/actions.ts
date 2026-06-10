@@ -6,10 +6,12 @@ import { after } from "next/server";
 import { createServiceRoleClient } from "@/lib/supabase/service";
 import {
   glbPublicUrl,
+  fbxPublicUrl,
   uploadThumbnail,
   getSignedRawUrl,
   thumbnailPublicUrl,
 } from "@/lib/storage";
+import { dispatchGlbCompression } from "@/lib/glb-compression-dispatch";
 import { inferProductFields } from "@/lib/ai/infer";
 import {
   parseSpecSheet,
@@ -290,6 +292,17 @@ function uploadErrMsg(err: unknown, defaultLabel: string): string {
 function validGlbPath(path: string | null, productId: string): boolean {
   if (!path) return false;
   return path === `products/${productId}/model.glb`;
+}
+
+/**
+ * Wave 9 — FBX path validation. Same shape as validGlbPath; one FBX
+ * per product at a fixed `products/<id>/model.fbx` path. The signed
+ * upload URL mint enforces this in createSignedFbxUploadUrl, so any
+ * other shape arriving here is a crafted request.
+ */
+function validFbxPath(path: string | null, productId: string): boolean {
+  if (!path) return false;
+  return path === `products/${productId}/model.fbx`;
 }
 
 /**
@@ -672,6 +685,29 @@ export async function updateProduct(id: string, fd: FormData): Promise<void> {
       // operator clears glb_url and re-runs Generate 3D later.
       updates.glb_source = "manual_upload";
       updates.glb_generated_at = new Date().toISOString();
+      // Wave 9 — a fresh .glb invalidates any previous compressed
+      // artifact. Reset the worker state to 'pending' and clear the
+      // stale URL/size so the storefront falls back to glb_url
+      // until the new compression run finishes. Dispatcher fires
+      // below (inside after() after the DB UPDATE commits).
+      updates.compression_status = "pending";
+      updates.compression_error = null;
+      updates.glb_compressed_url = null;
+      updates.glb_compressed_size_kb = null;
+    }
+    // Wave 9 — FBX original (paid designer download). Independent of
+    // the .glb dropzone: an operator can upload one without the other,
+    // or both in the same Save. FBX bytes never enter any pipeline;
+    // we just record the URL/size and serve via signed-URL download.
+    const fbxPathInRequest = str(fd, "fbx_path");
+    if (fbxPathInRequest) {
+      if (!validFbxPath(fbxPathInRequest, id)) {
+        redirect(
+          `/admin/products/${id}/edit?err=upload&msg=${encodeURIComponent("invalid fbx path")}`,
+        );
+      }
+      updates.fbx_url = fbxPublicUrl(id);
+      updates.fbx_size_kb = num(fd, "fbx_size_kb");
     }
     const thumb = fileOrNull(fd, "thumbnail_file");
     if (thumb) {
@@ -722,6 +758,18 @@ export async function updateProduct(id: string, fd: FormData): Promise<void> {
     redirect(
       `/admin/products/${id}/edit?err=db&msg=${encodeURIComponent(error.message)}`,
     );
+  }
+
+  // Wave 9 — kick the Draco compression worker AFTER the row commits
+  // so the operator's Save returns instantly. Only when this request
+  // actually landed a fresh .glb (operators editing copy/dimensions
+  // shouldn't waste 30-60 s of CPU re-compressing the same file).
+  // The dispatcher is fire-and-forget against /api/admin/compress-glb
+  // which has its own maxDuration=120; the row's state machine is:
+  //   'pending' → 'processing' → ('done' | 'failed')
+  // and the banner polls getCompressionStatus every 5 s.
+  if (glbPathInRequest) {
+    after(() => dispatchGlbCompression(id));
   }
 
   // Attach staged raw images (bytes already PUT client-side via signed

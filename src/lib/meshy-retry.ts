@@ -78,16 +78,19 @@ export async function retryMeshyForProductCore(
   //    the row, operator hand-edited via SQL, etc.).
   const { data: row, error: readErr } = await supabase
     .from("products")
-    .select("status, meshy_status, glb_url")
+    .select("status, meshy_status, glb_url, glb_compressed_url, fbx_url")
     .eq("id", productId)
     .maybeSingle();
 
   if (readErr) return { ok: false, error: readErr.message, code: "db_error" };
   if (!row) return { ok: false, error: "product not found", code: "product_missing" };
-  if (row.glb_url) {
+  // Wave 9 — extended mutex. See kickoff for the rationale; Retry
+  // must enforce the same gate as Kickoff or it'd be a back door
+  // around it.
+  if (row.glb_url || row.glb_compressed_url || row.fbx_url) {
     return {
       ok: false,
-      error: "product already has a GLB",
+      error: "product already has a 3D artifact",
       code: "already_has_glb",
     };
   }

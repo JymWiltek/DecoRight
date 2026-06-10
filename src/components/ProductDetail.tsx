@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useTranslations, useLocale } from "next-intl";
 import ProductGallery from "./ProductGallery";
 import ColorSwitcher, { type ColorOption } from "./ColorSwitcher";
-import { buildGlbDownload, formatMYR } from "@/lib/format";
+import { buildGlbDownload, buildFbxDownload, formatMYR } from "@/lib/format";
 import { glbUrlForGallery } from "@/lib/glb-display";
 import type { ProductRow } from "@/lib/supabase/types";
 
@@ -50,6 +50,7 @@ export default function ProductDetail({
   const active = colors[variantIndex];
   const overrideColorHex = active?.hex ?? null;
   const glbDownload = buildGlbDownload(product);
+  const fbxDownload = buildFbxDownload(product);
 
   return (
     <div className="grid gap-8 md:grid-cols-[1.2fr_1fr]">
@@ -66,6 +67,12 @@ export default function ProductDetail({
         galleryUrls={galleryUrls}
         primaryThumbnailUrl={product.thumbnail_url}
         overrideColorHex={overrideColorHex}
+        // Wave 9 — pipe real dimensions through so ModelViewer can
+        // uniformly rescale the loaded model to actual product size
+        // in AR. Null = legacy product without dimensions entered;
+        // ModelViewer falls back to intrinsic scale (the model's
+        // own bbox in meters).
+        realDimensionsMm={product.dimensions_mm ?? null}
         emptyLabel={t("noImages")}
       />
 
@@ -196,6 +203,28 @@ export default function ProductDetail({
             className="inline-flex items-center justify-center rounded-md bg-neutral-100 px-5 py-3 text-sm font-medium text-neutral-800 transition hover:bg-neutral-200"
           >
             {t("downloadGlb")}
+          </a>
+        )}
+
+        {/* Wave 9 — Download .fbx for designer DCC tools (3ds Max /
+            Maya / SketchUp / Blender). Same `?download=<slug>.fbx`
+            query trick as the GLB button so the file lands with a
+            useful name. No paywall this wave — Wave 10 will wrap
+            this with a credit check. */}
+        {fbxDownload && (
+          <a
+            href={fbxDownload.href}
+            download={fbxDownload.filename}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center justify-center rounded-md bg-neutral-100 px-5 py-3 text-sm font-medium text-neutral-800 transition hover:bg-neutral-200"
+          >
+            {t("downloadFbx")}
+            {product.fbx_size_kb != null && (
+              <span className="ml-2 text-xs text-neutral-500">
+                ({(product.fbx_size_kb / 1024).toFixed(1)} MB)
+              </span>
+            )}
           </a>
         )}
 

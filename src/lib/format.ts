@@ -62,3 +62,33 @@ export function buildGlbDownload(product: {
   const href = `${product.glb_url}${sep}download=${encodeURIComponent(filename)}`;
   return { href, filename };
 }
+
+/**
+ * Wave 9 — FBX download URL + filename mirror of buildGlbDownload.
+ * Used by ProductDetail to render the "Download FBX" button (paid
+ * designer artifact). Same slug+UUID-fallback convention as the GLB
+ * download so a designer sees `acme-toilet-suite.fbx` in their
+ * downloads folder, not the Supabase storage path / UUID.
+ *
+ * No paywall in this wave — the button is rendered unconditionally
+ * when fbx_url is set. Wave 10 will wrap this with a credit check.
+ *
+ * Returns null when the product has no FBX (legacy products, products
+ * uploaded GLB-only). Caller can use the null to skip the button.
+ */
+export function buildFbxDownload(product: {
+  id: string;
+  name: string;
+  fbx_url: string | null;
+}): { href: string; filename: string } | null {
+  if (!product.fbx_url) return null;
+  const slug = product.name
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  const filename = `${slug || product.id.slice(0, 8)}.fbx`;
+  const sep = product.fbx_url.includes("?") ? "&" : "?";
+  const href = `${product.fbx_url}${sep}download=${encodeURIComponent(filename)}`;
+  return { href, filename };
+}

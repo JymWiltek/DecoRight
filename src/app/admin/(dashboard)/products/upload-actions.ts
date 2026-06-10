@@ -33,11 +33,13 @@
  * are URL-addressable and the /admin middleware doesn't cover them.
  */
 
+import { after } from "next/server";
 import { requireAdmin } from "@/lib/auth/require-admin";
 import { createServiceRoleClient } from "@/lib/supabase/service";
 import {
   createSignedRawImageUploadUrl,
   createSignedGlbUploadUrl,
+  createSignedFbxUploadUrl,
   createSignedThumbnailUploadUrl,
 } from "@/lib/storage";
 import {
@@ -45,6 +47,8 @@ import {
   flattenRembgError,
 } from "@/lib/rembg/pipeline";
 import type { RemBgProviderId } from "@/lib/rembg";
+import type { Dimensions } from "@/lib/supabase/types";
+import { dispatchGlbCompression } from "@/lib/glb-compression-dispatch";
 import { revalidatePath } from "next/cache";
 
 /**
@@ -60,7 +64,7 @@ const IMAGE_MIME_TO_EXT: Record<string, string> = {
   "image/gif": "gif",
 };
 
-export type SignedUploadKind = "raw_image" | "glb" | "thumbnail";
+export type SignedUploadKind = "raw_image" | "glb" | "fbx" | "thumbnail";
 
 export type SignedUploadTicket = {
   /** Pre-minted storage-path the client PUTs into. */
@@ -124,6 +128,15 @@ export async function getSignedUploadUrl(
   try {
     if (kind === "glb") {
       const ticket = await createSignedGlbUploadUrl(productId);
+      return { ok: true, ticket };
+    }
+
+    if (kind === "fbx") {
+      // Wave 9 — FBX original. Path is fixed per product
+      // (`products/<id>/model.fbx`), upsert=true. Filename / mime
+      // unused: FBX has no registered MIME type, and the dropzone
+      // vets the extension client-side before calling.
+      const ticket = await createSignedFbxUploadUrl(productId);
       return { ok: true, ticket };
     }
 
@@ -228,4 +241,172 @@ export async function retryRembgOne(
   if (res.ok) return { ok: true };
   const flat = flattenRembgError(res.error);
   return { ok: false, code: flat.code, msg: flat.msg };
+}
+
+// ─── Wave 9 — dual-file 3D pipeline server actions ──────────
+//
+// The three actions below back the new dual-upload UI on the
+// product edit page:
+//
+//   • updateRealDimensions  — operator typed the real product
+//     length/width/height in mm. Persists to dimensions_mm JSONB
+//     (the same column legacy product specs use); the storefront
+//     ModelViewer reads this to rescale AR placement to true size.
+//
+//   • retryGlbCompression   — operator clicks Retry on a failed
+//     row. Resets compression_status back to 'pending', clears
+//     compression_error, fires the dispatcher (see lib/
+//     glb-compression-dispatch — kept OUT of this "use server" file
+//     so it isn't accidentally exposed as a public RPC).
+//
+//   • getCompressionStatus  — 5 s polling target for the
+//     CompressionStatusBanner component. Read-only.
+
+const REAL_DIMENSION_MAX_MM = 10_000; // 10 m hard cap — no real product is larger
+
+function isFiniteIntInRange(n: unknown): n is number {
+  return typeof n === "number" && Number.isFinite(n) && Number.isInteger(n)
+    && n > 0 && n <= REAL_DIMENSION_MAX_MM;
+}
+
+export async function updateRealDimensions(
+  productId: string,
+  dims: Partial<Dimensions> | null,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  await requireAdmin();
+
+  if (!productId || productId.length < 10) {
+    return { ok: false, error: "invalid product id" };
+  }
+
+  let value: Dimensions | null = null;
+  if (dims && (dims.length != null || dims.width != null || dims.height != null)) {
+    value = {};
+    if (dims.length != null) {
+      if (!isFiniteIntInRange(dims.length)) {
+        return { ok: false, error: "length out of range (1..10000 mm)" };
+      }
+      value.length = dims.length;
+    }
+    if (dims.width != null) {
+      if (!isFiniteIntInRange(dims.width)) {
+        return { ok: false, error: "width out of range (1..10000 mm)" };
+      }
+      value.width = dims.width;
+    }
+    if (dims.height != null) {
+      if (!isFiniteIntInRange(dims.height)) {
+        return { ok: false, error: "height out of range (1..10000 mm)" };
+      }
+      value.height = dims.height;
+    }
+  }
+
+  const supabase = createServiceRoleClient();
+  const { error } = await supabase
+    .from("products")
+    .update({ dimensions_mm: value })
+    .eq("id", productId);
+  if (error) {
+    return { ok: false, error: error.message };
+  }
+
+  revalidatePath(`/admin/products/${productId}/edit`);
+  revalidatePath(`/product/${productId}`);
+
+  return { ok: true };
+}
+
+export async function retryGlbCompression(
+  productId: string,
+): Promise<{ ok: true } | { ok: false; code: string; msg: string }> {
+  await requireAdmin();
+
+  if (!productId || productId.length < 10) {
+    return { ok: false, code: "invalid_id", msg: "invalid product id" };
+  }
+
+  const supabase = createServiceRoleClient();
+
+  const { data: row, error: readErr } = await supabase
+    .from("products")
+    .select("id, glb_url, compression_status")
+    .eq("id", productId)
+    .maybeSingle();
+  if (readErr) {
+    return { ok: false, code: "db", msg: readErr.message };
+  }
+  if (!row) {
+    return { ok: false, code: "not_found", msg: "product not found" };
+  }
+  if (!row.glb_url) {
+    return {
+      ok: false,
+      code: "no_glb",
+      msg: "no .glb to compress — upload one first",
+    };
+  }
+
+  const { error: resetErr } = await supabase
+    .from("products")
+    .update({
+      compression_status: "pending",
+      compression_error: null,
+      glb_compressed_url: null,
+      glb_compressed_size_kb: null,
+    })
+    .eq("id", productId);
+  if (resetErr) {
+    return { ok: false, code: "db", msg: resetErr.message };
+  }
+
+  after(() => dispatchGlbCompression(productId));
+
+  revalidatePath(`/admin/products/${productId}/edit`);
+  return { ok: true };
+}
+
+export type CompressionStatusSnapshot = {
+  status: "pending" | "processing" | "done" | "failed" | null;
+  error: string | null;
+  compressedSizeKb: number | null;
+  originalSizeKb: number | null;
+};
+
+export async function getCompressionStatus(
+  productId: string,
+): Promise<
+  | { ok: true; snapshot: CompressionStatusSnapshot }
+  | { ok: false; error: string }
+> {
+  await requireAdmin();
+
+  if (!productId || productId.length < 10) {
+    return { ok: false, error: "invalid product id" };
+  }
+
+  const supabase = createServiceRoleClient();
+  const { data, error } = await supabase
+    .from("products")
+    .select(
+      "compression_status, compression_error, glb_compressed_size_kb, glb_size_kb",
+    )
+    .eq("id", productId)
+    .maybeSingle();
+  if (error) {
+    return { ok: false, error: error.message };
+  }
+  if (!data) {
+    return { ok: false, error: "product not found" };
+  }
+
+  return {
+    ok: true,
+    snapshot: {
+      status: (data.compression_status as CompressionStatusSnapshot["status"]) ?? null,
+      error: data.compression_error,
+      compressedSizeKb: data.glb_compressed_size_kb,
+      originalSizeKb: data.glb_size_kb,
+    },
+  };
 }

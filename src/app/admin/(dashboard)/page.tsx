@@ -727,6 +727,46 @@ export default async function AdminProductsPage({
                       <div>
                         {p.glb_url ? `${p.glb_size_kb ?? "?"} KB` : "—"}
                       </div>
+                      {/* Wave 9 — Draco compression status chip.
+                          Mounts only when a compression has been
+                          attempted (status != null). NULL = legacy
+                          row + brand-new draft, no chip. */}
+                      {p.compression_status === "pending" && (
+                        <div className="mt-0.5">
+                          <span className="inline-flex items-center gap-1 rounded-full bg-neutral-100 px-2 py-0.5 text-[10px] font-medium text-neutral-600 ring-1 ring-neutral-200">
+                            ⌛ queued
+                          </span>
+                        </div>
+                      )}
+                      {p.compression_status === "processing" && (
+                        <div className="mt-0.5">
+                          <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-medium text-blue-700 ring-1 ring-blue-200">
+                            ↻ compressing
+                          </span>
+                        </div>
+                      )}
+                      {p.compression_status === "done" &&
+                        p.glb_compressed_size_kb != null && (
+                          <div className="mt-0.5">
+                            <span
+                              className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700 ring-1 ring-emerald-200"
+                              title={`AR file: ${p.glb_compressed_size_kb} KB`}
+                            >
+                              ✓ {(p.glb_compressed_size_kb / 1024).toFixed(1)} MB AR
+                            </span>
+                          </div>
+                        )}
+                      {p.compression_status === "failed" && (
+                        <div className="mt-0.5">
+                          <Link
+                            href={`/admin/products/${p.id}/edit`}
+                            className="inline-flex items-center gap-1 rounded-full bg-rose-50 px-2 py-0.5 text-[10px] font-medium text-rose-700 ring-1 ring-rose-200 hover:bg-rose-100"
+                            title={(p.compression_error || "").slice(0, 200)}
+                          >
+                            ✗ compress failed
+                          </Link>
+                        </div>
+                      )}
                       {/* Wave 2A · Commit 6: surface the new "GLB
                           ready, awaiting Publish" intermediate state
                           on the list. The held-back-status auto-promote

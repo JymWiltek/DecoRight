@@ -10,6 +10,11 @@ type ModelViewerElement = HTMLElement & {
       };
     }>;
   };
+  /** Wave 9 — model-viewer 4.x exposes the loaded model's bbox via
+   *  this method. Returns a Vector3 in METERS (the gltf default unit
+   *  is meters). Used to compute the real-world scale factor against
+   *  the operator-entered dimensions_mm. */
+  getDimensions?: () => { x: number; y: number; z: number } | null;
 };
 
 type Props = {
@@ -18,6 +23,24 @@ type Props = {
   iosSrc?: string | null;
   poster?: string | null;
   overrideColorHex?: string | null;
+  /** Wave 9 — real product dimensions in mm. When provided AND the
+   *  model exposes an intrinsic bbox post-load, we apply a uniform
+   *  `scale` attribute so AR placement matches true size. NULL =
+   *  render at the GLB's intrinsic scale (correct fallback for
+   *  legacy products that never had real dimensions entered).
+   *
+   *  Uniform scale (not per-axis) is the POC Round 4 evidence-based
+   *  choice: AI-generated models preserve product proportions, so
+   *  matching the longest axis gets all three within 1-2% of real
+   *  without risking misaligned axes if the model exporter used a
+   *  different up/forward convention than we expect. Future
+   *  improvement: per-axis scale once we trust the orientation
+   *  convention across all our model sources. */
+  realDimensionsMm?: {
+    length?: number;
+    width?: number;
+    height?: number;
+  } | null;
 };
 
 function hexToRgba(hex: string): [number, number, number, number] {
@@ -28,9 +51,23 @@ function hexToRgba(hex: string): [number, number, number, number] {
   return [r, g, b, 1];
 }
 
-export default function ModelViewer({ src, alt, iosSrc, poster, overrideColorHex }: Props) {
+export default function ModelViewer({
+  src,
+  alt,
+  iosSrc,
+  poster,
+  overrideColorHex,
+  realDimensionsMm,
+}: Props) {
   const ref = useRef<ModelViewerElement | null>(null);
   const loadedRef = useRef(false);
+
+  // Serialize realDimensionsMm so the useEffect dep array can
+  // statically compare its identity. Avoids the
+  // react-hooks/exhaustive-deps "complex expression in deps" warning
+  // while still skipping re-runs when the underlying numbers don't
+  // change. Same shape on every render (server-component object).
+  const dimsKey = realDimensionsMm ? JSON.stringify(realDimensionsMm) : null;
 
   useEffect(() => {
     let cancelled = false;
@@ -42,7 +79,38 @@ export default function ModelViewer({ src, alt, iosSrc, poster, overrideColorHex
     const onLoad = () => {
       if (cancelled) return;
       loadedRef.current = true;
+      applyRealScale();
       applyColor();
+    };
+    /**
+     * Wave 9 — uniform real-world rescale. We read the model's
+     * intrinsic bbox via the `getDimensions()` API exposed on
+     * <model-viewer>, find the longest axis on both the model and
+     * the operator-entered real dimensions, and apply a uniform
+     * scale factor so the longest axes match. Other axes inherit
+     * the same factor; since AI-generated models preserve product
+     * proportions, this lands within 1-2% of real on every axis.
+     *
+     * If anything is missing (no realDimensionsMm, no getDimensions
+     * API on the element, zero-length axes), the function is a
+     * no-op and the model renders at its intrinsic scale — correct
+     * fallback for legacy products without dimensions entered.
+     */
+    const applyRealScale = () => {
+      if (!realDimensionsMm) return;
+      const realMaxMm = Math.max(
+        realDimensionsMm.length ?? 0,
+        realDimensionsMm.width ?? 0,
+        realDimensionsMm.height ?? 0,
+      );
+      if (realMaxMm <= 0) return;
+      const dims = el.getDimensions?.();
+      if (!dims) return;
+      const bboxMaxM = Math.max(dims.x, dims.y, dims.z);
+      if (!Number.isFinite(bboxMaxM) || bboxMaxM <= 0) return;
+      const scale = realMaxMm / 1000 / bboxMaxM;
+      if (!Number.isFinite(scale) || scale <= 0) return;
+      el.setAttribute("scale", `${scale} ${scale} ${scale}`);
     };
     const applyColor = () => {
       if (!overrideColorHex) return;
@@ -55,12 +123,24 @@ export default function ModelViewer({ src, alt, iosSrc, poster, overrideColorHex
       }
     };
     el.addEventListener("load", onLoad);
-    if (loadedRef.current) applyColor();
+    if (loadedRef.current) {
+      applyRealScale();
+      applyColor();
+    }
     return () => {
       cancelled = true;
       el.removeEventListener("load", onLoad);
     };
-  }, [overrideColorHex, src]);
+    // The serialized form of realDimensionsMm is the dep — extracting
+    // to `dimsKey` outside the array satisfies
+    // react-hooks/exhaustive-deps "no complex expression" rule. The
+    // server-component prop is a stable object literal, but
+    // ProductDetail re-renders re-run this effect without dimsKey
+    // gating; the serialized check skips re-runs that don't change
+    // the value. realDimensionsMm itself is read inside applyRealScale
+    // via closure — the lint exception is intentional.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [overrideColorHex, src, dimsKey]);
 
   const Tag = "model-viewer" as unknown as "div";
   const extra: Record<string, unknown> = {
