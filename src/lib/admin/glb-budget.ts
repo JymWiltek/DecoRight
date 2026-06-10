@@ -1,41 +1,50 @@
 /**
- * Decoded-budget pre-check for admin GLB uploads.
+ * Decoded-budget METADATA reader for admin GLB uploads.
  *
- * Why this exists:
- *   The 60 MB Storage bucket cap is a useful UX gate but it does NOT
- *   correlate with iOS Safari's tab heap budget. A small file with a
- *   high vertex count or a 4096² texture can still OOM the iOS
- *   renderer process during decode (the /product/9dbd6623 incident).
- *   This module reads vertex count + image dimensions out of the
- *   .glb header WITHOUT loading any WASM, then refuses uploads
- *   whose decoded representation would blow past the safe budget.
+ * What this used to be (pre-Wave-9):
+ *   A hard upload gate. The module read vertex count + image
+ *   dimensions out of the .glb header and REFUSED uploads whose
+ *   decoded representation would blow past iOS Safari's tab heap
+ *   budget. Operators had to manually compress at gltf.report before
+ *   re-trying.
  *
- *   Output is also persisted to the products table (mig 0031:
- *   glb_vertex_count, glb_max_texture_dim, glb_decoded_ram_mb) so
- *   the storefront can SSR-gate over-budget assets — see
- *   `lib/glb-display#glbUrlForGallery`.
+ * What it is now (Wave 9):
+ *   Just a metadata reader. Wave 9's server-side Draco pipeline
+ *   auto-compresses every uploaded .glb to a 3-5 MB AR file (see
+ *   `lib/glb-compression`), so the iOS OOM risk that motivated the
+ *   gate no longer applies to what the storefront actually serves.
+ *   We still compute the report and persist it (mig 0031:
+ *   glb_vertex_count, glb_max_texture_dim, glb_decoded_ram_mb)
+ *   because legacy products without compression metadata still hit
+ *   the SSR gate in `lib/glb-display#glbUrlForGallery` — that gate
+ *   reads these columns to decide whether to mount <model-viewer>
+ *   for un-compressed-yet products.
+ *
+ *   The Wave 9 fix: never THROW from this module. Callers always get
+ *   the report back, never an exception. Parse failures (genuine
+ *   corruption — bad magic, malformed JSON chunk) still throw, but
+ *   "too many vertices for mobile" no longer blocks the upload.
  *
  * Pure JS / no WASM. Runs in single-digit milliseconds on an 8 MB GLB,
- * fast enough to call on every upload without UI lag. The previous
- * iteration of this module shipped alongside a Draco compression
- * pipeline (gltf-transform + draco3dgltf, ~600 KB gzipped); we tore
- * the compression out 2026-05-09 after iOS Safari kept crashing on
- * compressed-but-still-heavy assets — Jym now compresses manually
- * via https://gltf.report and uploads the result. The budget check
- * stays because a manual workflow doesn't make assets iOS-safe.
+ * fast enough to call on every upload without UI lag.
  */
 
-/** Caps applied to admin uploads. The storefront uses STRICTER caps
- *  (lib/glb-display) — see that file for the rationale on why server-
- *  side render gating is tighter than upload-time admin gating. */
+/** Decoded-budget caps. Kept for backward-compat with the report's
+ *  `exceeded` flags (DB consumers + the legacy SSR gate read these),
+ *  but Wave 9 NO LONGER throws when they're busted. The storefront's
+ *  `glbUrlForGallery` reads the persisted metadata + these caps to
+ *  decide whether to mount <model-viewer> for un-compressed-yet
+ *  products. */
 export const MAX_DECODED_VERTICES = 500_000;
 export const MAX_TEXTURE_DIMENSION = 2048;
 export const MAX_DECODED_RAM_MB = 120;
 
-/** Exceeded-budget facts for the UI. All three are returned even when
- *  only one cap is busted, so a single screen of error copy can show
- *  "you're 3.7× over on verts, 2× over on texture, 1.2× over on RAM"
- *  rather than playing whack-a-mole with one violation at a time. */
+/** Decoded-budget facts persisted to products columns and read by
+ *  the storefront SSR gate. The `exceeded` flags are still computed
+ *  (legacy products without Wave 9 compression metadata use them in
+ *  `lib/glb-display#glbUrlForGallery`), but Wave 9 NO LONGER refuses
+ *  uploads based on them — the server-side Draco worker normalizes
+ *  every accepted GLB into a 3-5 MB AR file regardless. */
 export type GlbBudgetReport = {
   totalVertices: number;
   largestTexture: { width: number; height: number } | null;
@@ -47,6 +56,17 @@ export type GlbBudgetReport = {
   };
 };
 
+/**
+ * Wave 9 kept the class but never throws it from `checkGlbBudget`.
+ * The two dropzone consumers (FileDropzone, ProductDraftCard) still
+ * have `instanceof GlbBudgetExceededError` catch branches; they're
+ * now dead-but-harmless and compile clean. If we ever bring back a
+ * hard gate (e.g. on raw byte size beyond the bucket cap) this is
+ * the surface to throw it from again.
+ *
+ * @deprecated Wave 9 — checkGlbBudget no longer throws this. The
+ *   server-side compression worker handles every accepted GLB.
+ */
 export class GlbBudgetExceededError extends Error {
   readonly report: GlbBudgetReport;
   constructor(message: string, report: GlbBudgetReport) {
@@ -77,8 +97,9 @@ export class GlbBudgetExceededError extends Error {
  *                      tangents too, but using 36 keeps the cap
  *                      generous rather than punishing.
  *
- * Throws GlbBudgetExceededError with a multi-line message covering all
- * three caps + remediation tips if ANY cap is violated.
+ * Wave 9 — never throws on cap violations. Parse failures still
+ * throw (bad magic, corrupted JSON chunk). Callers should treat the
+ * report's `exceeded` flags as advisory metadata, NOT a gate.
  */
 export async function checkGlbBudget(file: File): Promise<GlbBudgetReport> {
   const bytes = new Uint8Array(await file.arrayBuffer());
@@ -135,9 +156,14 @@ export async function checkGlbBudget(file: File): Promise<GlbBudgetReport> {
     exceeded,
   };
 
-  if (exceeded.vertices || exceeded.texture || exceeded.ram) {
-    throw new GlbBudgetExceededError(formatBudgetMessage(report), report);
-  }
+  // Wave 9 — DO NOT throw on cap violations. The server-side Draco
+  // worker (lib/glb-compression) normalizes every accepted GLB into
+  // a 3-5 MB AR file regardless of how much over the mobile caps the
+  // original is. The legacy SSR gate still reads the persisted
+  // metadata for un-compressed-yet rows, but admin upload no longer
+  // bounces operators with "compress at gltf.report first" — that
+  // workflow is the system's job now. `exceeded` flags stay populated
+  // so the report's downstream consumers can still inspect them.
   return report;
 }
 
@@ -338,17 +364,9 @@ function readPngDimensions(
   return { width, height };
 }
 
-/** Friendly multi-line message for the dropzone — admin is English-only. */
-function formatBudgetMessage(report: GlbBudgetReport): string {
-  const tx = report.largestTexture;
-  return [
-    "This 3D model is too detailed for mobile devices.",
-    `- Vertices: ${report.totalVertices.toLocaleString()} (max ${MAX_DECODED_VERTICES.toLocaleString()})`,
-    `- Largest texture: ${tx ? `${tx.width}×${tx.height}` : "n/a"} (max ${MAX_TEXTURE_DIMENSION}×${MAX_TEXTURE_DIMENSION})`,
-    `- Estimated decoded RAM: ${report.estimatedDecodedMb.toFixed(0)} MB (max ${MAX_DECODED_RAM_MB} MB)`,
-    "",
-    "Tips:",
-    "- Compress at https://gltf.report (Draco mesh compression)",
-    "- Or simplify mesh in Blender (Decimate modifier)",
-  ].join("\n");
-}
+// Wave 9 — `formatBudgetMessage` removed alongside the throw above.
+// If a future hard gate comes back (e.g. raw byte size > storage
+// bucket cap), reinstate a focused message instead of resurrecting
+// the old "compress at gltf.report" / "simplify in Blender" copy —
+// the server-side Draco worker has made both pieces of advice
+// obsolete for ordinary mobile-budget violations.

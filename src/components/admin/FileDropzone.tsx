@@ -189,7 +189,12 @@ export default function FileDropzone({
   function vetSize(f: File): string | null {
     if (f.size > maxBytes) {
       const mb = (f.size / 1024 / 1024).toFixed(1);
-      return `${f.name}: ${mb} MB exceeds ${maxFileMb} MB limit. Compress at https://gltf.report (Draco) before uploading.`;
+      // Wave 9 — system auto-compresses on Save, so we don't tell the
+      // operator to manually compress at gltf.report anymore. The
+      // 60 MB / 100 MB cap still exists because Vercel + the storage
+      // bucket have hard limits; over-cap files need a smaller source
+      // (lower-poly Tripo / Meshy regen), not a pre-upload compress.
+      return `${f.name}: ${mb} MB exceeds ${maxFileMb} MB limit. Regenerate at a lower polycount in Tripo / Meshy.`;
     }
     return null;
   }
@@ -376,19 +381,10 @@ export default function FileDropzone({
               Max {maxFileMb} MB · staged for Save
             </div>
             {kind === "glb" && (
-            <div className="mt-1 text-xs text-neutral-400">
-              Tip: if your GLB is over {maxFileMb} MB, compress it at{" "}
-              <a
-                href="https://gltf.report"
-                target="_blank"
-                rel="noopener"
-                className="underline hover:text-neutral-600"
-                onClick={(e) => e.stopPropagation()}
-              >
-                gltf.report
-              </a>{" "}
-              before uploading.
-            </div>
+              <div className="mt-1 text-xs text-neutral-400">
+                Wave 9 auto-compresses to AR-ready ~3 MB on Save. No
+                pre-upload compression needed.
+              </div>
             )}
           </>
         )}

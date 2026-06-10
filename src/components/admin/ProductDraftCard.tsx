@@ -547,6 +547,16 @@ export default function ProductDraftCard({
         )}
       </div>
 
+      {/* 3D MODEL section header — UI parity with single-product edit.
+          Recommended Tripo/Meshy settings + Wave 9 explanation. */}
+      <div className="mb-2 rounded bg-neutral-50 px-2 py-1.5 text-[10px] leading-tight text-neutral-600">
+        <strong className="text-neutral-700">Recommended Tripo/Meshy:</strong>{" "}
+        HD Texture ON, PBR OFF, Polycount 300K-500K. The .glb is
+        auto-compressed to AR-ready ~3 MB on Save; the .fbx is preserved
+        bit-exact for paid designer downloads. Fill real dimensions so
+        the storefront AR shows true size.
+      </div>
+
       {/* GLB */}
       <div>
         <div className="mb-1.5 flex items-center justify-between">

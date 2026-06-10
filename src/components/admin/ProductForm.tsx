@@ -365,7 +365,7 @@ export default function ProductForm({
 
         <Section
           title="3D models"
-          hint="Optional dual upload. Recommended Tripo/Meshy settings: HD ON, PBR OFF, ~1M polycount — Decoright auto-compresses the .glb to AR-ready ~3 MB on Save. The .fbx is preserved bit-exact for paid designer downloads. Set real dimensions in the Price & dimensions section so the storefront AR shows true size."
+          hint="Optional dual upload. Recommended Tripo/Meshy settings: HD Texture ON, PBR OFF, Polycount 300K-500K — Decoright auto-compresses the .glb to AR-ready ~3 MB on Save (no need to compress before uploading). The .fbx is preserved bit-exact for paid designer downloads. Set real dimensions in the Price & dimensions section so the storefront AR shows true size."
         >
           <Field label=".glb (high-quality, becomes the web AR file)">
             <FileDropzone
