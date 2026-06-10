@@ -122,7 +122,9 @@ export async function kickOffMeshyForProduct(
   // and the load is negligible (one row + at most a few image rows).
   const { data: product, error: productErr } = await supabase
     .from("products")
-    .select("id, glb_url, meshy_status, meshy_task_id")
+    .select(
+      "id, glb_url, glb_compressed_url, fbx_url, meshy_status, meshy_task_id",
+    )
     .eq("id", productId)
     .maybeSingle();
 
@@ -133,8 +135,16 @@ export async function kickOffMeshyForProduct(
     return { ok: false, error: "product_missing" };
   }
 
-  // ── 2. "Meshy only runs once" — refuse if a GLB already exists ──
-  if (product.glb_url) {
+  // ── 2. "Meshy only runs once" — refuse if ANY 3D artifact exists ─
+  // Wave 9 extended this beyond glb_url to also cover the new
+  // dual-upload columns (glb_compressed_url + fbx_url). Without
+  // this, an operator who hand-uploads .glb + .fbx and later clicks
+  // "Generate 3D" would silently overwrite their hand-uploaded
+  // GLB at the same `products/<id>/model.glb` storage path,
+  // leaving the compressed.glb / model.fbx pointing at bytes that
+  // no longer match. The mutual exclusion holds regardless of which
+  // flow committed first.
+  if (product.glb_url || product.glb_compressed_url || product.fbx_url) {
     return { ok: false, error: "already_has_glb" };
   }
 

@@ -54,9 +54,13 @@ export const SSR_GATE_MAX_TEXTURE_DIM = 2048;
 export const SSR_GATE_MAX_DECODED_RAM_MB = 100;
 
 /** Subset of ProductRow this gate cares about. Keeps the function
- *  callable from anywhere without dragging in the full row type. */
+ *  callable from anywhere without dragging in the full row type.
+ *  Wave 9 added the two compressed-url fields so the gallery can
+ *  serve the Draco-compressed AR file when ready. */
 export type GlbBudgetFields = {
   glb_url: string | null;
+  glb_compressed_url: string | null;
+  compression_status: "pending" | "processing" | "done" | "failed" | null;
   glb_vertex_count: number | null;
   glb_max_texture_dim: number | null;
   glb_decoded_ram_mb: number | null;
@@ -66,15 +70,28 @@ export type GlbBudgetFields = {
  * Returns the GLB url that should be rendered as a 3D viewer, or
  * null if rendering would be unsafe (per the strict caps above).
  *
- *   No GLB at all                          → null  (nothing to render)
- *   GLB present + metadata NULL            → glb_url (legacy product,
- *                                             render — backward compat)
- *   GLB present + metadata under all caps  → glb_url
- *   GLB present + ANY cap exceeded         → null  (skip <model-viewer>,
- *                                             ProductGallery falls back
- *                                             to styled-thumbnail slide)
+ * Wave 9 preference chain:
+ *   1. glb_compressed_url + status='done'     → return compressed
+ *      Skip the iOS OOM gate — Draco compression by construction
+ *      brings the asset under the gate's thresholds (Round 5 POC:
+ *      41 MB → 3.3 MB renders fine on iPhone). Re-checking would
+ *      require recomputing budget metadata for the compressed file
+ *      and we'd be double-gating an asset whose ORIGINAL already
+ *      passed the admin upload check.
+ *   2. Otherwise fall back to the existing gate against glb_url:
+ *        No GLB at all                          → null
+ *        GLB present + metadata NULL            → glb_url (legacy product,
+ *                                                 render — backward compat)
+ *        GLB present + metadata under all caps  → glb_url
+ *        GLB present + ANY cap exceeded         → null  (skip <model-viewer>,
+ *                                                 ProductGallery falls back
+ *                                                 to styled-thumbnail slide)
  */
 export function glbUrlForGallery(p: GlbBudgetFields): string | null {
+  // Wave 9 — prefer Draco-compressed when ready.
+  if (p.glb_compressed_url && p.compression_status === "done") {
+    return p.glb_compressed_url;
+  }
   if (!p.glb_url) return null;
   // NULL metadata = legacy product. Render. Don't penalize old uploads.
   if (

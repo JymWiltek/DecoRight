@@ -40,6 +40,7 @@ import SubtypePicker from "./SubtypePicker";
 import RoomsPicker from "./RoomsPicker";
 import RegionsPicker from "./RegionsPicker";
 import FileDropzone from "./FileDropzone";
+import CompressionStatusBanner from "./CompressionStatusBanner";
 import SpecSheetAutofillBlock from "./SpecSheetAutofillBlock";
 import ReunifyThumbnailButton from "./ReunifyThumbnailButton";
 import AIInferButton from "./AIInferButton";
@@ -363,11 +364,12 @@ export default function ProductForm({
         </Section>
 
         <Section
-          title="3D model"
-          hint="Optional. .glb file (60 MB max). If your file is larger, compress it at https://gltf.report (Draco) before uploading. Staged for upload — nothing uploads until you click Save."
+          title="3D models"
+          hint="Optional dual upload. Recommended Tripo/Meshy settings: HD ON, PBR OFF, ~1M polycount — Decoright auto-compresses the .glb to AR-ready ~3 MB on Save. The .fbx is preserved bit-exact for paid designer downloads. Set real dimensions in the Price & dimensions section so the storefront AR shows true size."
         >
-          <Field label=".glb model">
+          <Field label=".glb (high-quality, becomes the web AR file)">
             <FileDropzone
+              kind="glb"
               accept=".glb,model/gltf-binary"
               maxFileMb={60}
               productId={p?.id ?? null}
@@ -376,6 +378,31 @@ export default function ProductForm({
               hint="Drop .glb here, or click to pick"
             />
           </Field>
+          <Field label=".fbx (designer download — 3ds Max / Maya / SketchUp)">
+            <FileDropzone
+              kind="fbx"
+              accept=".fbx,application/octet-stream"
+              maxFileMb={100}
+              productId={p?.id ?? null}
+              currentUrl={p?.fbx_url ?? null}
+              currentMeta={p?.fbx_size_kb != null ? `${p.fbx_size_kb} KB` : null}
+              hint="Drop .fbx here, or click to pick"
+            />
+          </Field>
+          {/* Wave 9 — compression lifecycle banner. Only mounts when
+              compression has ever been attempted (status != null) so
+              legacy products + brand-new drafts stay quiet. */}
+          {p?.id && p.compression_status && (
+            <CompressionStatusBanner
+              productId={p.id}
+              initial={{
+                status: p.compression_status,
+                error: p.compression_error,
+                compressedSizeKb: p.glb_compressed_size_kb,
+                originalSizeKb: p.glb_size_kb,
+              }}
+            />
+          )}
         </Section>
 
         {/* Wave 5 (mig 0038) — Real Photos as a separate section was

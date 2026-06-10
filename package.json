@@ -11,9 +11,14 @@
     "supabase:seed": "tsx --env-file=.env.local scripts/seed-test-products.ts"
   },
   "dependencies": {
+    "@gltf-transform/core": "^4.4.0",
+    "@gltf-transform/extensions": "^4.4.0",
+    "@gltf-transform/functions": "^4.4.0",
     "@google/model-viewer": "^4.2.0",
     "@supabase/ssr": "^0.10.2",
     "@supabase/supabase-js": "^2.103.3",
+    "draco3dgltf": "^1.5.7",
+    "gltf-validator": "^2.0.0-dev.3.10",
     "next": "16.2.4",
     "next-intl": "^4.9.1",
     "openai": "^6.34.0",

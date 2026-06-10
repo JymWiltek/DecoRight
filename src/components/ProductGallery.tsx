@@ -52,6 +52,14 @@ type Props = {
   primaryThumbnailUrl: string | null;
   /** Hex colour override piped into ModelViewer (from ColorSwitcher). */
   overrideColorHex: string | null;
+  /** Wave 9 — real product dimensions in mm, forwarded to ModelViewer
+   *  so AR placement matches true size. Null = legacy product without
+   *  dimensions entered; ModelViewer falls back to intrinsic scale. */
+  realDimensionsMm: {
+    length?: number;
+    width?: number;
+    height?: number;
+  } | null;
   /** Fallback caption shown when nothing can be displayed at all. */
   emptyLabel: string;
 };
@@ -62,6 +70,7 @@ export default function ProductGallery({
   glbUrl,
   primaryThumbnailUrl,
   overrideColorHex,
+  realDimensionsMm,
   emptyLabel,
 }: Props) {
   const t = useTranslations("product");
@@ -113,6 +122,7 @@ export default function ProductGallery({
               alt={current.alt}
               poster={current.poster}
               overrideColorHex={overrideColorHex}
+              realDimensionsMm={realDimensionsMm}
             />
           </ModelViewerErrorBoundary>
         )}

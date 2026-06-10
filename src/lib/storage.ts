@@ -332,6 +332,105 @@ export async function uploadGlb(productId: string, file: File): Promise<string> 
   return data.publicUrl;
 }
 
+// ─── Wave 9 dual-file paths (mig 0042) ──────────────────────
+//
+// The legacy `products/<id>/model.glb` path stays as-is — Meshy +
+// pre-Wave-9 hand-uploads write there. Wave 9 dual-upload also
+// writes the HIGH-QUALITY .glb to that same path (no new helper —
+// `createSignedGlbUploadUrl` above is reused). Two new fixed paths
+// under the same `models` bucket:
+//
+//   products/<id>/compressed.glb   — Draco AR file (server-produced)
+//   products/<id>/model.fbx        — FBX original for designers
+//
+// Bucket size limit was bumped 60 MB → 120 MB by mig 0042 so all
+// three variants per product fit in one bucket.
+
+/**
+ * Mint a signed PUT URL for the FBX original on a product. Fixed
+ * path per product (`products/<id>/model.fbx`), upsert=true — a
+ * re-upload replaces the bytes without needing a delete first.
+ *
+ * Used by the new Wave 9 dual-file dropzone in admin. FBX is the
+ * designer-facing artifact (3ds Max / Maya / SketchUp / Blender);
+ * Decoright never decodes or transforms it — bit-exact passthrough.
+ */
+export async function createSignedFbxUploadUrl(
+  productId: string,
+): Promise<{ signedUrl: string; token: string; path: string }> {
+  const supabase = createServiceRoleClient();
+  const path = `products/${productId}/model.fbx`;
+  const { data, error } = await supabase.storage
+    .from(MODELS_BUCKET)
+    .createSignedUploadUrl(path, { upsert: true });
+  if (error) throw error;
+  return { signedUrl: data.signedUrl, token: data.token, path: data.path };
+}
+
+/**
+ * Resolve the public URL for a product's compressed .glb at the
+ * canonical Wave 9 path. Mirrors `glbPublicUrl` for the legacy GLB.
+ * Caller is expected to append `?v=<timestamp>` for cache-busting;
+ * the bucket is public + 1-year Cache-Control, same as legacy.
+ */
+export function glbCompressedPublicUrl(productId: string): string {
+  const supabase = createServiceRoleClient();
+  const { data } = supabase.storage
+    .from(MODELS_BUCKET)
+    .getPublicUrl(`products/${productId}/compressed.glb`);
+  return data.publicUrl;
+}
+
+/**
+ * Resolve the public URL for a product's FBX original. Mirrors
+ * `glbPublicUrl` shape. Used by `updateProduct` after the dropzone
+ * confirms a successful direct PUT so we can store the final URL
+ * (not the storage-path placeholder) in `products.fbx_url`.
+ */
+export function fbxPublicUrl(productId: string): string {
+  const supabase = createServiceRoleClient();
+  const { data } = supabase.storage
+    .from(MODELS_BUCKET)
+    .getPublicUrl(`products/${productId}/model.fbx`);
+  return data.publicUrl;
+}
+
+/**
+ * Server-side upload from raw bytes for the Draco-compressed .glb.
+ * Mirrors `uploadGlbBytes` but writes to the new compressed path
+ * (`products/<id>/compressed.glb`). Called by `lib/glb-compression`
+ * after the @gltf-transform pipeline finishes — bytes never come
+ * from a browser PUT (deliberate: keeps "compressed" semantically
+ * owned by the server-side worker, not something an operator can
+ * manually upload past the validator).
+ *
+ * Returns the public URL with a `?v=<timestamp>` cache-bust because
+ * the bucket sends 1-year Cache-Control; without it, a re-compression
+ * for the same product would keep serving the old bytes from CDN
+ * edges for a year.
+ */
+export async function uploadGlbCompressedBytes(
+  productId: string,
+  bytes: Uint8Array,
+): Promise<string> {
+  const supabase = createServiceRoleClient();
+  const path = `products/${productId}/compressed.glb`;
+  const { error } = await supabase.storage
+    .from(MODELS_BUCKET)
+    .upload(
+      path,
+      new Blob([bytes as BlobPart], { type: "model/gltf-binary" }),
+      {
+        upsert: true,
+        contentType: "model/gltf-binary",
+        cacheControl: "31536000",
+      },
+    );
+  if (error) throw error;
+  const { data } = supabase.storage.from(MODELS_BUCKET).getPublicUrl(path);
+  return `${data.publicUrl}?v=${Date.now()}`;
+}
+
 /**
  * Server-side upload from raw bytes. The Meshy polling worker
  * (Milestone 3) calls this with the Uint8Array `downloadMeshyGlb`

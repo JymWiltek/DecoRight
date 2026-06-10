@@ -1,25 +1,30 @@
 "use client";
 
 /**
- * Single-file dropzone (currently only used for the GLB model).
- * Pure-preview — nothing touches Storage until the form Save /
- * Publish button fires.
+ * Single-file dropzone (used for GLB models and — Wave 9 — FBX
+ * originals). Pure-preview — nothing touches Storage until the
+ * form Save / Publish button fires.
  *
  * Mechanics:
- *   - User picks / drops a .glb → vet format + size → run the
- *     decoded-budget pre-check (lib/admin/glb-budget) → stash in
- *     component state and render filename + size + Clear. No
- *     network IO at this stage.
+ *   - User picks / drops a file → vet format + size → run the
+ *     decoded-budget pre-check (lib/admin/glb-budget — only for
+ *     GLB kinds) → stash in component state and render filename +
+ *     size + Clear. No network IO at this stage.
  *   - On mount we register with <StagedUploadsProvider> (from
- *     ProductForm). When the form submits, the provider invokes our
- *     `run()` which:
- *       1. Mints a signed PUT URL (`getSignedUploadUrl("glb", …)`).
- *       2. PUTs the .glb bytes directly to Supabase Storage. This
- *          step bypasses Vercel's 4.5 MB platform body cap — the
- *          whole reason for the direct-upload refactor.
- *       3. Returns hidden fields (`glb_path`, `glb_size_kb`, plus
- *          the three budget metadata numbers) that ProductForm
- *          appends to its FormData before calling the server action.
+ *     ProductForm) under a kind-specific key (`glb_file` or
+ *     `fbx_file`) so multiple dropzones coexist on the same form
+ *     without colliding. When the form submits, the provider
+ *     invokes our `run()` which:
+ *       1. Mints a signed PUT URL (`getSignedUploadUrl(kind, …)`).
+ *       2. PUTs the bytes directly to Supabase Storage. This step
+ *          bypasses Vercel's 4.5 MB platform body cap — the whole
+ *          reason for the direct-upload refactor.
+ *       3. Returns hidden fields whose names depend on the kind:
+ *            glb        → glb_path + glb_size_kb + 3 budget fields
+ *            fbx        → fbx_path + fbx_size_kb (no budget metadata,
+ *                          FBX never renders in the storefront)
+ *       Those fields get appended to FormData before calling the
+ *       server action so updateProduct can read them.
  *   - On /products/new there's no productId yet, so the dropzone
  *     disables itself with a hint to save the name first. That
  *     keeps us from minting a signed URL for a UUID that doesn't
@@ -62,9 +67,14 @@ type Props = {
    *  (e.g. on /products/new before first save) the dropzone shows a
    *  gentle disabled hint. */
   productId?: string | null;
-  /** Only "glb" is supported today. Kept explicit so a future
-   *  thumbnail dropzone is a one-line change. */
-  kind?: "glb";
+  /** Wave 9 — two kinds supported: "glb" (the high-quality original
+   *  + legacy single-file uploads) and "fbx" (FBX original for paid
+   *  designer downloads). They differ in: (a) signed-URL endpoint —
+   *  see upload-actions getSignedUploadUrl; (b) hidden field names
+   *  returned to FormData — glb_path/glb_size_kb vs fbx_path/fbx_size_kb;
+   *  (c) whether the iOS-OOM budget check runs (glb yes, fbx no —
+   *  fbx never renders in the storefront). */
+  kind?: "glb" | "fbx";
 };
 
 export default function FileDropzone({
@@ -99,14 +109,21 @@ export default function FileDropzone({
   // the registration itself can be mount-once.
   const pickedRef = useLatestRef(picked);
 
-  useRegisterStagedUploader("glb_file", {
-    label: "3D model",
+  // Wave 9 — per-kind staging key so a single form can register
+  // both a .glb dropzone and a .fbx dropzone without colliding.
+  // Provider keys are flat strings; "glb_file" and "fbx_file" mirror
+  // the FormData field-name convention.
+  const stagingKey = kind === "fbx" ? "fbx_file" : "glb_file";
+  const stagingLabel = kind === "fbx" ? "FBX original" : "3D model";
+
+  useRegisterStagedUploader(stagingKey, {
+    label: stagingLabel,
     pendingCount: () => (pickedRef.current ? 1 : 0),
     run: async (onProgress) => {
       const file = pickedRef.current;
       if (!file || !productId) return [];
       onProgress({
-        label: `3D model (${file.name})`,
+        label: `${stagingLabel} (${file.name})`,
         done: 0,
         total: 1,
       });
@@ -116,11 +133,21 @@ export default function FileDropzone({
       }
       await putBytes(r.ticket.signedUrl, file);
       onProgress({
-        label: `3D model (${file.name})`,
+        label: `${stagingLabel} (${file.name})`,
         done: 1,
         total: 1,
       });
       const sizeKb = Math.round(file.size / 1024);
+
+      // Wave 9 — per-kind hidden fields. FBX is recorded URL-only
+      // (no in-browser render → no decoded-budget metadata needed);
+      // GLB keeps the iOS-OOM budget metadata it's always had.
+      if (kind === "fbx") {
+        return [
+          { name: "fbx_path", value: r.ticket.path },
+          { name: "fbx_size_kb", value: String(sizeKb) },
+        ];
+      }
       const fields: StagedField[] = [
         { name: "glb_path", value: r.ticket.path },
         { name: "glb_size_kb", value: String(sizeKb) },
@@ -147,8 +174,12 @@ export default function FileDropzone({
   function vetFormat(f: File): string | null {
     if (!accept) return null;
     const allowed = accept.split(",").map((m) => m.trim());
-    // .glb often has empty / octet-stream type — accept by extension.
-    const extOk = accept.includes(".glb") && /\.glb$/i.test(f.name);
+    // .glb / .fbx often report empty / octet-stream MIME — accept by
+    // extension when the `accept` prop explicitly lists that extension
+    // (covers both Wave 1 .glb and Wave 9 .fbx callers).
+    const extOk =
+      (accept.includes(".glb") && /\.glb$/i.test(f.name)) ||
+      (accept.includes(".fbx") && /\.fbx$/i.test(f.name));
     if (!extOk && f.type && !allowed.includes(f.type)) {
       return `${f.name}: unsupported format (${f.type || "unknown"})`;
     }
@@ -318,7 +349,7 @@ export default function FileDropzone({
         {!productId ? (
           <div className="text-xs">
             Save the product first (just the name works), then drop a{" "}
-            .glb here on the edit page.
+            {kind === "fbx" ? ".fbx" : ".glb"} here on the edit page.
           </div>
         ) : picked ? (
           <>
@@ -344,6 +375,7 @@ export default function FileDropzone({
             <div className="mt-1 text-xs text-neutral-500">
               Max {maxFileMb} MB · staged for Save
             </div>
+            {kind === "glb" && (
             <div className="mt-1 text-xs text-neutral-400">
               Tip: if your GLB is over {maxFileMb} MB, compress it at{" "}
               <a
@@ -357,6 +389,7 @@ export default function FileDropzone({
               </a>{" "}
               before uploading.
             </div>
+            )}
           </>
         )}
       </div>
