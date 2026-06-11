@@ -527,6 +527,178 @@ export type ApiUsageInsert = {
   note?: string | null;
 };
 
+// ─── Wave 10 — designer + credit + bundle skeleton ──────────
+// All 7 tables added by mig 0043. Strictly additive — none of the
+// existing tables above were touched. Every table has Row / Insert
+// pairs because the admin actions need both reads and writes.
+
+export const DESIGNER_STATUSES = ["active", "suspended"] as const;
+export type DesignerStatus = (typeof DESIGNER_STATUSES)[number];
+
+export type DesignerRow = {
+  id: string;
+  email: string;
+  name: string;
+  whatsapp: string | null;
+  password_hash: string | null;
+  status: DesignerStatus;
+  created_at: string;
+  last_login_at: string | null;
+  admin_note: string | null;
+};
+
+export type DesignerInsert = {
+  id?: string;
+  email: string;
+  name: string;
+  whatsapp?: string | null;
+  password_hash?: string | null;
+  status?: DesignerStatus;
+  admin_note?: string | null;
+};
+
+export type CreditBalanceRow = {
+  designer_id: string;
+  credit_balance: number;
+  updated_at: string;
+};
+
+export type CreditBalanceInsert = {
+  designer_id: string;
+  credit_balance?: number;
+  updated_at?: string;
+};
+
+export const CREDIT_TXN_TYPES = [
+  "purchase",
+  "download",
+  "refund",
+  "admin_adjust",
+  "subscription_grant",
+] as const;
+export type CreditTxnType = (typeof CREDIT_TXN_TYPES)[number];
+
+export type CreditTransactionRow = {
+  id: string;
+  designer_id: string;
+  type: CreditTxnType;
+  amount: number;
+  description: string | null;
+  related_product_id: string | null;
+  related_bundle_id: string | null;
+  admin_note: string | null;
+  created_at: string;
+};
+
+export type CreditTransactionInsert = {
+  id?: string;
+  designer_id: string;
+  type: CreditTxnType;
+  amount: number;
+  description?: string | null;
+  related_product_id?: string | null;
+  related_bundle_id?: string | null;
+  admin_note?: string | null;
+};
+
+export const SUBSCRIPTION_PLANS = ["starter", "pro", "studio"] as const;
+export type SubscriptionPlan = (typeof SUBSCRIPTION_PLANS)[number];
+export const SUBSCRIPTION_STATUSES = ["active", "paused", "cancelled"] as const;
+export type SubscriptionStatus = (typeof SUBSCRIPTION_STATUSES)[number];
+
+export type SubscriptionRow = {
+  id: string;
+  designer_id: string;
+  plan: SubscriptionPlan;
+  monthly_credit: number;
+  monthly_price_myr: number;
+  status: SubscriptionStatus;
+  started_at: string;
+  expires_at: string | null;
+  payment_method: string;
+  admin_note: string | null;
+};
+
+export type SubscriptionInsert = {
+  id?: string;
+  designer_id: string;
+  plan: SubscriptionPlan;
+  monthly_credit: number;
+  monthly_price_myr: number;
+  status?: SubscriptionStatus;
+  expires_at?: string | null;
+  payment_method?: string;
+  admin_note?: string | null;
+};
+
+export const BUNDLE_STATUSES = ["draft", "published"] as const;
+export type BundleStatus = (typeof BUNDLE_STATUSES)[number];
+
+export type BundleRow = {
+  id: string;
+  name: string;
+  slug: string;
+  description: string | null;
+  credit_cost: number;
+  status: BundleStatus;
+  created_at: string;
+  cover_image_url: string | null;
+};
+
+export type BundleInsert = {
+  id?: string;
+  name: string;
+  slug: string;
+  description?: string | null;
+  credit_cost: number;
+  status?: BundleStatus;
+  cover_image_url?: string | null;
+};
+
+export type BundleProductRow = {
+  bundle_id: string;
+  product_id: string;
+  sort_order: number;
+};
+
+export const DOWNLOAD_FILE_TYPES = ["fbx", "glb"] as const;
+export type DownloadFileType = (typeof DOWNLOAD_FILE_TYPES)[number];
+
+export type DownloadRow = {
+  id: string;
+  designer_id: string;
+  product_id: string | null;
+  bundle_id: string | null;
+  credit_cost: number;
+  file_type: DownloadFileType;
+  downloaded_at: string;
+  ip_address: string | null;
+  user_agent: string | null;
+};
+
+export type DownloadInsert = {
+  id?: string;
+  designer_id: string;
+  product_id?: string | null;
+  bundle_id?: string | null;
+  credit_cost: number;
+  file_type: DownloadFileType;
+  ip_address?: string | null;
+  user_agent?: string | null;
+};
+
+/** Plan catalog. Cached on the server so the Designer detail page +
+ *  createSubscription action see the same monthly_credit defaults.
+ *  Pricing is in MYR cents. */
+export const SUBSCRIPTION_PLAN_CATALOG: Record<
+  SubscriptionPlan,
+  { monthly_credit: number; monthly_price_myr: number; label: string }
+> = {
+  starter: { monthly_credit: 100, monthly_price_myr: 2900, label: "Starter" },
+  pro: { monthly_credit: 250, monthly_price_myr: 5900, label: "Pro" },
+  studio: { monthly_credit: 600, monthly_price_myr: 9900, label: "Studio" },
+};
+
 export type Database = {
   public: {
     Tables: {
@@ -600,6 +772,48 @@ export type Database = {
         Row: ApiUsageRow;
         Insert: ApiUsageInsert;
         Update: Partial<ApiUsageRow>;
+        Relationships: [];
+      };
+      designers: {
+        Row: DesignerRow;
+        Insert: DesignerInsert;
+        Update: Partial<DesignerRow>;
+        Relationships: [];
+      };
+      credit_balances: {
+        Row: CreditBalanceRow;
+        Insert: CreditBalanceInsert;
+        Update: Partial<CreditBalanceRow>;
+        Relationships: [];
+      };
+      credit_transactions: {
+        Row: CreditTransactionRow;
+        Insert: CreditTransactionInsert;
+        Update: Partial<CreditTransactionRow>;
+        Relationships: [];
+      };
+      subscriptions: {
+        Row: SubscriptionRow;
+        Insert: SubscriptionInsert;
+        Update: Partial<SubscriptionRow>;
+        Relationships: [];
+      };
+      bundles: {
+        Row: BundleRow;
+        Insert: BundleInsert;
+        Update: Partial<BundleRow>;
+        Relationships: [];
+      };
+      bundle_products: {
+        Row: BundleProductRow;
+        Insert: BundleProductRow;
+        Update: Partial<BundleProductRow>;
+        Relationships: [];
+      };
+      downloads: {
+        Row: DownloadRow;
+        Insert: DownloadInsert;
+        Update: Partial<DownloadRow>;
         Relationships: [];
       };
     };
