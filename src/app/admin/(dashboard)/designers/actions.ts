@@ -285,6 +285,63 @@ export type RecordDownloadResult =
   | { ok: false; code: "missing_cost" }
   | { ok: false; code: "db"; error: string };
 
+/**
+ * Wave 10 — form-action wrapper around `recordDownload`. The bare
+ * `recordDownload` below returns JSON (built for the future
+ * designer front-end); this wrapper lets an admin manually record a
+ * download from the Designer detail page when an off-platform sale
+ * happens (designer DMs Jym, pays via QR, Jym fires the download
+ * row + credit spend).
+ */
+export async function recordDownloadAction(fd: FormData): Promise<void> {
+  await requireAdmin();
+  const designerId = String(fd.get("designer_id") ?? "");
+  const productId = String(fd.get("product_id") ?? "").trim();
+  const fileType = String(fd.get("file_type") ?? "") as DownloadFileType;
+  const creditCostRaw = String(fd.get("credit_cost") ?? "");
+
+  if (!UUID_RE.test(designerId)) {
+    redirect(`/admin/designers?err=id&msg=${encodeURIComponent("invalid designer id")}`);
+  }
+  if (!UUID_RE.test(productId)) {
+    redirect(
+      `/admin/designers/${designerId}?err=product&msg=${encodeURIComponent("invalid product id")}`,
+    );
+  }
+  if (fileType !== "fbx" && fileType !== "glb") {
+    redirect(
+      `/admin/designers/${designerId}?err=file_type&msg=${encodeURIComponent("file_type must be fbx or glb")}`,
+    );
+  }
+  const creditCost = Number.parseInt(creditCostRaw, 10);
+  if (!Number.isInteger(creditCost) || creditCost < 0) {
+    redirect(
+      `/admin/designers/${designerId}?err=cost&msg=${encodeURIComponent("credit_cost must be a non-negative integer")}`,
+    );
+  }
+
+  const res = await recordDownload({
+    designerId,
+    productId,
+    fileType,
+    creditCost,
+  });
+  if (!res.ok) {
+    const msg =
+      res.code === "insufficient_credit"
+        ? `insufficient credit (balance ${res.balance}, need ${creditCost})`
+        : "error" in res
+          ? res.error
+          : res.code;
+    redirect(
+      `/admin/designers/${designerId}?err=${res.code}&msg=${encodeURIComponent(msg)}`,
+    );
+  }
+
+  revalidatePath(`/admin/designers/${designerId}`);
+  redirect(`/admin/designers/${designerId}?downloaded=1`);
+}
+
 export async function recordDownload(input: {
   designerId: string;
   productId?: string | null;

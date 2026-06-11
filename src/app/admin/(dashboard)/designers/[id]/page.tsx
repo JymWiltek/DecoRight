@@ -11,6 +11,7 @@ import {
   adminAdjustCreditAction,
   createSubscriptionAction,
   grantSubscriptionCreditAction,
+  recordDownloadAction,
 } from "../actions";
 
 /**
@@ -32,6 +33,7 @@ type Props = {
     adjusted?: string;
     subscribed?: string;
     granted?: string;
+    downloaded?: string;
     err?: string;
     msg?: string;
   }>;
@@ -120,6 +122,9 @@ export default async function DesignerDetailPage({
       {sp.subscribed && <Banner tone="green">Subscription created.</Banner>}
       {sp.granted && (
         <Banner tone="green">Monthly grant added to balance.</Banner>
+      )}
+      {sp.downloaded && (
+        <Banner tone="green">Download recorded.</Banner>
       )}
       {sp.err && (
         <Banner tone="red">
@@ -293,6 +298,63 @@ export default async function DesignerDetailPage({
             </button>
           </form>
         </details>
+      </Section>
+
+      {/* Manual download — for the off-platform sale workflow until the
+          designer front-end ships. Operator pastes a product UUID, picks
+          file type + credit cost, fires; recordDownload writes the
+          ledger row + downloads row atomically. */}
+      <Section title="Manual download record">
+        <form
+          action={recordDownloadAction}
+          className="flex flex-wrap items-end gap-3"
+        >
+          <input type="hidden" name="designer_id" value={id} />
+          <div className="flex-1 min-w-[260px]">
+            <label className="block text-[10px] uppercase text-neutral-500">
+              Product UUID
+            </label>
+            <input
+              name="product_id"
+              required
+              placeholder="paste from /admin"
+              className="w-full rounded border border-neutral-300 px-2 py-1 text-sm font-mono"
+            />
+          </div>
+          <div>
+            <label className="block text-[10px] uppercase text-neutral-500">
+              File type
+            </label>
+            <select
+              name="file_type"
+              required
+              defaultValue="fbx"
+              className="rounded border border-neutral-300 px-2 py-1 text-sm"
+            >
+              <option value="fbx">fbx</option>
+              <option value="glb">glb</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-[10px] uppercase text-neutral-500">
+              Credit cost
+            </label>
+            <input
+              name="credit_cost"
+              type="number"
+              required
+              min={0}
+              placeholder="5"
+              className="w-24 rounded border border-neutral-300 px-2 py-1 text-sm"
+            />
+          </div>
+          <button
+            type="submit"
+            className="rounded bg-black px-3 py-1.5 text-sm font-medium text-white hover:bg-neutral-800"
+          >
+            Record
+          </button>
+        </form>
       </Section>
 
       {/* Credit transactions */}
