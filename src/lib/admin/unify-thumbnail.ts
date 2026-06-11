@@ -23,9 +23,22 @@ export type UnifyResult = {
 };
 
 const CANVAS = 1500;
-/** 8 % padding total per spec. Product fills 80–85 % of canvas. */
-const PADDING_FRACTION = 0.08;
-const PRODUCT_BOX = Math.floor(CANVAS * (1 - 2 * PADDING_FRACTION)); // 1260
+/**
+ * Wave 11 — target fraction of the canvas the product bbox fills on
+ * its LONGEST side. 0.80 → product spans 1200 px of the 1500 px
+ * canvas, leaving 10 % margin per side. Tunable: Jym wanted 80-85 %;
+ * we start at the conservative end so long thin products (faucets)
+ * don't feel cramped against the card edge.
+ *
+ * Pre-Wave-11 this was expressed as PADDING_FRACTION = 0.08 (product
+ * box 1260 px) — but the resize call had `withoutEnlargement: true`,
+ * so cutouts SMALLER than the box were never scaled up. Result:
+ * product size on the card depended on whatever pixel size rembg
+ * happened to output (60-95 % variance), which is the "products look
+ * tiny / cards mostly blank" report this wave fixes.
+ */
+const TARGET_BBOX_FRACTION = 0.8;
+const PRODUCT_BOX = Math.floor(CANVAS * TARGET_BBOX_FRACTION); // 1200
 
 /**
  * Produce the unified thumbnail buffer. Pipeline:
@@ -45,26 +58,102 @@ const PRODUCT_BOX = Math.floor(CANVAS * (1 - 2 * PADDING_FRACTION)); // 1260
  *   4. Composite onto a 1500×1500 white canvas: shadow first, then
  *      the product on top.
  */
+/**
+ * Wave 11 — alpha-aware bbox. sharp's `.trim({background:transparent})`
+ * silently no-ops when the cutout's border pixels aren't EXACTLY
+ * alpha-0 (rembg sometimes leaves alpha 1-5 noise at the edges) or
+ * when the "cutout" is actually an opaque white-background image.
+ * Both failure modes produced the Wave 11 bug report: the untrimmed
+ * canvas got centered instead of the product, so the product rendered
+ * tiny AND off-center with the shadow orphaned at the canvas bottom.
+ *
+ * This scans the alpha channel directly: bbox = the extent of pixels
+ * with alpha > ALPHA_BBOX_THRESHOLD. Deterministic, immune to edge
+ * noise. Returns null when the image has no meaningful transparency
+ * (fully opaque) — caller falls back to color-based trim for the
+ * white-background case.
+ */
+const ALPHA_BBOX_THRESHOLD = 8;
+
+async function alphaBbox(
+  buf: Buffer,
+): Promise<{ left: number; top: number; width: number; height: number } | null> {
+  const { data, info } = await sharp(buf)
+    .ensureAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+  const { width, height, channels } = info;
+  let minX = width;
+  let minY = height;
+  let maxX = -1;
+  let maxY = -1;
+  let transparentSeen = false;
+  for (let y = 0; y < height; y++) {
+    const rowOff = y * width * channels;
+    for (let x = 0; x < width; x++) {
+      const a = data[rowOff + x * channels + 3];
+      if (a <= ALPHA_BBOX_THRESHOLD) {
+        transparentSeen = true;
+        continue;
+      }
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+    }
+  }
+  // No transparency at all → not a transparent cutout; let the caller
+  // try color-trim instead. Also bail if somehow nothing is opaque
+  // (fully transparent input) — caller's metadata check will throw a
+  // clean error.
+  if (!transparentSeen || maxX < minX || maxY < minY) return null;
+  return {
+    left: minX,
+    top: minY,
+    width: maxX - minX + 1,
+    height: maxY - minY + 1,
+  };
+}
+
 export async function unifyThumbnail(inputPng: Uint8Array): Promise<UnifyResult> {
-  // --- 1. trim transparent padding ---
-  const trimmedBuf = await sharp(Buffer.from(inputPng))
-    .trim({ background: { r: 0, g: 0, b: 0, alpha: 0 } })
-    .png()
-    .toBuffer();
+  // --- 1. tight product bbox (Wave 11: alpha-scan, robust) ---
+  const inputBuf = Buffer.from(inputPng);
+  const bbox = await alphaBbox(inputBuf);
+  const trimmedBuf = bbox
+    ? await sharp(inputBuf).extract(bbox).png().toBuffer()
+    : // Opaque input (white-background photo masquerading as a cutout).
+      // Color-based trim removes the uniform border; threshold 12
+      // tolerates JPEG-ish speckle in the white.
+      await sharp(inputBuf).trim({ threshold: 12 }).png().toBuffer();
   const trimmedMeta = await sharp(trimmedBuf).metadata();
   if (!trimmedMeta.width || !trimmedMeta.height) {
     throw new Error("unifyThumbnail: post-trim metadata missing width/height");
   }
 
-  // --- 2. resize to fit PRODUCT_BOX while preserving aspect ---
+  // --- 2. scale product so its longest side spans PRODUCT_BOX ---
+  // Wave 11: scaling now goes BOTH directions. ratio < 1 shrinks an
+  // oversized cutout; ratio > 1 enlarges a small one. Pre-Wave-11 the
+  // `withoutEnlargement: true` flag silently skipped the enlarge case,
+  // so card-fill depended on rembg's output pixel size. Aspect ratio
+  // is always preserved (single uniform ratio on both axes).
+  //
+  // Upscale quality: lanczos3 kernel (sharp's highest-quality
+  // resampler). A 2-3× upscale of a clean cutout reads fine at card
+  // size; the alternative — tiny product floating in white — is the
+  // worse artifact. Extreme upscales (>4×) only happen on degenerate
+  // few-hundred-px cutouts, which the rembg pipeline doesn't produce
+  // from operator photos.
   const ratio = Math.min(
     PRODUCT_BOX / trimmedMeta.width,
     PRODUCT_BOX / trimmedMeta.height,
   );
-  const productW = Math.max(1, Math.floor(trimmedMeta.width * ratio));
-  const productH = Math.max(1, Math.floor(trimmedMeta.height * ratio));
+  const productW = Math.max(1, Math.round(trimmedMeta.width * ratio));
+  const productH = Math.max(1, Math.round(trimmedMeta.height * ratio));
   const productBuf = await sharp(trimmedBuf)
-    .resize(productW, productH, { fit: "inside", withoutEnlargement: true })
+    .resize(productW, productH, {
+      fit: "fill", // exact target — ratio math above already preserved aspect
+      kernel: sharp.kernel.lanczos3,
+    })
     .png()
     .toBuffer();
 
