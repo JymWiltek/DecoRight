@@ -10,6 +10,7 @@ import {
   uploadThumbnail,
   getSignedRawUrl,
   thumbnailPublicUrl,
+  copyRawToCutouts,
 } from "@/lib/storage";
 import { dispatchGlbCompression } from "@/lib/glb-compression-dispatch";
 import { dispatchFbxBundle } from "@/lib/fbx-bundle-dispatch";
@@ -349,19 +350,96 @@ async function attachStagedRawImages(
     };
   }
 
-  const rows = entries.map((e) => ({
-    id: e.imageId,
-    product_id: productId,
-    state: "raw" as const,
-    raw_image_url: `${productId}/${e.imageId}.${e.ext}`,
-    // Mig 0034 — explicit; matches DB default but documents intent.
-    image_kind: "cutout" as const,
-  }));
-  const { error } = await supabase
+  // Wave 11b — DEFAULT = use the raw photo as-is (no rembg).
+  //
+  // Jym switched the catalog to Wiltek's own rendered scene photos
+  // and does NOT want the pipeline auto-removing backgrounds (it
+  // destroys those renders). So new uploads land exactly like a
+  // "Skip — already clean" click (mig 0027): raw bytes copied into
+  // the public cutouts bucket, row at cutout_approved + skip_cutout,
+  // which makes the card + storefront + publish gate all work
+  // WITHOUT touching the original. The operator opts INTO background
+  // removal per-image via the "Remove Background" button (which
+  // resets the row to raw and runs rembg).
+  //
+  // We assign is_primary to the first uploaded image iff the product
+  // has no primary yet — mirrors runRembgForImage / markImageSkipCutout
+  // AUTO-mode convention. The BEFORE-INSERT auto_set_primary_thumbnail
+  // trigger (mig 0038) then sets is_primary_thumbnail=true on it.
+  const { data: existingPrimary } = await supabase
     .from("product_images")
-    .upsert(rows, { onConflict: "id" });
-  if (error) return { ok: false, error: error.message };
-  return { ok: true, ids: rows.map((r) => r.id) };
+    .select("id")
+    .eq("product_id", productId)
+    .eq("is_primary", true)
+    .maybeSingle();
+  let primaryAssigned = !!existingPrimary;
+
+  // Wave 11b — thumbnail_url is now ONLY written by the unify route
+  // (mig 0037 dropped the legacy sync trigger; the unify trigger fires
+  // on UPDATE state-transitions, NOT on the direct INSERT we do here).
+  // So when one of these uploads becomes the product's primary we must
+  // point products.thumbnail_url at its raw public copy ourselves —
+  // otherwise the storefront card renders the "3D · AR" placeholder
+  // until someone clicks "Unify Center". This is the raw-as-is default
+  // ("否则 → 显示原图"); a later Unify Center overwrites it with the
+  // unified PNG ("如果有 unified → 显示 unified").
+  let newPrimaryThumbUrl: string | null = null;
+
+  const ids: string[] = [];
+  for (const e of entries) {
+    const rawPath = `${productId}/${e.imageId}.${e.ext}`;
+    // Copy raw → public cutouts bucket so the card/thumbnail resolve
+    // to a public CDN URL (a private raw path wouldn't render).
+    let publicUrl: string;
+    try {
+      publicUrl = await copyRawToCutouts(rawPath, productId, e.imageId);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { ok: false, error: `copy ${e.imageId}: ${msg}` };
+    }
+    const row: {
+      id: string;
+      product_id: string;
+      state: "cutout_approved";
+      raw_image_url: string;
+      cutout_image_url: string;
+      image_kind: "cutout";
+      skip_cutout: true;
+      is_primary?: boolean;
+    } = {
+      id: e.imageId,
+      product_id: productId,
+      state: "cutout_approved",
+      raw_image_url: rawPath,
+      cutout_image_url: publicUrl,
+      image_kind: "cutout",
+      skip_cutout: true,
+    };
+    if (!primaryAssigned) {
+      row.is_primary = true;
+      primaryAssigned = true;
+      newPrimaryThumbUrl = publicUrl;
+    }
+    const { error } = await supabase
+      .from("product_images")
+      .upsert(row, { onConflict: "id" });
+    if (error) return { ok: false, error: error.message };
+    ids.push(e.imageId);
+  }
+
+  // Point the card at the raw copy if one of these uploads just became
+  // the primary. Guarded on newPrimaryThumbUrl so adding non-primary
+  // images to a product that already has a (possibly unified)
+  // thumbnail never stomps it.
+  if (newPrimaryThumbUrl) {
+    const { error: thumbErr } = await supabase
+      .from("products")
+      .update({ thumbnail_url: newPrimaryThumbUrl })
+      .eq("id", productId);
+    if (thumbErr) return { ok: false, error: thumbErr.message };
+  }
+
+  return { ok: true, ids };
 }
 
 /**
@@ -1886,55 +1964,86 @@ export async function bulkCreateProducts(
     }
   }
 
-  // 2. Insert product_images. Wave 7 fix-2: per-row pipeline branch
-  //    on img.type.
+  // 2. Insert product_images. Wave 11b — DEFAULT = use raw as-is
+  //    (no rembg). Jym switched to Wiltek's rendered scene photos and
+  //    does NOT want bulk-create auto-removing backgrounds (it
+  //    destroyed those renders). So BOTH photo types now land at
+  //    cutout_approved with the raw bytes copied into the public
+  //    cutouts bucket — no rembg fires in the async tail anymore.
   //
   //    type='product'   — image_kind='cutout', show_on_storefront=true,
-  //                       feed_to_ai=true. Rembg fires on this row
-  //                       in the async tail.
-  //    type='reference' — image_kind='real_photo' (Wave 4 enum value
-  //                       whose pipeline rule is "skip rembg"),
-  //                       show_on_storefront=false (operator-only),
-  //                       feed_to_ai=true (V2 still reads spec sheets;
-  //                       that's where SKUs live).
+  //                       skip_cutout=true (used as-is), first one is
+  //                       the primary thumbnail. Operator opts INTO
+  //                       background removal per-image later via the
+  //                       "Remove Background" button.
+  //    type='reference' — image_kind='real_photo', show_on_storefront
+  //                       =false (operator-only spec sheets); still
+  //                       feed_to_ai=true (V2 reads SKUs off them).
   //
-  //    is_primary_thumbnail is reserved for the FIRST product-type
-  //    photo in the deck — a draft with all-reference photos has no
-  //    storefront cover and won't auto-publish (the publish gate
-  //    requires cutout_approved≥1 anyway, which Reference rows skip).
+  //    The publish gate (cutout_approved≥1) is satisfied by the first
+  //    product photo; AI parse in the async tail still runs.
   for (const d of drafts) {
     let primaryAssigned = false;
-    const rows = d.images.map((img) => {
+    let newPrimaryThumbUrl: string | null = null;
+    for (const img of d.images) {
       const type: BulkPhotoType = img.type ?? "product";
       const isProduct = type === "product";
       const isPrimary = isProduct && !primaryAssigned;
       if (isPrimary) primaryAssigned = true;
-      return {
+      const ext = img.ext.toLowerCase();
+      const rawPath = `${d.productId}/${img.imageId}.${ext}`;
+      // Copy raw → public cutouts so the card/thumbnail resolve to a
+      // public CDN URL (skip_cutout = "use as-is, no rembg").
+      let publicUrl: string;
+      try {
+        publicUrl = await copyRawToCutouts(rawPath, d.productId, img.imageId);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return {
+          ok: false,
+          error: `copy ${img.imageId} for ${d.productId} failed: ${msg}`,
+        };
+      }
+      const { error } = await supabase.from("product_images").insert({
         id: img.imageId,
         product_id: d.productId,
-        // Product rows start at 'raw' so the rembg pipeline picks
-        // them up. Reference rows land at 'cutout_approved' right
-        // away (Wave 4 pattern for image_kind='real_photo') — they
-        // skip rembg, and we don't want the /admin "Retry rembg"
-        // chip showing on them.
-        state: (isProduct ? "raw" : "cutout_approved") as
-          | "raw"
-          | "cutout_approved",
-        raw_image_url: `${d.productId}/${img.imageId}.${img.ext.toLowerCase()}`,
+        state: "cutout_approved" as const,
+        raw_image_url: rawPath,
+        cutout_image_url: publicUrl,
         image_kind: (isProduct ? "cutout" : "real_photo") as
           | "cutout"
           | "real_photo",
+        skip_cutout: isProduct, // reference rows aren't "skipped cutouts"
         feed_to_ai: true,
         show_on_storefront: isProduct,
+        is_primary: isPrimary,
         is_primary_thumbnail: isPrimary,
-      };
-    });
-    const { error } = await supabase.from("product_images").insert(rows);
-    if (error) {
-      return {
-        ok: false,
-        error: `image insert for ${d.productId} failed: ${error.message}`,
-      };
+      });
+      if (error) {
+        return {
+          ok: false,
+          error: `image insert for ${d.productId} failed: ${error.message}`,
+        };
+      }
+      if (isPrimary) newPrimaryThumbUrl = publicUrl;
+    }
+    // Wave 11b — set the card thumbnail to the raw copy directly. The
+    // INSERT above does NOT fire the unify trigger (it watches UPDATE
+    // state-transitions), and mig 0037 dropped the legacy sync trigger,
+    // so without this the storefront card shows the "3D · AR"
+    // placeholder. Unify Center later overwrites it with the unified
+    // PNG. (Skip drafts that had no product photo — reference-only.)
+    if (newPrimaryThumbUrl) {
+      const { error: thumbErr } = await supabase
+        .from("products")
+        .update({ thumbnail_url: newPrimaryThumbUrl })
+        .eq("id", d.productId);
+      if (thumbErr) {
+        return {
+          ok: false,
+          error: `thumbnail set for ${d.productId} failed: ${thumbErr.message}`,
+        };
+      }
     }
   }
 
@@ -2118,33 +2227,20 @@ async function processDraftAsync(d: BulkCreateDraft): Promise<void> {
     }
   }
 
-  // ── Run rembg (parallel) AND V2 (parallel) concurrently ──
+  // ── V2 AI parse only — NO rembg (Wave 11b) ──
   //
-  // Wave 7 fix-2 — rembg only fires for type='product' images. The
-  // image_kind='real_photo' rows the operator marked as Reference
-  // would otherwise have their text shredded by background removal
-  // (spec sheets / web screenshots). image_kind='real_photo' lands
-  // them at state='cutout_approved' immediately via the INSERT loop
-  // above; rembg has nothing to do here.
+  // Wave 11b removed the auto-rembg branch entirely. Jym switched the
+  // catalog to Wiltek's rendered scene photos and does not want
+  // bulk-create stripping their backgrounds. The image-insert loop
+  // above now lands every product photo at cutout_approved as-is
+  // (skip_cutout), so there's nothing for rembg to do here and the
+  // publish gate is already satisfied. The operator opts INTO
+  // background removal per-image from the edit page if they ever
+  // want it.
   //
-  // V2 input loop is UNCHANGED — it reads feed_to_ai=true rows, which
-  // includes BOTH Product and Reference photos. That's the whole
-  // point: the SKU sits on the spec sheet (Reference), the visual
-  // identity sits on the hero photo (Product); V2 merges across both.
-  //
-  // Promise.allSettled so a single rembg failure (e.g. Replicate 5xx)
-  // doesn't reject the whole tail — failed images land at
-  // state='cutout_failed' via runRembgForImage's own bookkeeping and
-  // are surfaced by the "Retry rembg" chip.
-  const productImages = d.images.filter(
-    (img) => (img.type ?? "product") === "product",
-  );
-  const rembgPromise = Promise.allSettled(
-    productImages.map((img) =>
-      runRembgForImage(d.productId, img.imageId, undefined, "auto"),
-    ),
-  );
-
+  // V2 still runs: it reads feed_to_ai=true rows (Product + Reference)
+  // and merges the SKU off the spec sheet with the visual identity
+  // off the hero photo.
   let taxonomy: TaxonomyHints;
   try {
     taxonomy = await loadTaxonomyHints();
@@ -2152,26 +2248,19 @@ async function processDraftAsync(d: BulkCreateDraft): Promise<void> {
     console.error(
       `[bulkCreateProducts] taxonomy load failed for ${d.productId}: ${e instanceof Error ? e.message : String(e)}`,
     );
-    // Even if taxonomy load fails, still wait for rembg to finish so
-    // images aren't left hanging.
-    await rembgPromise;
     return;
   }
 
-  const v2Promise =
+  const parsed =
     v2Inputs.length > 0
-      ? parseImagesMergedV2(v2Inputs, taxonomy).catch((e) => {
+      ? await parseImagesMergedV2(v2Inputs, taxonomy).catch((e) => {
           const msg = e instanceof Error ? e.message : String(e);
           console.error(
             `[bulkCreateProducts] V2 parse for ${d.productId} failed: ${msg}`,
           );
           return null;
         })
-      : Promise.resolve(null);
-
-  // Wait for BOTH branches — rembg landing cutout_approved before the
-  // auto-publish gate check, V2 returning so we can apply its fields.
-  const [parsed] = await Promise.all([v2Promise, rembgPromise]);
+      : null;
   if (!parsed) return;
 
   // Drop hallucinated slugs (defense-in-depth — strict-mode schema

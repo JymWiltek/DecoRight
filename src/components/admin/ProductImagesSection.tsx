@@ -1,14 +1,16 @@
 import { UploadDropzone } from "./UploadDropzone";
 import DeleteImageButton from "./DeleteImageButton";
 import RunRembgButton from "./RunRembgButton";
+import UnifyImageButton from "./UnifyImageButton";
 import {
   markImageSkipCutout,
   markImageUnsatisfied,
+  removeBackgroundForImage,
   retryFailedImage,
   setImageToggle,
 } from "@/app/admin/(dashboard)/products/[id]/edit/image-actions";
 import ImageToggleCheckbox from "./ImageToggleCheckbox";
-import type { ImageErrorKind, ImageState } from "@/lib/supabase/types";
+import type { ImageErrorKind, ImageKind, ImageState } from "@/lib/supabase/types";
 import type { ProductRembgUsage } from "@/lib/admin/products";
 
 /**
@@ -68,8 +70,17 @@ type ImageWithPreview = {
    *  clean" on a raw row, in which case the row landed at
    *  cutout_approved with cutout_image_url pointing at a copy of the
    *  raw bytes in the public cutouts bucket. Drives the "skipped"
-   *  badge on the approved card and the $0-spend cost line. */
+   *  badge on the approved card and the $0-spend cost line.
+   *
+   *  Wave 11b: this is now the DEFAULT for fresh uploads (raw kept
+   *  as-is, no rembg). The per-image "Remove Background" button
+   *  upgrades a skip_cutout row to a real rembg cutout. */
   skip_cutout: boolean;
+  /** Mig 0038 — cutout vs real_photo vs spec_sheet. The Wave 11b
+   *  Remove Background / Unify Center buttons only apply to
+   *  image_kind='cutout' rows (reference/spec-sheet photos must not be
+   *  rembg'd or unified). */
+  image_kind: ImageKind;
   /** Mig 0041 (Wave 8) — cutout shrink detection. bbox_ratio is the
    *  fraction of canvas the product fills; cutout_warning is
    *  'bbox_too_small' when rembg likely ate a low-contrast edge. */
@@ -97,6 +108,10 @@ type Props = {
    *  `?skipped=1`, i.e. the operator just marked an image as "Skip —
    *  already clean". Drives the success banner. */
   skipped?: boolean;
+  /** Wave 11b — set when the redirect carries `?bgremoved=1`, i.e. the
+   *  operator just ran "Remove Background" on a previously raw-as-is
+   *  image. Drives a green confirmation banner. */
+  bgremoved?: boolean;
   errCode?: string;
   errMsg?: string;
   /** P0-3: lifetime rembg cost rollup. Lets the section header show
@@ -117,6 +132,7 @@ export default function ProductImagesSection({
   unsatisfied,
   retried,
   skipped,
+  bgremoved,
   errCode,
   errMsg,
   rembgUsage,
@@ -276,6 +292,12 @@ export default function ProductImagesSection({
         <Banner tone="emerald">
           Image marked as already clean — saved to gallery without running
           background removal.
+        </Banner>
+      ) : null}
+      {bgremoved ? (
+        <Banner tone="emerald">
+          Background removed — cutout approved. If this is the primary
+          thumbnail the card was re-unified automatically.
         </Banner>
       ) : null}
 
@@ -490,6 +512,34 @@ function ImageCard({
             )}
           </>
         )}
+
+        {/* Wave 11b — manual processing on the raw-as-is default.
+            Uploads now land at cutout_approved with skip_cutout=true
+            (the original photo, untouched). The operator opts INTO
+            background removal and/or the white-canvas unify per image,
+            because some images are Wiltek scene renders that must NOT
+            be processed. Only on image_kind='cutout' rows —
+            reference/spec-sheet photos are never rembg'd or unified. */}
+        {image.state === "cutout_approved" &&
+          image.image_kind === "cutout" && (
+            <>
+              {image.skip_cutout && (
+                <ActionForm
+                  action={removeBackgroundForImage}
+                  label="✂ Remove Background"
+                  variant="neutral"
+                  imageId={image.id}
+                  productId={image.product_id}
+                  returnTo={returnTo}
+                  title="Run background removal on this image (replaces the original with a transparent cutout)."
+                />
+              )}
+              <UnifyImageButton
+                imageId={image.id}
+                productId={image.product_id}
+              />
+            </>
+          )}
 
         {image.state === "raw" && (
           <>

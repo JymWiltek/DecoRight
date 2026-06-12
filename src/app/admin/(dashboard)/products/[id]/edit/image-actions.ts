@@ -127,6 +127,109 @@ export async function retryFailedImage(fd: FormData): Promise<void> {
 }
 
 /**
+ * Wave 11b — "Remove Background" button on a cutout_approved row that
+ * is currently skip_cutout (the new raw-as-is default upload).
+ *
+ * Uploads now land at cutout_approved with the original photo copied
+ * verbatim (skip_cutout=true) — Jym's Wiltek scene photos must NOT be
+ * auto-processed. This action is the operator opting INTO rembg for one
+ * specific image: reset it to raw (clearing skip_cutout so the result
+ * is a genuine cutout, not a "skipped" copy), then run rembg in AUTO
+ * mode. If the image is the product's primary thumbnail, the
+ * state→cutout_approved transition fires mig 0038's unify trigger,
+ * which re-unifies the card automatically — exactly the clean-card
+ * result the operator asked for. Other images leave the card alone.
+ *
+ * Pre-conditions mirror the button's render guard: row exists, belongs
+ * to the product, and is a cutout-kind image. We don't hard-gate on
+ * state here (retry-from-failed reuses retryFailedImage); this entry
+ * point is specifically the skip→rembg upgrade.
+ */
+export async function removeBackgroundForImage(fd: FormData): Promise<void> {
+  const imageId = fd.get("imageId")?.toString();
+  const productId = fd.get("productId")?.toString();
+  const returnTo = safeReturnTo(fd);
+  const base =
+    returnTo ?? (productId ? `/admin/products/${productId}/edit` : "/admin");
+
+  if (!imageId || !productId) {
+    redirect(withQuery(base, "err", "missing_id"));
+  }
+
+  const supabase = createServiceRoleClient();
+  // Reset to raw so runRembgForImage has a clean slate, and DROP the
+  // skip_cutout flag — the outcome is a real cutout, so the "skipped"
+  // badge + $0-spend accounting must not linger.
+  const { error: resetErr } = await supabase
+    .from("product_images")
+    .update({
+      state: "raw",
+      cutout_image_url: null,
+      skip_cutout: false,
+      rembg_provider: null,
+      rembg_cost_usd: null,
+      last_error_kind: null,
+    })
+    .eq("id", imageId)
+    .eq("product_id", productId);
+  if (resetErr) {
+    redirect(withQuery(withQuery(base, "err", "db"), "msg", resetErr.message));
+  }
+
+  const res = await runRembgForImage(productId, imageId, undefined, "auto");
+  revalidatePath(`/admin/products/${productId}/edit`);
+  revalidatePath(`/admin/cutouts`);
+  revalidatePath(`/admin`);
+  revalidatePath(`/`);
+  revalidatePath(`/product/${productId}`);
+
+  if (!res.ok) {
+    const e = res.error;
+    const msg =
+      e.kind === "rembg" || e.kind === "db"
+        ? e.msg
+        : e.kind === "quota"
+          ? e.cause
+          : e.kind === "no_provider"
+            ? (e.providerId ?? "")
+            : "";
+    redirect(withQuery(withQuery(base, "err", e.kind), "msg", msg));
+  }
+  redirect(withQuery(base, "bgremoved", "1"));
+}
+
+/**
+ * Wave 11b — "Unify Center" support. Sets is_primary_thumbnail=true on
+ * one image so the unify route (which reads is_primary_thumbnail) will
+ * center+scale THIS image onto the white card canvas. Returns a plain
+ * result (no redirect) because the per-image UnifyImageButton client
+ * component calls it directly, then POSTs the unify route itself —
+ * reusing /api/admin/unify-thumbnail as the single source of truth for
+ * products.thumbnail_url.
+ *
+ * The mig 0038 maintain_primary_thumbnail trigger clears the flag on
+ * every other row for the product, so "exactly one primary thumbnail"
+ * holds without us touching peers here.
+ */
+export async function makeImagePrimaryThumbnail(
+  imageId: string,
+  productId: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (!imageId || !productId) {
+    return { ok: false, error: "missing_id" };
+  }
+  const supabase = createServiceRoleClient();
+  const { error } = await supabase
+    .from("product_images")
+    .update({ is_primary_thumbnail: true })
+    .eq("id", imageId)
+    .eq("product_id", productId);
+  if (error) return { ok: false, error: error.message };
+  revalidatePath(`/admin/products/${productId}/edit`);
+  return { ok: true };
+}
+
+/**
  * × button on an approved thumbnail. Operator is saying "the rembg
  * result is fine, but I don't want this photo to represent the
  * product." Different from cutout_rejected (which meant "rembg

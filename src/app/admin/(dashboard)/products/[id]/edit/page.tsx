@@ -29,6 +29,9 @@ type PageProps = {
      *  ProductImagesSection turns this into a green confirmation banner
      *  ("Image marked as already clean — saved without rembg"). */
     skipped?: string;
+    /** Wave 11b — set by removeBackgroundForImage's success redirect.
+     *  Turns into a green "Background removed" banner. */
+    bgremoved?: string;
     processed?: string;
     err?: string;
     msg?: string;
@@ -190,6 +193,7 @@ export default async function EditProductPage({
           unsatisfied={sp.unsatisfied === "1"}
           retried={sp.retried === "1"}
           skipped={sp.skipped === "1"}
+          bgremoved={sp.bgremoved === "1"}
           errCode={rembgErrCode}
           errMsg={rembgErrMsg}
           rembgUsage={rembgUsage}
