@@ -81,6 +81,13 @@ export type ProductRow = {
   // pipeline. Path: models/products/<id>/model.fbx.
   fbx_url: string | null;
   fbx_size_kb: number | null;
+  // Wave 11b (mig 0044) — zip bundle = model.fbx + textures/ folder.
+  // A bare .fbx loads materialless in 3ds Max; the zip ships the
+  // texture maps alongside so import auto-resolves them. Path:
+  // models/products/<id>/fbx-bundle.zip. Storefront prefers this
+  // over fbx_url; NULL = no bundle packaged yet (use bare .fbx).
+  fbx_bundle_url: string | null;
+  fbx_bundle_size_kb: number | null;
   // Compression worker lifecycle. CHECK constraint in mig 0042
   // pins the allowed values; the TS union mirrors that.
   //   NULL          — no Wave 9 upload (legacy / Meshy-only row)
@@ -170,6 +177,8 @@ export type ProductInsert = {
   glb_compressed_size_kb?: number | null;
   fbx_url?: string | null;
   fbx_size_kb?: number | null;
+  fbx_bundle_url?: string | null;
+  fbx_bundle_size_kb?: number | null;
   compression_status?: "pending" | "processing" | "done" | "failed" | null;
   compression_error?: string | null;
   thumbnail_url?: string | null;

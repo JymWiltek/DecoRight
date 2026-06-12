@@ -12,6 +12,7 @@ import {
   thumbnailPublicUrl,
 } from "@/lib/storage";
 import { dispatchGlbCompression } from "@/lib/glb-compression-dispatch";
+import { dispatchFbxBundle } from "@/lib/fbx-bundle-dispatch";
 import { inferProductFields } from "@/lib/ai/infer";
 import {
   parseSpecSheet,
@@ -770,6 +771,20 @@ export async function updateProduct(id: string, fd: FormData): Promise<void> {
   // and the banner polls getCompressionStatus every 5 s.
   if (glbPathInRequest) {
     after(() => dispatchGlbCompression(id));
+  }
+
+  // Wave 11b — (re)build the FBX zip bundle when this save landed a
+  // fresh .fbx OR new texture maps. The .fbx + textures already live
+  // in Storage (signed-URL PUTs); the dispatcher fires the packager
+  // route which zips model.fbx + textures/ and writes fbx_bundle_url.
+  // Fire-and-forget — the bare fbx_url stays the download fallback
+  // until the zip lands.
+  // Re-read fbx_path here (the earlier parse lives inside the upload
+  // try-block scope). str() is pure; cheap to read twice.
+  const fbxPathForBundle = str(fd, "fbx_path");
+  const texturesChanged = str(fd, "textures_changed");
+  if (fbxPathForBundle || texturesChanged) {
+    after(() => dispatchFbxBundle(id));
   }
 
   // Attach staged raw images (bytes already PUT client-side via signed

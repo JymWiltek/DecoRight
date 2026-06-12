@@ -64,31 +64,39 @@ export function buildGlbDownload(product: {
 }
 
 /**
- * Wave 9 — FBX download URL + filename mirror of buildGlbDownload.
- * Used by ProductDetail to render the "Download FBX" button (paid
- * designer artifact). Same slug+UUID-fallback convention as the GLB
- * download so a designer sees `acme-toilet-suite.fbx` in their
- * downloads folder, not the Supabase storage path / UUID.
+ * Wave 9 / Wave 11b — designer download URL + filename.
  *
- * No paywall in this wave — the button is rendered unconditionally
- * when fbx_url is set. Wave 10 will wrap this with a credit check.
+ * Wave 11b: prefer the FBX zip BUNDLE (model.fbx + textures/) when
+ * it exists — a bare .fbx loads materialless in 3ds Max. Falls back
+ * to the bare fbx_url for products packaged before this wave
+ * (data-protection: an existing download never breaks). The filename
+ * extension matches what's actually served (.zip vs .fbx) so the
+ * designer's OS opens it correctly.
  *
- * Returns null when the product has no FBX (legacy products, products
- * uploaded GLB-only). Caller can use the null to skip the button.
+ * Same slug+UUID-fallback convention as buildGlbDownload so a
+ * designer sees `acme-toilet-suite.zip` not a storage UUID.
+ *
+ * No paywall yet — Wave 10 added the credit ledger; the storefront
+ * paywall wraps this in a later wave. Returns null when the product
+ * has neither a bundle nor a bare .fbx.
  */
 export function buildFbxDownload(product: {
   id: string;
   name: string;
   fbx_url: string | null;
+  fbx_bundle_url?: string | null;
 }): { href: string; filename: string } | null {
-  if (!product.fbx_url) return null;
+  const source = product.fbx_bundle_url ?? product.fbx_url;
+  if (!source) return null;
+  const isBundle = !!product.fbx_bundle_url;
   const slug = product.name
     .toLowerCase()
     .normalize("NFKD")
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
-  const filename = `${slug || product.id.slice(0, 8)}.fbx`;
-  const sep = product.fbx_url.includes("?") ? "&" : "?";
-  const href = `${product.fbx_url}${sep}download=${encodeURIComponent(filename)}`;
+  const ext = isBundle ? "zip" : "fbx";
+  const filename = `${slug || product.id.slice(0, 8)}.${ext}`;
+  const sep = source.includes("?") ? "&" : "?";
+  const href = `${source}${sep}download=${encodeURIComponent(filename)}`;
   return { href, filename };
 }

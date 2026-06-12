@@ -5,7 +5,7 @@ import MeshyStatusBanner from "@/components/admin/MeshyStatusBanner";
 import { getProductById, getProductRembgUsage } from "@/lib/admin/products";
 import { loadTaxonomy } from "@/lib/taxonomy";
 import { createServiceRoleClient } from "@/lib/supabase/service";
-import { getSignedRawUrl } from "@/lib/storage";
+import { getSignedRawUrl, listProductTextures } from "@/lib/storage";
 import { providerAvailability } from "@/lib/rembg";
 import { updateProduct } from "../../actions";
 
@@ -102,6 +102,13 @@ export default async function EditProductPage({
 
   const avail = providerAvailability();
 
+  // Wave 11b — texture filenames already in this product's textures/
+  // folder, shown as "in bundle" chips under the texture dropzone.
+  // Fails open: a storage hiccup shouldn't break the edit page.
+  const fbxTextureNames = await listProductTextures(id)
+    .then((paths) => paths.map((p) => p.split("/").pop()!))
+    .catch(() => []);
+
   const action = updateProduct.bind(null, id);
 
   // Route err codes to the right banner.
@@ -153,6 +160,7 @@ export default async function EditProductPage({
       errCode={productErrCode}
       errMsg={productErrMsg}
       aiCandidateImages={aiCandidateImages}
+      fbxTextureNames={fbxTextureNames}
       meshyBanner={
         <MeshyStatusBanner
           productId={id}

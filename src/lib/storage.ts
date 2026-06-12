@@ -368,6 +368,101 @@ export async function createSignedFbxUploadUrl(
 }
 
 /**
+ * Wave 11b — mint a signed PUT URL for one FBX texture map. Textures
+ * live under `products/<id>/textures/<filename>` so the packaging
+ * step can fold the whole folder into the zip's `textures/` dir.
+ *
+ * `filename` is the operator's original name, sanitized: the bundle
+ * must preserve it because the .fbx references its maps BY NAME
+ * (e.g. "basecolor.jpg"). Renaming would break 3ds Max's auto-resolve.
+ * We only strip path separators + leading dots to keep the storage
+ * key safe; the rest of the name passes through.
+ */
+export async function createSignedTextureUploadUrl(
+  productId: string,
+  filename: string,
+): Promise<{ signedUrl: string; token: string; path: string }> {
+  const safe = sanitizeTextureName(filename);
+  const supabase = createServiceRoleClient();
+  const path = `products/${productId}/textures/${safe}`;
+  const { data, error } = await supabase.storage
+    .from(MODELS_BUCKET)
+    .createSignedUploadUrl(path, { upsert: true });
+  if (error) throw error;
+  return { signedUrl: data.signedUrl, token: data.token, path: data.path };
+}
+
+/**
+ * Strip anything that could escape the textures/ prefix or confuse
+ * the zip entry. Keep the extension + base name (3ds Max resolves
+ * maps by exact filename, so we must not mangle it beyond safety).
+ */
+export function sanitizeTextureName(filename: string): string {
+  const base = filename.split(/[\\/]/).pop() ?? filename;
+  return base.replace(/^\.+/, "").replace(/[^a-zA-Z0-9._-]/g, "_");
+}
+
+/**
+ * Wave 11b — list every texture file under a product's textures/
+ * folder. Used by the packaging step to enumerate maps + by the
+ * admin UI to show what's already uploaded. Returns storage keys
+ * (relative to the bucket), not URLs.
+ */
+export async function listProductTextures(
+  productId: string,
+): Promise<string[]> {
+  const supabase = createServiceRoleClient();
+  const prefix = `products/${productId}/textures`;
+  const { data, error } = await supabase.storage
+    .from(MODELS_BUCKET)
+    .list(prefix, { limit: 100 });
+  if (error) throw error;
+  return (data ?? [])
+    // Supabase returns a placeholder row for empty folders; skip
+    // entries with no id (folders / placeholders).
+    .filter((f) => f.id !== null && f.name)
+    .map((f) => `${prefix}/${f.name}`);
+}
+
+/**
+ * Wave 11b — download the raw bytes of any object in the models
+ * bucket by its storage key. Used by the packaging step to pull the
+ * .fbx + each texture into memory for zipping.
+ */
+export async function downloadModelObject(path: string): Promise<Uint8Array> {
+  const supabase = createServiceRoleClient();
+  const { data, error } = await supabase.storage
+    .from(MODELS_BUCKET)
+    .download(path);
+  if (error) throw error;
+  return new Uint8Array(await data.arrayBuffer());
+}
+
+/**
+ * Wave 11b — upload the assembled FBX zip bundle. Returns the public
+ * URL with a `?v=<timestamp>` cache-bust (the bucket sets a 1-year
+ * Cache-Control; a re-package would otherwise keep serving stale
+ * bytes from CDN edges).
+ */
+export async function uploadFbxBundleZip(
+  productId: string,
+  bytes: Uint8Array,
+): Promise<string> {
+  const supabase = createServiceRoleClient();
+  const path = `products/${productId}/fbx-bundle.zip`;
+  const { error } = await supabase.storage
+    .from(MODELS_BUCKET)
+    .upload(path, new Blob([bytes as BlobPart], { type: "application/zip" }), {
+      upsert: true,
+      contentType: "application/zip",
+      cacheControl: "31536000",
+    });
+  if (error) throw error;
+  const { data } = supabase.storage.from(MODELS_BUCKET).getPublicUrl(path);
+  return `${data.publicUrl}?v=${Date.now()}`;
+}
+
+/**
  * Resolve the public URL for a product's compressed .glb at the
  * canonical Wave 9 path. Mirrors `glbPublicUrl` for the legacy GLB.
  * Caller is expected to append `?v=<timestamp>` for cache-busting;

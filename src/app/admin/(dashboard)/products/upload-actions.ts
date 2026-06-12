@@ -40,6 +40,7 @@ import {
   createSignedRawImageUploadUrl,
   createSignedGlbUploadUrl,
   createSignedFbxUploadUrl,
+  createSignedTextureUploadUrl,
   createSignedThumbnailUploadUrl,
 } from "@/lib/storage";
 import {
@@ -64,7 +65,12 @@ const IMAGE_MIME_TO_EXT: Record<string, string> = {
   "image/gif": "gif",
 };
 
-export type SignedUploadKind = "raw_image" | "glb" | "fbx" | "thumbnail";
+export type SignedUploadKind =
+  | "raw_image"
+  | "glb"
+  | "fbx"
+  | "texture"
+  | "thumbnail";
 
 export type SignedUploadTicket = {
   /** Pre-minted storage-path the client PUTs into. */
@@ -137,6 +143,18 @@ export async function getSignedUploadUrl(
       // unused: FBX has no registered MIME type, and the dropzone
       // vets the extension client-side before calling.
       const ticket = await createSignedFbxUploadUrl(productId);
+      return { ok: true, ticket };
+    }
+
+    if (kind === "texture") {
+      // Wave 11b — FBX texture map. Unlike glb/fbx (fixed path), the
+      // filename MATTERS: the .fbx references its maps by name, so we
+      // preserve it under products/<id>/textures/<name>. createSigned…
+      // sanitizes for storage safety but keeps the base name + ext.
+      if (!filename) {
+        return { ok: false, error: "texture upload needs a filename" };
+      }
+      const ticket = await createSignedTextureUploadUrl(productId, filename);
       return { ok: true, ticket };
     }
 

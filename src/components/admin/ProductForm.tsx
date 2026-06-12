@@ -40,6 +40,7 @@ import SubtypePicker from "./SubtypePicker";
 import RoomsPicker from "./RoomsPicker";
 import RegionsPicker from "./RegionsPicker";
 import FileDropzone from "./FileDropzone";
+import TextureDropzone from "./TextureDropzone";
 import CompressionStatusBanner from "./CompressionStatusBanner";
 import SpecSheetAutofillBlock from "./SpecSheetAutofillBlock";
 import ReunifyThumbnailButton from "./ReunifyThumbnailButton";
@@ -80,6 +81,10 @@ type Props = {
    *  picker. Empty array → block renders an "upload an image first"
    *  hint instead of the picker. */
   aiCandidateImages?: { id: string; previewUrl: string | null }[];
+  /** Wave 11b — filenames of texture maps already in this product's
+   *  textures/ folder (server-listed on /edit). Shown as "in bundle"
+   *  chips under the texture dropzone. /new passes nothing. */
+  fbxTextureNames?: string[];
 };
 
 const FORM_ID = "product-form";
@@ -97,6 +102,7 @@ export default function ProductForm({
   imagesSection,
   meshyBanner,
   aiCandidateImages = [],
+  fbxTextureNames,
 }: Props) {
   const p = product;
   const isEdit = Boolean(p);
@@ -388,6 +394,24 @@ export default function ProductForm({
               currentMeta={p?.fbx_size_kb != null ? `${p.fbx_size_kb} KB` : null}
               hint="Drop .fbx here, or click to pick"
             />
+          </Field>
+          {/* Wave 11b — texture maps. Bundled with the .fbx into a zip
+              on Save so 3ds Max auto-resolves materials. Filenames
+              preserved (the .fbx references maps by name). */}
+          <Field label="FBX textures (JPEG/PNG — bundled into the .fbx zip)">
+            <TextureDropzone
+              productId={p?.id ?? null}
+              currentNames={fbxTextureNames ?? undefined}
+            />
+            {p?.fbx_bundle_url && (
+              <div className="mt-1 text-[11px] text-emerald-700">
+                ✓ Bundle ready
+                {p.fbx_bundle_size_kb != null
+                  ? ` — ${(p.fbx_bundle_size_kb / 1024).toFixed(1)} MB zip`
+                  : ""}{" "}
+                (model.fbx + textures/). Designers download this.
+              </div>
+            )}
           </Field>
           {/* Wave 9 — compression lifecycle banner. Only mounts when
               compression has ever been attempted (status != null) so
