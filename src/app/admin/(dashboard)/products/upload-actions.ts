@@ -40,6 +40,7 @@ import {
   createSignedRawImageUploadUrl,
   createSignedGlbUploadUrl,
   createSignedFbxUploadUrl,
+  createSignedFbxBundleUploadUrl,
   createSignedTextureUploadUrl,
   createSignedThumbnailUploadUrl,
 } from "@/lib/storage";
@@ -69,6 +70,7 @@ export type SignedUploadKind =
   | "raw_image"
   | "glb"
   | "fbx"
+  | "fbx_bundle"
   | "texture"
   | "thumbnail";
 
@@ -143,6 +145,14 @@ export async function getSignedUploadUrl(
       // unused: FBX has no registered MIME type, and the dropzone
       // vets the extension client-side before calling.
       const ticket = await createSignedFbxUploadUrl(productId);
+      return { ok: true, ticket };
+    }
+
+    if (kind === "fbx_bundle") {
+      // Sprint 1 (PART B) — operator-packaged FBX zip. Fixed path
+      // (`products/<id>/fbx-bundle.zip`). The Save action validates the
+      // zip contains a .fbx before recording fbx_bundle_url.
+      const ticket = await createSignedFbxBundleUploadUrl(productId);
       return { ok: true, ticket };
     }
 

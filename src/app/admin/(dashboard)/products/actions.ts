@@ -7,6 +7,7 @@ import { createServiceRoleClient } from "@/lib/supabase/service";
 import {
   glbPublicUrl,
   fbxPublicUrl,
+  fbxBundlePublicUrl,
   uploadThumbnail,
   getSignedRawUrl,
   thumbnailPublicUrl,
@@ -14,6 +15,7 @@ import {
 } from "@/lib/storage";
 import { dispatchGlbCompression } from "@/lib/glb-compression-dispatch";
 import { dispatchFbxBundle } from "@/lib/fbx-bundle-dispatch";
+import { validateFbxZipContainsFbx } from "@/lib/fbx-bundle";
 import { inferProductFields } from "@/lib/ai/infer";
 import {
   parseSpecSheet,
@@ -793,6 +795,27 @@ export async function updateProduct(id: string, fd: FormData): Promise<void> {
       updates.fbx_url = fbxPublicUrl(id);
       updates.fbx_size_kb = num(fd, "fbx_size_kb");
     }
+    // Sprint 1 (PART B) — operator-PACKAGED FBX zip. The single FBX
+    // dropzone yields either a bare .fbx (above) OR a .zip (here), never
+    // both. Validate the uploaded zip actually contains a .fbx, then
+    // record fbx_bundle_url directly — NO repackage (operator packaged
+    // it). The download button already prefers fbx_bundle_url.
+    const fbxBundlePathInRequest = str(fd, "fbx_bundle_path");
+    if (fbxBundlePathInRequest) {
+      if (fbxBundlePathInRequest !== `products/${id}/fbx-bundle.zip`) {
+        redirect(
+          `/admin/products/${id}/edit?err=upload&msg=${encodeURIComponent("invalid fbx zip path")}`,
+        );
+      }
+      const v = await validateFbxZipContainsFbx(id);
+      if (!v.ok) {
+        redirect(
+          `/admin/products/${id}/edit?err=upload&msg=${encodeURIComponent(v.error)}`,
+        );
+      }
+      updates.fbx_bundle_url = fbxBundlePublicUrl(id);
+      updates.fbx_bundle_size_kb = num(fd, "fbx_bundle_size_kb");
+    }
     const thumb = fileOrNull(fd, "thumbnail_file");
     if (thumb) {
       updates.thumbnail_url = await uploadThumbnail(id, thumb);
@@ -866,7 +889,11 @@ export async function updateProduct(id: string, fd: FormData): Promise<void> {
   // try-block scope). str() is pure; cheap to read twice.
   const fbxPathForBundle = str(fd, "fbx_path");
   const texturesChanged = str(fd, "textures_changed");
-  if (fbxPathForBundle || texturesChanged) {
+  // Skip the packager entirely when the operator uploaded a pre-packaged
+  // zip this save — there's no model.fbx to build from and the zip is
+  // already the bundle (mutually exclusive with the bare-.fbx path).
+  const uploadedFbxZip = str(fd, "fbx_bundle_path");
+  if ((fbxPathForBundle || texturesChanged) && !uploadedFbxZip) {
     after(() => dispatchFbxBundle(id));
   }
 

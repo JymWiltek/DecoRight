@@ -127,7 +127,13 @@ export default function FileDropzone({
         done: 0,
         total: 1,
       });
-      const r = await getSignedUploadUrl(kind, productId, file.name, file.type);
+      // Sprint 1 (PART B) — the FBX dropzone also accepts an
+      // operator-PACKAGED .zip. A .zip goes to the fbx-bundle path
+      // (validated server-side to contain a .fbx); a bare .fbx goes to
+      // model.fbx (the packager builds the zip from it + textures).
+      const isFbxZip = kind === "fbx" && /\.zip$/i.test(file.name);
+      const uploadKind = isFbxZip ? "fbx_bundle" : kind;
+      const r = await getSignedUploadUrl(uploadKind, productId, file.name, file.type);
       if (!r.ok) {
         throw new Error(r.error);
       }
@@ -143,6 +149,13 @@ export default function FileDropzone({
       // (no in-browser render → no decoded-budget metadata needed);
       // GLB keeps the iOS-OOM budget metadata it's always had.
       if (kind === "fbx") {
+        if (isFbxZip) {
+          return [
+            { name: "fbx_bundle_path", value: r.ticket.path },
+            { name: "fbx_bundle_size_kb", value: String(sizeKb) },
+            { name: "fbx_is_zip", value: "1" },
+          ];
+        }
         return [
           { name: "fbx_path", value: r.ticket.path },
           { name: "fbx_size_kb", value: String(sizeKb) },
@@ -179,7 +192,8 @@ export default function FileDropzone({
     // (covers both Wave 1 .glb and Wave 9 .fbx callers).
     const extOk =
       (accept.includes(".glb") && /\.glb$/i.test(f.name)) ||
-      (accept.includes(".fbx") && /\.fbx$/i.test(f.name));
+      (accept.includes(".fbx") && /\.fbx$/i.test(f.name)) ||
+      (accept.includes(".zip") && /\.zip$/i.test(f.name));
     if (!extOk && f.type && !allowed.includes(f.type)) {
       return `${f.name}: unsupported format (${f.type || "unknown"})`;
     }

@@ -384,15 +384,15 @@ export default function ProductForm({
               hint="Drop .glb here, or click to pick"
             />
           </Field>
-          <Field label=".fbx (designer download — 3ds Max / Maya / SketchUp)">
+          <Field label=".fbx or .zip (designer download — 3ds Max / Maya / SketchUp)">
             <FileDropzone
               kind="fbx"
-              accept=".fbx,application/octet-stream"
-              maxFileMb={100}
+              accept=".fbx,.zip,application/zip,application/octet-stream"
+              maxFileMb={120}
               productId={p?.id ?? null}
               currentUrl={p?.fbx_url ?? null}
               currentMeta={p?.fbx_size_kb != null ? `${p.fbx_size_kb} KB` : null}
-              hint="Drop .fbx here, or click to pick"
+              hint="Drop a .fbx (we'll bundle your textures into a zip) OR a pre-packaged .zip (must contain a .fbx)"
             />
           </Field>
           {/* Wave 11b — texture maps. Bundled with the .fbx into a zip

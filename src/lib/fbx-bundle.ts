@@ -55,6 +55,39 @@ export class NoFbxError extends Error {
 }
 
 /**
+ * Sprint 1 (PART B) — validate an operator-PACKAGED FBX zip already
+ * uploaded to `products/<id>/fbx-bundle.zip`. The operator may package
+ * the .fbx + textures themselves; we accept it directly (no repackaging)
+ * but must confirm it actually contains a .fbx so designers don't
+ * download a zip with no model. Returns the first .fbx entry name on
+ * success; { ok:false } otherwise. Read-only (download + inspect).
+ */
+export async function validateFbxZipContainsFbx(
+  productId: string,
+): Promise<{ ok: true; fbxName: string } | { ok: false; error: string }> {
+  const path = `products/${productId}/fbx-bundle.zip`;
+  let bytes: Uint8Array;
+  try {
+    bytes = await downloadModelObject(path);
+  } catch (e) {
+    return { ok: false, error: `cannot read uploaded zip: ${e instanceof Error ? e.message : String(e)}` };
+  }
+  let zip: JSZip;
+  try {
+    zip = await JSZip.loadAsync(bytes);
+  } catch {
+    return { ok: false, error: "uploaded file is not a valid .zip" };
+  }
+  const fbxEntry = Object.keys(zip.files).find(
+    (name) => !zip.files[name].dir && /\.fbx$/i.test(name),
+  );
+  if (!fbxEntry) {
+    return { ok: false, error: "zip does not contain a .fbx file" };
+  }
+  return { ok: true, fbxName: fbxEntry };
+}
+
+/**
  * Build + upload the zip for one product. Throws NoFbxError when the
  * product has no uploaded .fbx (caller should surface "upload an FBX
  * first"). Textures are optional — a zip with just model.fbx is still

@@ -444,6 +444,34 @@ export async function downloadModelObject(path: string): Promise<Uint8Array> {
  * Cache-Control; a re-package would otherwise keep serving stale
  * bytes from CDN edges).
  */
+/**
+ * Sprint 1 (PART B) — mint a signed PUT URL for an operator-PACKAGED
+ * FBX zip. Same fixed path as the auto-built bundle
+ * (`products/<id>/fbx-bundle.zip`), so a manual upload and the packager
+ * write the same object; the server validates the zip contains a .fbx
+ * before recording fbx_bundle_url. upsert=true (re-upload replaces).
+ */
+export async function createSignedFbxBundleUploadUrl(
+  productId: string,
+): Promise<{ signedUrl: string; token: string; path: string }> {
+  const supabase = createServiceRoleClient();
+  const path = `products/${productId}/fbx-bundle.zip`;
+  const { data, error } = await supabase.storage
+    .from(MODELS_BUCKET)
+    .createSignedUploadUrl(path, { upsert: true });
+  if (error) throw error;
+  return { signedUrl: data.signedUrl, token: data.token, path: data.path };
+}
+
+/** Public URL (cache-busted) for a product's FBX bundle zip at the
+ *  canonical path. Used after an operator uploads a pre-packaged .zip. */
+export function fbxBundlePublicUrl(productId: string): string {
+  const supabase = createServiceRoleClient();
+  const path = `products/${productId}/fbx-bundle.zip`;
+  const { data } = supabase.storage.from(MODELS_BUCKET).getPublicUrl(path);
+  return `${data.publicUrl}?v=${Date.now()}`;
+}
+
 export async function uploadFbxBundleZip(
   productId: string,
   bytes: Uint8Array,
