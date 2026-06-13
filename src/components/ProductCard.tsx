@@ -1,43 +1,69 @@
 import Link from "next/link";
-import { formatMYR } from "@/lib/format";
 import type { ProductRow } from "@/lib/supabase/types";
 
 type Props = {
   product: ProductRow;
   itemTypeLabels: Record<string, string>;
   styleLabels: Record<string, string>;
+  /** Wave 12 — subtype slug → label (e.g. freestanding → "Freestanding").
+   *  Optional so older call sites keep compiling; when absent the tag
+   *  line falls back to style · item-type. */
+  subtypeLabels?: Record<string, string>;
   colorHex: Record<string, string>;
   /**
-   * Above-the-fold cards should render their thumbnail eagerly with
-   * `fetchpriority=high` so the browser can discover and fetch the
-   * LCP candidate before hydration. Pass `true` for the first row of
-   * the grid (typically 4 on desktop, 2 on mobile; passing 4 is a
-   * good compromise — the redundant `high` on the 3rd/4th cards is
-   * harmless on mobile because only 2 are actually above the fold).
-   *
-   * Before this prop existed every card was `loading="lazy"`, which
-   * made the LCP image on `/item/<slug>` invisible to the preload
-   * scanner (Lighthouse lcp-lazy-loaded / lcp-discovery warnings).
+   * Above-the-fold cards render eagerly with `fetchpriority=high` so the
+   * browser discovers the LCP image before hydration. Pass `true` for
+   * the first row of the grid.
    */
   priority?: boolean;
 };
 
+/**
+ * Wave 12 — Pinterest-style product card.
+ *
+ *   • 3:4 vertical image (was 1:1) — gives Wiltek's scene renders room
+ *     to breathe and reads like the 3D66 / Coohom catalogs designers
+ *     know.
+ *   • Image = products.thumbnail_url, which Phase A made "raw scene
+ *     photo as-is" by default, swapping to the unified white-canvas PNG
+ *     only after an operator clicks Unify Center. So the card shows the
+ *     real Wiltek render when there is one, and the clean cutout
+ *     otherwise — no card-side logic needed.
+ *   • AR badge appears on hover when the product has a 3D model.
+ *   • One tag line: style · subtype.
+ *   • Color dots (colorways).
+ *   • "X credit" download price (download_credit_cost) — DISPLAY ONLY
+ *     this wave (no paywall). The unit word stays English ("credit"),
+ *     matching the spec mockup, like the hardcoded "RM" elsewhere.
+ */
 export default function ProductCard({
   product,
   itemTypeLabels,
   styleLabels,
+  subtypeLabels,
   colorHex,
   priority = false,
 }: Props) {
-  const typeLabel = product.item_type ? itemTypeLabels[product.item_type] : null;
   const styleLabel = product.styles[0] ? styleLabels[product.styles[0]] : null;
+  const subtypeLabel = product.subtype_slug
+    ? subtypeLabels?.[product.subtype_slug]
+    : null;
+  const itemTypeLabel = product.item_type
+    ? itemTypeLabels[product.item_type]
+    : null;
+  // Prefer style · subtype; fall back to style · item-type, then either
+  // alone — never render a stray "·".
+  const tag =
+    [styleLabel, subtypeLabel ?? itemTypeLabel].filter(Boolean).join(" · ") ||
+    null;
+  const has3d = Boolean(product.glb_url || product.glb_compressed_url);
 
   return (
     <Link
       href={`/product/${product.id}`}
       className="group flex flex-col overflow-hidden rounded-lg border border-neutral-200 bg-white transition hover:border-neutral-400 hover:shadow-sm"
     >
-      <div className="relative aspect-square w-full overflow-hidden bg-neutral-100">
+      <div className="relative aspect-[3/4] w-full overflow-hidden bg-neutral-100">
         {product.thumbnail_url ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
@@ -45,24 +71,40 @@ export default function ProductCard({
             alt={product.name}
             loading={priority ? "eager" : "lazy"}
             fetchPriority={priority ? "high" : "auto"}
-            className="h-full w-full object-cover transition group-hover:scale-[1.02]"
+            className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.03]"
           />
         ) : (
           <div className="flex h-full w-full items-center justify-center text-xs text-neutral-400">
             3D · AR
           </div>
         )}
+        {has3d && (
+          <span className="pointer-events-none absolute right-2 top-2 inline-flex items-center gap-1 rounded-full bg-black/75 px-2 py-0.5 text-[10px] font-medium text-white opacity-0 backdrop-blur-sm transition group-hover:opacity-100">
+            <svg
+              width="11"
+              height="11"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden
+            >
+              <path d="M12 2 2 7l10 5 10-5-10-5Z" />
+              <path d="m2 17 10 5 10-5" />
+              <path d="m2 12 10 5 10-5" />
+            </svg>
+            AR
+          </span>
+        )}
       </div>
 
       <div className="flex flex-1 flex-col gap-1.5 p-3">
-        <div className="flex items-center gap-2 text-xs text-neutral-500">
-          {typeLabel && <span>{typeLabel}</span>}
-          {typeLabel && styleLabel && <span>·</span>}
-          {styleLabel && <span>{styleLabel}</span>}
-        </div>
         <div className="line-clamp-2 text-sm font-medium text-neutral-900">
           {product.name}
         </div>
+        {tag && <div className="text-xs text-neutral-500">{tag}</div>}
         {product.colors.length > 0 && (
           <div className="flex items-center gap-1">
             {product.colors.slice(0, 5).map((slug) => (
@@ -74,8 +116,8 @@ export default function ProductCard({
             ))}
           </div>
         )}
-        <div className="mt-auto pt-1 text-base font-semibold text-neutral-900">
-          {formatMYR(product.price_myr)}
+        <div className="mt-auto pt-1 text-sm font-semibold text-neutral-900">
+          {product.download_credit_cost} credit
         </div>
       </div>
     </Link>

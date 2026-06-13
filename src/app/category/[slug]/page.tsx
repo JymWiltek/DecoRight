@@ -113,6 +113,7 @@ export default async function CategoryPage({ params, searchParams }: PageProps) 
   const products = await listPublishedProducts(filters);
   const itemTypeLabels = labelMap(taxonomy.itemTypes, locale);
   const styleLabels = labelMap(taxonomy.styles, locale);
+  const subtypeLabels = labelMap(taxonomy.itemSubtypes, locale);
   const colorHex = colorHexMap(taxonomy.colors);
   const categoryLabel = tCat(category.slug as CategorySlug);
 
@@ -191,6 +192,7 @@ export default async function CategoryPage({ params, searchParams }: PageProps) 
                     priority={i < 4}
                     itemTypeLabels={itemTypeLabels}
                     styleLabels={styleLabels}
+                    subtypeLabels={subtypeLabels}
                     colorHex={colorHex}
                   />
                 ))}

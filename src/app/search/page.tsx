@@ -34,6 +34,7 @@ export default async function SearchPage({ searchParams }: PageProps) {
   const products = q ? await listPublishedProducts({ q }) : [];
   const itemTypeLabels = labelMap(taxonomy.itemTypes, locale);
   const styleLabels = labelMap(taxonomy.styles, locale);
+  const subtypeLabels = labelMap(taxonomy.itemSubtypes, locale);
   const colorHex = colorHexMap(taxonomy.colors);
 
   return (
@@ -73,6 +74,7 @@ export default async function SearchPage({ searchParams }: PageProps) {
                 priority={i < 4}
                 itemTypeLabels={itemTypeLabels}
                 styleLabels={styleLabels}
+                subtypeLabels={subtypeLabels}
                 colorHex={colorHex}
               />
             ))}

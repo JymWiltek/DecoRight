@@ -199,6 +199,7 @@ export default async function RoomPage({ params }: PageProps) {
   // Lookup maps for ProductCard. Same shape /item/[slug] feeds it.
   const itemTypeLabels = labelMap(taxonomy.itemTypes, locale);
   const styleLabels = labelMap(taxonomy.styles, locale);
+  const subtypeLabels = labelMap(taxonomy.itemSubtypes, locale);
   const colorHex = colorHexMap(taxonomy.colors);
 
   return (
@@ -397,6 +398,7 @@ export default async function RoomPage({ params }: PageProps) {
                   priority={i < 4}
                   itemTypeLabels={itemTypeLabels}
                   styleLabels={styleLabels}
+                  subtypeLabels={subtypeLabels}
                   colorHex={colorHex}
                 />
               ))}
