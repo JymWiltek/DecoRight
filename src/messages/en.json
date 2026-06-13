@@ -78,5 +78,19 @@
     "downloadFbx": "Download FBX (designer file)",
     "arHintLine1": "Tap the AR icon at the bottom-right of the model to preview this product life-size with your phone camera.",
     "arHintLine2": "iOS needs USDZ (Phase 3); Android Scene Viewer is live now."
+  },
+  "category": {
+    "bathtub": "Bathtubs",
+    "toilet": "Toilets",
+    "basin": "Basins",
+    "faucet": "Faucets",
+    "shower": "Showers",
+    "cabinet": "Vanities",
+    "accessory": "Accessories",
+    "search": "Search",
+    "searchPlaceholder": "Search products",
+    "login": "Login",
+    "empty": "No products in this category yet. Check back soon.",
+    "notFound": "Category not found"
   }
 }

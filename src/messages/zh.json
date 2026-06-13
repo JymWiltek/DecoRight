@@ -78,5 +78,19 @@
     "downloadFbx": "下载 FBX (设计师专用)",
     "arHintLine1": "点击模型右下角 AR 图标，用手机摄像头 1:1 预览该产品。",
     "arHintLine2": "iOS 需要 USDZ（Phase 3 开放），当前 Android Scene Viewer 可用。"
+  },
+  "category": {
+    "bathtub": "浴缸",
+    "toilet": "马桶",
+    "basin": "洗手盆",
+    "faucet": "龙头",
+    "shower": "淋浴",
+    "cabinet": "浴室柜",
+    "accessory": "配件",
+    "search": "搜索",
+    "searchPlaceholder": "搜索产品",
+    "login": "登录",
+    "empty": "该分类暂无产品，敬请期待。",
+    "notFound": "分类不存在"
   }
 }

@@ -78,5 +78,19 @@
     "downloadFbx": "Muat turun FBX (untuk pereka)",
     "arHintLine1": "Tekan ikon AR di kanan bawah model untuk pratonton produk saiz sebenar dengan kamera telefon.",
     "arHintLine2": "iOS perlukan USDZ (Fasa 3); Android Scene Viewer sudah boleh guna."
+  },
+  "category": {
+    "bathtub": "Tab Mandi",
+    "toilet": "Tandas",
+    "basin": "Besen",
+    "faucet": "Pili Air",
+    "shower": "Pancuran",
+    "cabinet": "Kabinet",
+    "accessory": "Aksesori",
+    "search": "Cari",
+    "searchPlaceholder": "Cari produk",
+    "login": "Log Masuk",
+    "empty": "Tiada produk dalam kategori ini lagi.",
+    "notFound": "Kategori tidak dijumpai"
   }
 }
