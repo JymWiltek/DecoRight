@@ -21,7 +21,13 @@
     "roomEmpty": "Belum ada bilik.",
     "aiBadge": "Akan datang",
     "aiInspirationTitle": "Inspirasi AI untuk reka bentuk",
-    "aiInspirationSubtitle": "Tidak lama lagi: huraikan ruang anda, AI cadangkan idea bilik — setiap perabot boleh dilihat 3D & AR sebelum dibeli."
+    "aiInspirationSubtitle": "Tidak lama lagi: huraikan ruang anda, AI cadangkan idea bilik — setiap perabot boleh dilihat 3D & AR sebelum dibeli.",
+    "heroTitle": "Model 3D Bilik Mandi untuk Pereka",
+    "heroSubtitle": "Muat turun FBX & GLB, pratonton AR, reka bilik mandi sebelum ia dibina.",
+    "heroStat": "{count} model · FBX & GLB · AR",
+    "featuredBundles": "Pakej Pilihan",
+    "browseByCategory": "Layari Mengikut Kategori",
+    "latestAdditions": "Tambahan Terkini"
   },
   "room": {
     "pickItem": "Pilih barang",

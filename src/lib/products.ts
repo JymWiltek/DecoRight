@@ -400,6 +400,20 @@ export async function getRelatedProducts(
 // ─── Wave 12 — storefront bundle read ───────────────────────────────
 export type BundleWithProducts = { bundle: BundleRow; products: ProductRow[] };
 
+/** Wave 12 — newest published bundles for the home "Featured Bundles"
+ *  rail. Empty array when none exist (section hides). */
+export async function getPublishedBundles(limit = 3): Promise<BundleRow[]> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("bundles")
+    .select("*")
+    .eq("status", "published")
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (error) throw error;
+  return data ?? [];
+}
+
 const BUNDLE_UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 

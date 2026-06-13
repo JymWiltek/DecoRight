@@ -21,7 +21,13 @@
     "roomEmpty": "No rooms yet.",
     "aiBadge": "Coming soon",
     "aiInspirationTitle": "AI design inspiration",
-    "aiInspirationSubtitle": "Soon: describe your space, get curated room ideas — every piece shoppable in 3D and AR."
+    "aiInspirationSubtitle": "Soon: describe your space, get curated room ideas — every piece shoppable in 3D and AR.",
+    "heroTitle": "Bathroom 3D Models for Designers",
+    "heroSubtitle": "Download FBX & GLB, preview in AR, and design the bathroom before it is built.",
+    "heroStat": "{count} models · FBX & GLB · AR",
+    "featuredBundles": "Featured Bundles",
+    "browseByCategory": "Browse by Category",
+    "latestAdditions": "Latest Additions"
   },
   "room": {
     "pickItem": "Pick an item",

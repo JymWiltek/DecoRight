@@ -1,238 +1,174 @@
+import Link from "next/link";
 import { getLocale, getTranslations } from "next-intl/server";
 import type { Locale } from "@/i18n/config";
 import SiteHeader from "@/components/SiteHeader";
-import RoomCard from "@/components/RoomCard";
-import HScrollRail from "@/components/HScrollRail";
-import ItemTypeRailCard from "@/components/ItemTypeRailCard";
-import SectionHeading from "@/components/SectionHeading";
-import { loadTaxonomy, labelFor } from "@/lib/taxonomy";
+import ItemTypeCoverCard from "@/components/ItemTypeCoverCard";
+import ProductCard from "@/components/ProductCard";
 import {
-  coversByItemType,
+  listPublishedProducts,
   publishedCountsByItemType,
-  publishedCountsByRoom,
+  coversByItemType,
+  getPublishedBundles,
 } from "@/lib/products";
-
-// Intentionally NOT `force-dynamic`. Both `loadTaxonomy` and
-// `publishedCountsByItemType` are tag-cached (tags: "taxonomy",
-// "published-counts"; revalidate 5 min) on cookieless anon clients,
-// so this page can render statically with per-request ISR. Dropping
-// force-dynamic re-enables browser bf-cache (was disabled by the
-// `cache-control: no-store` force-dynamic emits), which removes
-// ~2s off back-button navigations.
+import { loadTaxonomy, labelMap, colorHexMap } from "@/lib/taxonomy";
+import { CATEGORIES, type CategorySlug } from "@/lib/categories";
 
 /**
- * Layer 1 of the three-layer catalog: choose a room.
+ * Wave 12 — designer-focused home. Replaces the room-first funnel
+ * (browse-by-item rail + room grid) with the layout designers expect
+ * from 3D66 / Coohom:
  *
- * Was: flat product grid with filters. That design made sense when
- * the catalog was small, but once we have ~200+ SKUs across 11 rooms
- * the funnel "which room am I decorating? → what do I need? → which
- * one?" matches how people actually shop. The old flat page collapsed
- * three decisions into one, which is paralyzing on mobile.
+ *   1. Hero — scene image + "Bathroom 3D Models for Designers" + stats.
+ *   2. Featured Bundles — newest published bundles (hidden when none).
+ *   3. Browse by Category — the 7 bathroom categories as cover cards.
+ *   4. Latest Additions — the 24 newest published products.
  *
- * Rooms are ordered by `sort_order` (curated in migration 0003). Each
- * tile shows a count of published products currently in that room,
- * summed across its item_types — a zero count signals an empty
- * section but we still render it (the catalog is growing).
+ * Room pages (/room/[slug]) still exist and are reachable; they're just
+ * no longer the landing surface. Reads `listPublishedProducts` (cookie-
+ * aware) so the page renders dynamically with fresh latest/bundle data.
  */
 export default async function Home() {
-  const [taxonomy, roomCounts, itemTypeCounts, itemTypeCovers, tHome, locale] =
+  const [taxonomy, itemTypeCounts, itemTypeCovers, bundles, latest, tHome, tCat, locale] =
     await Promise.all([
       loadTaxonomy(),
-      // Migration 0013: room lives on products.room_slugs[] directly —
-      // sum per-room counts server-side from that column (a single
-      // product in ["kitchen","bathroom"] counts once in each).
-      publishedCountsByRoom(),
-      // Wave UI · Commit 2: item-type counts feed the new "Browse by
-      // item" rail above the room grid. Reuses the same cache tag
-      // ("published-counts") so a single publish/unpublish invalidates
-      // both lookups in one shot.
       publishedCountsByItemType(),
-      // Wave UI · Commit 4: cover thumbnail per item_type (newest
-      // published product wins). Same `published-counts` cache tag
-      // as the count helpers, so one publish invalidates counts and
-      // covers atomically — no risk of mismatched count/cover state
-      // bleeding through to a visitor.
       coversByItemType(),
+      getPublishedBundles(3),
+      listPublishedProducts({ sort: "latest" }, 24),
       getTranslations("home"),
+      getTranslations("category"),
       getLocale() as Promise<Locale>,
     ]);
 
-  // Wave UI · Commit 2 — eight item types in the rail, with zero-fill.
-  //
-  // Sort: count DESC, then label_en ASC. Stocked categories surface
-  // first; ties broken alphabetically so the order doesn't jiggle
-  // every revalidation when two counts match. label_en is NOT NULL
-  // post-migration 0008, so the secondary sort is total.
-  //
-  // Zero-fill: previously we filtered `count > 0`, which left the rail
-  // showing only 1–3 cards on a freshly-seeded catalog and made the
-  // homepage feel half-built. Now we keep all item types and let the
-  // limit do the trimming — the 1–3 stocked types still come first
-  // (count DESC) and the next 5–7 alpha-sorted empty types fill the
-  // remaining slots so the rail looks complete from day one. Zero-
-  // count tiles stay clickable: the destination /item/<slug> page
-  // already renders an empty state cleanly (no notFound).
-  //
-  // Limit: 8. Notion design specifies 6–8 hot items; eight is the
-  // upper end. On a 375px viewport with w-32 cards (~128px) plus
-  // 12px gap, eight cards ≈ 1120px which scrolls smoothly. Tighter
-  // limits feel sparse on tablets; wider rails hit visual fatigue.
-  const topItemTypes = taxonomy.itemTypes
-    .map((it) => ({ ...it, count: itemTypeCounts[it.slug] ?? 0 }))
-    .sort(
-      (a, b) =>
-        b.count - a.count || a.label_en.localeCompare(b.label_en, "en"),
-    )
-    .slice(0, 8);
+  const itemTypeLabels = labelMap(taxonomy.itemTypes, locale);
+  const styleLabels = labelMap(taxonomy.styles, locale);
+  const subtypeLabels = labelMap(taxonomy.itemSubtypes, locale);
+  const colorHex = colorHexMap(taxonomy.colors);
+
+  const totalModels = Object.values(itemTypeCounts).reduce((a, b) => a + b, 0);
+  const heroBg = latest[0]?.thumbnail_url ?? null;
+
+  // 7 category cards: count = sum of member item_type counts; cover =
+  // first member item_type that has a cover thumbnail.
+  const categoryCards = CATEGORIES.map((c) => ({
+    slug: c.slug,
+    label: tCat(c.slug as CategorySlug),
+    count: c.itemTypes.reduce((sum, it) => sum + (itemTypeCounts[it] ?? 0), 0),
+    coverUrl: c.itemTypes.map((it) => itemTypeCovers[it]).find(Boolean) ?? null,
+  }));
 
   return (
     <>
       <SiteHeader />
-      <main className="mx-auto max-w-7xl px-4 py-6 sm:py-10">
-        {/* ─── Section 1 · Browse by item (horizontal rail) ──────
-         *
-         * Notion design's first viewport block. Item-type tiles in
-         * an IKEA-style horizontal-snap rail so a phone user can
-         * thumb-swipe through the eight most-stocked categories
-         * before they ever scroll vertically.
-         *
-         * Hidden when nothing is published yet (avoids an empty rail
-         * that looks broken; the room grid below still renders since
-         * rooms can be browsed independently of catalog depth).
-         */}
-        {topItemTypes.length > 0 ? (
-          <section className="mb-8 sm:mb-12">
-            <SectionHeading
-              title={tHome("browseByItem")}
-              subtitle={tHome("browseByItemSubtitle")}
+      <main className="mx-auto max-w-7xl px-4 py-6 sm:py-8">
+        {/* ─── 1. Hero ──────────────────────────────────────────── */}
+        <section className="relative mb-12 overflow-hidden rounded-2xl bg-neutral-900">
+          {heroBg && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={heroBg}
+              alt=""
+              className="absolute inset-0 h-full w-full object-cover opacity-40"
             />
-            <HScrollRail ariaLabel={tHome("browseByItem")}>
-              {topItemTypes.map((it, i) => (
-                <ItemTypeRailCard
-                  key={it.slug}
-                  href={`/item/${it.slug}`}
-                  label={labelFor(it, locale)}
-                  count={it.count}
-                  countLabel={tHome("itemCount", { count: it.count })}
-                  // Wave UI · Commit 4 — cover thumb per item_type.
-                  // Falls back to typographic tile when item_type has
-                  // no stocked product with a thumbnail (zero-fill
-                  // tail of the rail).
-                  coverUrl={itemTypeCovers[it.slug] ?? null}
-                  // Eager-load the first 3 cards in the rail (the
-                  // ones visible above the fold on mobile). The rest
-                  // lazy-load as the user swipes.
-                  priority={i < 3}
-                />
-              ))}
-            </HScrollRail>
-          </section>
-        ) : null}
-
-        {/* ─── Section 2 · Tagline ───────────────────────────────
-         *
-         * "See it, buy it" / "看到什么，就买到什么" / "Lihat, terus beli".
-         * One short line that sets the value prop before the room
-         * grid. Centered, slightly muted; not a hero — the room grid
-         * directly below is the actual landing surface. We deliberately
-         * do NOT add a CTA here: the rail above and the grid below
-         * already give two click paths, a third would dilute.
-         */}
-        <section className="mb-8 text-center sm:mb-12">
-          <p className="mx-auto max-w-md text-base font-medium text-neutral-700 sm:text-lg">
-            {tHome("tagline")}
-          </p>
+          )}
+          <div className="relative flex flex-col items-start gap-4 px-6 py-16 sm:px-12 sm:py-24">
+            <h1 className="max-w-2xl text-3xl font-bold tracking-tight text-white sm:text-5xl">
+              {tHome("heroTitle")}
+            </h1>
+            <p className="max-w-xl text-sm text-neutral-200 sm:text-base">
+              {tHome("heroSubtitle")}
+            </p>
+            <span className="mt-2 inline-flex items-center rounded-full bg-white/15 px-3 py-1 text-xs font-medium text-white backdrop-blur">
+              {tHome("heroStat", { count: totalModels })}
+            </span>
+          </div>
         </section>
 
-        {/* ─── Section 3 · Rooms (cover-led grid) ─────────────────
-         *
-         * Migration 0020 added rooms.cover_url. The 6 Notion-design
-         * primary rooms (living/dining/kitchen/bedroom/bathroom/
-         * balcony) have Unsplash covers seeded into our own
-         * thumbnails bucket via scripts/seed-room-covers.ts. The
-         * other 6 legacy rooms keep cover_url = NULL and fall back
-         * to the typographic tile inside RoomCard — which means the
-         * grid stays coherent even before Jym ships real photographs
-         * for the legacy rooms.
-         *
-         * Mobile: 2 cols. Tablet+: 3 cols. Desktop: 4 cols. The
-         * Notion design only specs 6 cards; we still render all 12
-         * because the catalog spans them, but the 6 covered ones
-         * dominate visually.
-         */}
-        <header className="mb-4 sm:mb-8">
-          <h1 className="text-2xl font-semibold text-neutral-900 sm:text-3xl">
-            {tHome("pickRoom")}
-          </h1>
-          <p className="mt-2 max-w-2xl text-sm text-neutral-600">
-            {tHome("pickRoomSubtitle")}
-          </p>
-        </header>
-
-        {taxonomy.rooms.length === 0 ? (
-          <div className="flex min-h-[40vh] items-center justify-center rounded-lg border border-dashed border-neutral-300 px-4 text-center text-sm text-neutral-500">
-            {tHome("roomEmpty")}
-          </div>
-        ) : (
-          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
-            {/*
-              loadTaxonomy() returns rooms ordered by `label_en` (alpha)
-              so the admin/filter UIs stay A-Z stable. The home grid
-              instead wants the curated `sort_order` (mig 0025): real
-              rooms 1-11 first (with covers floating to the top of that
-              band as more get shot), storefront-internal categories
-              like Curtain / Door / Lighting at 20+. Sort on a slice so
-              we don't mutate the cached taxonomy array.
-            */}
-            {[...taxonomy.rooms]
-              .sort((a, b) => a.sort_order - b.sort_order)
-              .map((r) => {
-              const count = roomCounts[r.slug] ?? 0;
-              return (
-                <RoomCard
-                  key={r.slug}
-                  href={`/room/${r.slug}`}
-                  label={labelFor(r, locale)}
-                  count={count}
-                  countLabel={tHome("itemCount", { count })}
-                  coverUrl={r.cover_url}
-                />
-              );
-            })}
-          </div>
+        {/* ─── 2. Featured Bundles (hidden when none) ───────────── */}
+        {bundles.length > 0 && (
+          <section className="mb-12">
+            <h2 className="mb-4 text-xl font-semibold text-neutral-900">
+              {tHome("featuredBundles")}
+            </h2>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+              {bundles.map((b) => (
+                <Link
+                  key={b.id}
+                  href={`/bundle/${b.slug}`}
+                  className="group flex flex-col overflow-hidden rounded-lg border border-neutral-200 bg-white transition hover:border-neutral-400 hover:shadow-sm"
+                >
+                  <div className="relative aspect-[16/9] w-full overflow-hidden bg-neutral-100">
+                    {b.cover_image_url ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={b.cover_image_url}
+                        alt={b.name}
+                        className="h-full w-full object-cover transition group-hover:scale-[1.02]"
+                      />
+                    ) : (
+                      <div className="flex h-full w-full items-center justify-center text-sm text-neutral-400">
+                        {b.name}
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex flex-1 flex-col gap-1 p-3">
+                    <div className="line-clamp-1 text-sm font-medium text-neutral-900">
+                      {b.name}
+                    </div>
+                    <div className="mt-auto pt-1 text-sm font-semibold text-neutral-900">
+                      {b.credit_cost} credit
+                    </div>
+                  </div>
+                </Link>
+              ))}
+            </div>
+          </section>
         )}
 
-        {/* ─── Section 4 · AI Inspiration (placeholder) ──────────
-         *
-         * Phase 3+. For now: a single static "coming soon" card so
-         * users (and Jym, when reviewing the design) see where the
-         * AI feature will land without a half-built UI. NO data, NO
-         * API call, NO interactivity — just informational.
-         *
-         * Placed at the bottom of the home page, after the room grid:
-         * this is exploratory / future-looking content; users who
-         * want to shop have already had the rail (Section 1) and the
-         * room grid (Section 3) above. Section 4 is for browsers who
-         * scrolled all the way down.
-         */}
-        <section className="mt-12 sm:mt-16">
-          <div
-            className="
-              rounded-lg border border-dashed border-neutral-300
-              bg-gradient-to-br from-violet-50 via-white to-amber-50
-              px-5 py-8 text-center sm:px-8 sm:py-12
-            "
-          >
-            <div className="mx-auto inline-flex items-center gap-2 rounded-full bg-violet-100 px-3 py-1 text-[11px] font-medium uppercase tracking-wide text-violet-700">
-              <span>{tHome("aiBadge")}</span>
-            </div>
-            <h2 className="mt-3 text-xl font-semibold text-neutral-900 sm:text-2xl">
-              {tHome("aiInspirationTitle")}
-            </h2>
-            <p className="mx-auto mt-2 max-w-md text-sm text-neutral-600">
-              {tHome("aiInspirationSubtitle")}
-            </p>
+        {/* ─── 3. Browse by Category (7 cards) ──────────────────── */}
+        <section className="mb-12">
+          <h2 className="mb-4 text-xl font-semibold text-neutral-900">
+            {tHome("browseByCategory")}
+          </h2>
+          <div className="grid grid-cols-2 gap-4 sm:grid-cols-4 lg:grid-cols-7">
+            {categoryCards.map((c, i) => (
+              <ItemTypeCoverCard
+                key={c.slug}
+                href={`/category/${c.slug}`}
+                label={c.label}
+                count={c.count}
+                countLabel={tHome("itemCount", { count: c.count })}
+                coverUrl={c.coverUrl}
+                priority={i < 4}
+              />
+            ))}
           </div>
+        </section>
+
+        {/* ─── 4. Latest Additions (24) ─────────────────────────── */}
+        <section>
+          <h2 className="mb-4 text-xl font-semibold text-neutral-900">
+            {tHome("latestAdditions")}
+          </h2>
+          {latest.length === 0 ? (
+            <div className="flex min-h-[30vh] items-center justify-center rounded-lg border border-dashed border-neutral-300 px-4 text-center text-sm text-neutral-500">
+              {tHome("roomEmpty")}
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+              {latest.map((p, i) => (
+                <ProductCard
+                  key={p.id}
+                  product={p}
+                  priority={i < 4}
+                  itemTypeLabels={itemTypeLabels}
+                  styleLabels={styleLabels}
+                  subtypeLabels={subtypeLabels}
+                  colorHex={colorHex}
+                />
+              ))}
+            </div>
+          )}
         </section>
       </main>
     </>

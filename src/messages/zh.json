@@ -21,7 +21,13 @@
     "roomEmpty": "暂无房间。",
     "aiBadge": "即将上线",
     "aiInspirationTitle": "AI 灵感设计",
-    "aiInspirationSubtitle": "未来：描述你的空间，AI 帮你搭一整间房 —— 每一件都能 3D 预览、AR 试摆。"
+    "aiInspirationSubtitle": "未来：描述你的空间，AI 帮你搭一整间房 —— 每一件都能 3D 预览、AR 试摆。",
+    "heroTitle": "为设计师打造的浴室 3D 模型",
+    "heroSubtitle": "下载 FBX 与 GLB，AR 实景预览，先看后装。",
+    "heroStat": "{count} 个模型 · FBX & GLB · AR",
+    "featuredBundles": "精选套餐",
+    "browseByCategory": "按品类浏览",
+    "latestAdditions": "最新上架"
   },
   "room": {
     "pickItem": "选择物件",
