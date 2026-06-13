@@ -98,6 +98,13 @@ export type ProductRow = {
   compression_status: "pending" | "processing" | "done" | "failed" | null;
   compression_error: string | null;
   thumbnail_url: string | null;
+  /** Mig 0046 (Wave 12) — markdown blurb rendered in the "Designer's
+   *  Guide" section on /product/[id]. NULL → no section. */
+  designer_guide: string | null;
+  /** Mig 0046 (Wave 12) — "X credit" shown on the product card + the
+   *  Download FBX button. DISPLAY-ONLY (no paywall this wave); defaults
+   *  to 5 so every product shows a number without a backfill. */
+  download_credit_cost: number;
   status: ProductStatus;
   ai_filled_fields: string[];
   /** Mig 0039 — per-field confidence the V2 parser returned for this
@@ -182,6 +189,9 @@ export type ProductInsert = {
   compression_status?: "pending" | "processing" | "done" | "failed" | null;
   compression_error?: string | null;
   thumbnail_url?: string | null;
+  designer_guide?: string | null;
+  /** Mig 0046 — DB-defaulted to 5, so optional on insert. */
+  download_credit_cost?: number;
   status?: ProductStatus;
   ai_filled_fields?: string[];
   ai_confidences?: Record<string, "high" | "medium" | "low">;
