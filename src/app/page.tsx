@@ -210,19 +210,22 @@ function HomeBanner({
   href: string;
 }) {
   return (
-    <div className="relative overflow-hidden rounded-2xl bg-neutral-900 min-h-[260px]">
+    <div className="relative min-h-[260px] overflow-hidden rounded-2xl bg-neutral-200">
       {bg && (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={bg} alt="" className="absolute inset-0 h-full w-full object-cover opacity-45" />
+        <img src={bg} alt="" className="absolute inset-0 h-full w-full object-cover" />
       )}
-      <div className="relative flex h-full flex-col items-start justify-end gap-3 p-6 sm:p-8">
+      {/* Bottom-up scrim ONLY behind the text — keeps the product image
+          clear while text stays legible (no full-image gray wash). */}
+      <div className="absolute inset-0 bg-gradient-to-t from-black/75 via-black/25 to-transparent" />
+      <div className="relative flex h-full flex-col items-start justify-end gap-3 p-6 [text-shadow:0_1px_8px_rgba(0,0,0,0.5)] sm:p-8">
         <h2 className="max-w-md text-2xl font-bold leading-tight text-white sm:text-3xl">
           {title}
         </h2>
-        <p className="max-w-md text-sm text-neutral-200">{subtitle}</p>
+        <p className="max-w-md text-sm text-neutral-100">{subtitle}</p>
         <Link
           href={href}
-          className="mt-1 inline-flex items-center rounded-full bg-white px-5 py-2.5 text-sm font-semibold text-neutral-900 transition hover:bg-neutral-200"
+          className="mt-1 inline-flex items-center rounded-full bg-white px-5 py-2.5 text-sm font-semibold text-neutral-900 shadow-lg transition hover:bg-neutral-200 [text-shadow:none]"
         >
           {ctaLabel}
         </Link>

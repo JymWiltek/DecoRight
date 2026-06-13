@@ -112,7 +112,9 @@
     "login": "登录",
     "empty": "该分类暂无产品，敬请期待。",
     "notFound": "分类不存在",
-    "viewAll": "查看全部"
+    "viewAll": "查看全部",
+    "logout": "登出",
+    "dashboard": "控制台"
   },
   "bundle": {
     "notFound": "套餐不存在",

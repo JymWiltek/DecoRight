@@ -112,7 +112,9 @@
     "login": "Log Masuk",
     "empty": "Tiada produk dalam kategori ini lagi.",
     "notFound": "Kategori tidak dijumpai",
-    "viewAll": "Lihat semua"
+    "viewAll": "Lihat semua",
+    "logout": "Log keluar",
+    "dashboard": "Papan pemuka"
   },
   "bundle": {
     "notFound": "Pakej tidak dijumpai",

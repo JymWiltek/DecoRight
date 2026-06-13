@@ -12,6 +12,10 @@ import {
   coversByItemType,
 } from "@/lib/products";
 import { buildActiveCategories } from "@/lib/categories";
+import { getDesignerSession } from "@/lib/auth/require-designer";
+import { getCreditBalance } from "@/lib/credit";
+import { createServiceRoleClient } from "@/lib/supabase/service";
+import { designerLogout } from "@/app/designer/actions";
 import LanguageSwitcher from "./LanguageSwitcher";
 
 /**
@@ -53,6 +57,20 @@ export default async function SiteHeader({
   const itemTypeLabels = labelMap(taxonomy.itemTypes, locale);
   const subtypeLabels = labelMap(taxonomy.itemSubtypes, locale);
 
+  // Designer login state — the storefront "Login" is the DESIGNER entry
+  // (admin lives at a separate, unlinked /admin/login). When a designer
+  // is signed in we show their name + credit + Logout instead.
+  const designerSession = await getDesignerSession();
+  let designer: { name: string; balance: number } | null = null;
+  if (designerSession) {
+    const svc = createServiceRoleClient();
+    const [{ data: row }, balance] = await Promise.all([
+      svc.from("designers").select("name").eq("id", designerSession.designerId).single(),
+      getCreditBalance(designerSession.designerId),
+    ]);
+    designer = { name: row?.name ?? "Designer", balance: balance ?? 0 };
+  }
+
   return (
     <header className="sticky top-0 z-40 border-b border-neutral-200 bg-white/95 backdrop-blur">
       {/* Top row: logo · prominent search · language + login */}
@@ -89,12 +107,35 @@ export default async function SiteHeader({
 
         <div className="ml-auto flex shrink-0 items-center gap-3 sm:ml-0">
           <LanguageSwitcher current={sysLocale} />
-          <Link
-            href="/admin/login"
-            className="rounded-full border border-neutral-300 px-3 py-1.5 text-xs font-medium text-neutral-700 transition hover:border-neutral-900 hover:text-neutral-900"
-          >
-            {tCat("login")}
-          </Link>
+          {designer ? (
+            <>
+              <Link
+                href="/designer"
+                className="hidden items-baseline gap-1.5 text-xs font-medium text-neutral-700 hover:text-neutral-900 sm:flex"
+                title={tCat("dashboard")}
+              >
+                <span className="max-w-[10ch] truncate">{designer.name}</span>
+                <span className="rounded-full bg-neutral-900 px-1.5 py-0.5 text-[10px] font-semibold text-white">
+                  {designer.balance} credit
+                </span>
+              </Link>
+              <form action={designerLogout}>
+                <button
+                  type="submit"
+                  className="rounded-full border border-neutral-300 px-3 py-1.5 text-xs font-medium text-neutral-700 transition hover:border-neutral-900 hover:text-neutral-900"
+                >
+                  {tCat("logout")}
+                </button>
+              </form>
+            </>
+          ) : (
+            <Link
+              href="/designer/login"
+              className="rounded-full border border-neutral-300 px-3 py-1.5 text-xs font-medium text-neutral-700 transition hover:border-neutral-900 hover:text-neutral-900"
+            >
+              {tCat("login")}
+            </Link>
+          )}
         </div>
       </div>
 

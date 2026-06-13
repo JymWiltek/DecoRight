@@ -112,7 +112,9 @@
     "login": "Login",
     "empty": "No products in this category yet. Check back soon.",
     "notFound": "Category not found",
-    "viewAll": "View all"
+    "viewAll": "View all",
+    "logout": "Logout",
+    "dashboard": "Dashboard"
   },
   "bundle": {
     "notFound": "Bundle not found",
