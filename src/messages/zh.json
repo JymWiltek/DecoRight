@@ -77,7 +77,10 @@
     "downloadGlb": "下载 3D 模型 (.glb)",
     "downloadFbx": "下载 FBX (设计师专用)",
     "arHintLine1": "点击模型右下角 AR 图标，用手机摄像头 1:1 预览该产品。",
-    "arHintLine2": "iOS 需要 USDZ（Phase 3 开放），当前 Android Scene Viewer 可用。"
+    "arHintLine2": "iOS 需要 USDZ（Phase 3 开放），当前 Android Scene Viewer 可用。",
+    "designerGuide": "设计师指南",
+    "similarProducts": "相似产品",
+    "styleTags": "风格"
   },
   "category": {
     "bathtub": "浴缸",

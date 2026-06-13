@@ -77,7 +77,10 @@
     "downloadGlb": "Muat turun model 3D (.glb)",
     "downloadFbx": "Muat turun FBX (untuk pereka)",
     "arHintLine1": "Tekan ikon AR di kanan bawah model untuk pratonton produk saiz sebenar dengan kamera telefon.",
-    "arHintLine2": "iOS perlukan USDZ (Fasa 3); Android Scene Viewer sudah boleh guna."
+    "arHintLine2": "iOS perlukan USDZ (Fasa 3); Android Scene Viewer sudah boleh guna.",
+    "designerGuide": "Panduan Pereka",
+    "similarProducts": "Produk Serupa",
+    "styleTags": "Gaya"
   },
   "category": {
     "bathtub": "Tab Mandi",

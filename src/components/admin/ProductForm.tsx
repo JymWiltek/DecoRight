@@ -526,6 +526,19 @@ export default function ProductForm({
                 className={inputCls}
               />
             </Field>
+            {/* Wave 12 — Designer's Guide. Markdown blurb rendered in a
+                section on the storefront product page (## headings,
+                - bullets, **bold**). Plain textarea (no AI-fill). */}
+            <Field label="Designer's Guide (markdown)" wide>
+              <textarea
+                form={FORM_ID}
+                name="designer_guide"
+                rows={6}
+                defaultValue={p?.designer_guide ?? ""}
+                placeholder="适合 6-12 平米浴室，搭配落地龙头 + 暖色调瓷砖。&#10;- 推荐组合：这个浴缸 + Smart Sink&#10;**Spa 风格** 首选。"
+                className={inputCls}
+              />
+            </Field>
           </Grid>
         </Section>
 
@@ -645,6 +658,19 @@ export default function ProductForm({
                 step="0.01"
                 name="price_myr"
                 defaultValue={p?.price_myr ?? ""}
+                className={inputCls}
+              />
+            </Field>
+            {/* Wave 12 — "X credit" download price shown on storefront
+                cards + the FBX button. Display-only (no paywall yet). */}
+            <Field label="Download credit cost">
+              <input
+                form={FORM_ID}
+                type="number"
+                min={0}
+                step="1"
+                name="download_credit_cost"
+                defaultValue={p?.download_credit_cost ?? 5}
                 className={inputCls}
               />
             </Field>

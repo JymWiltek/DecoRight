@@ -254,6 +254,11 @@ async function parsePayload(fd: FormData): Promise<Omit<ProductInsert, "id">> {
     purchase_url: str(fd, "purchase_url"),
     supplier: str(fd, "supplier"),
     description: str(fd, "description"),
+    // Wave 12 — Designer's Guide (markdown) + download credit cost.
+    // download_credit_cost is NOT NULL (DB default 5); fall back to 5
+    // when the field is blank so we never write null.
+    designer_guide: str(fd, "designer_guide"),
+    download_credit_cost: num(fd, "download_credit_cost") ?? 5,
     status,
     // De-dup: ProductForm re-emits the persisted list from the
     // product row AND AIInferButton adds a fresh set after each run,

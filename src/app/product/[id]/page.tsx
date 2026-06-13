@@ -4,11 +4,13 @@ import type { Metadata, ResolvingMetadata } from "next";
 import type { Locale } from "@/i18n/config";
 import SiteHeader from "@/components/SiteHeader";
 import ProductDetail from "@/components/ProductDetail";
+import ProductCard from "@/components/ProductCard";
+import Markdown from "@/components/Markdown";
 import Breadcrumb, { type BreadcrumbItem } from "@/components/Breadcrumb";
-import { getPublishedProductById } from "@/lib/products";
+import { getPublishedProductById, getRelatedProducts } from "@/lib/products";
 import { createServiceRoleClient } from "@/lib/supabase/service";
 import { getSignedRawUrl } from "@/lib/storage";
-import { labelFor, labelMap, loadTaxonomy } from "@/lib/taxonomy";
+import { labelFor, labelMap, colorHexMap, loadTaxonomy } from "@/lib/taxonomy";
 
 export const dynamic = "force-dynamic";
 
@@ -90,10 +92,11 @@ export default async function ProductPage({ params }: PageProps) {
   // raw_image_url paths are private-bucket; we sign them here so the
   // gallery can render the originals as scene shots (SPEC 2 slide 3+).
   const supabase = createServiceRoleClient();
-  const [product, taxonomy, tSite, locale, galleryResp] = await Promise.all([
+  const [product, taxonomy, tSite, tProduct, locale, galleryResp] = await Promise.all([
     getPublishedProductById(id),
     loadTaxonomy(),
     getTranslations("site"),
+    getTranslations("product"),
     getLocale() as Promise<Locale>,
     supabase
       .from("product_images")
@@ -139,9 +142,15 @@ export default async function ProductPage({ params }: PageProps) {
   const itemTypeLabels = labelMap(taxonomy.itemTypes, locale);
   const roomLabels = labelMap(taxonomy.rooms, locale);
   const styleLabels = labelMap(taxonomy.styles, locale);
+  const subtypeLabels = labelMap(taxonomy.itemSubtypes, locale);
   const materialLabels = labelMap(taxonomy.materials, locale);
   const regionLabels = labelMap(taxonomy.regions, locale);
+  const colorHex = colorHexMap(taxonomy.colors);
   const colorsBySlug = new Map(taxonomy.colors.map((c) => [c.slug, c]));
+
+  // Wave 12 — Similar Products: same item_type, excluding self (4 cards).
+  const related = await getRelatedProducts(product, 4);
+  const designerGuide = product.designer_guide?.trim() ?? "";
 
   const itemTypeLabel = product.item_type
     ? (itemTypeLabels[product.item_type] ?? product.item_type)
@@ -212,6 +221,40 @@ export default async function ProductPage({ params }: PageProps) {
           regionLabels={regionLabelList}
           galleryUrls={galleryUrls}
         />
+
+        {/* Wave 12 — Designer's Guide. Operator-written markdown blurb
+            (mig 0046). Hidden when empty so legacy products show nothing. */}
+        {designerGuide && (
+          <section className="mt-12 border-t border-neutral-200 pt-8">
+            <h2 className="mb-4 text-lg font-semibold text-neutral-900">
+              {tProduct("designerGuide")}
+            </h2>
+            <div className="max-w-3xl">
+              <Markdown source={designerGuide} />
+            </div>
+          </section>
+        )}
+
+        {/* Wave 12 — Similar Products: same item_type, 4 cards. */}
+        {related.length > 0 && (
+          <section className="mt-12 border-t border-neutral-200 pt-8">
+            <h2 className="mb-4 text-lg font-semibold text-neutral-900">
+              {tProduct("similarProducts")}
+            </h2>
+            <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+              {related.map((p) => (
+                <ProductCard
+                  key={p.id}
+                  product={p}
+                  itemTypeLabels={itemTypeLabels}
+                  styleLabels={styleLabels}
+                  subtypeLabels={subtypeLabels}
+                  colorHex={colorHex}
+                />
+              ))}
+            </div>
+          </section>
+        )}
       </main>
     </>
   );

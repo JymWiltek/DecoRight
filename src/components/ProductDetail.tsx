@@ -220,12 +220,31 @@ export default function ProductDetail({
             className="inline-flex items-center justify-center rounded-md bg-neutral-100 px-5 py-3 text-sm font-medium text-neutral-800 transition hover:bg-neutral-200"
           >
             {t("downloadFbx")}
+            {/* Wave 12 — credit price on the button (display-only; no
+                paywall this wave). */}
+            <span className="ml-2 rounded-full bg-neutral-900/90 px-2 py-0.5 text-xs font-medium text-white">
+              {product.download_credit_cost} credit
+            </span>
             {product.fbx_size_kb != null && (
               <span className="ml-2 text-xs text-neutral-500">
                 ({(product.fbx_size_kb / 1024).toFixed(1)} MB)
               </span>
             )}
           </a>
+        )}
+
+        {/* Wave 12 — Style Tags (#Modern #Minimalist). */}
+        {styleLabels.length > 0 && (
+          <div className="flex flex-wrap gap-2 border-t border-neutral-100 pt-4">
+            {styleLabels.map((s) => (
+              <span
+                key={s}
+                className="rounded-full bg-neutral-100 px-2.5 py-1 text-xs text-neutral-600"
+              >
+                #{s.replace(/\s+/g, "")}
+              </span>
+            ))}
+          </div>
         )}
 
         <div className="text-xs text-neutral-500">
