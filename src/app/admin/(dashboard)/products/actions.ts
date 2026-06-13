@@ -701,6 +701,82 @@ async function loadPublishGateFacts(
 // inline and redirects to /edit. Drafts mature into full products
 // via updateProduct (below). Keep that single mutation surface.
 
+/**
+ * Sprint 1 (PART B) — shared upload-asset → column mapping. Builds the
+ * products columns for a manual .glb / .fbx / .fbx-zip / thumbnail
+ * upload from the staged FormData fields, validating the storage paths.
+ * Pure of redirects: returns `error` (a message) instead, so BOTH the
+ * single-product updateProduct AND the bulk createProductFromUpload can
+ * call it and map the error to their own UX (redirect vs JSON). This is
+ * the anti-drift core — the glb/fbx/zip persistence lives in ONE place.
+ */
+async function buildUploadUpdates(
+  id: string,
+  fd: FormData,
+): Promise<{ updates: ProductUpdate; error: string | null }> {
+  const updates: ProductUpdate = {};
+  const glbPathInRequest = str(fd, "glb_path");
+  if (glbPathInRequest) {
+    if (!validGlbPath(glbPathInRequest, id)) {
+      return { updates, error: "invalid glb path" };
+    }
+    updates.glb_url = glbPublicUrl(id);
+    updates.glb_size_kb = num(fd, "glb_size_kb");
+    updates.glb_vertex_count = num(fd, "glb_vertex_count");
+    updates.glb_max_texture_dim = num(fd, "glb_max_texture_dim");
+    updates.glb_decoded_ram_mb = num(fd, "glb_decoded_ram_mb");
+    updates.glb_source = "manual_upload";
+    updates.glb_generated_at = new Date().toISOString();
+    updates.compression_status = "pending";
+    updates.compression_error = null;
+    updates.glb_compressed_url = null;
+    updates.glb_compressed_size_kb = null;
+  }
+  const fbxPathInRequest = str(fd, "fbx_path");
+  if (fbxPathInRequest) {
+    if (!validFbxPath(fbxPathInRequest, id)) {
+      return { updates, error: "invalid fbx path" };
+    }
+    updates.fbx_url = fbxPublicUrl(id);
+    updates.fbx_size_kb = num(fd, "fbx_size_kb");
+  }
+  const fbxBundlePathInRequest = str(fd, "fbx_bundle_path");
+  if (fbxBundlePathInRequest) {
+    if (fbxBundlePathInRequest !== `products/${id}/fbx-bundle.zip`) {
+      return { updates, error: "invalid fbx zip path" };
+    }
+    const v = await validateFbxZipContainsFbx(id);
+    if (!v.ok) return { updates, error: v.error };
+    updates.fbx_bundle_url = fbxBundlePublicUrl(id);
+    updates.fbx_bundle_size_kb = num(fd, "fbx_bundle_size_kb");
+  }
+  const thumb = fileOrNull(fd, "thumbnail_file");
+  if (thumb) {
+    try {
+      updates.thumbnail_url = await uploadThumbnail(id, thumb);
+    } catch (err) {
+      return { updates, error: uploadErrMsg(err, "upload failed") };
+    }
+  }
+  return { updates, error: null };
+}
+
+/** True when this save dispatched the Draco compression worker — a
+ *  fresh .glb landed. Shared by updateProduct + createProductFromUpload
+ *  so the "only recompress on a new glb" rule lives in one place. */
+function shouldDispatchGlbCompression(fd: FormData): boolean {
+  return Boolean(str(fd, "glb_path"));
+}
+/** True when this save should (re)build the FBX zip bundle — a fresh
+ *  bare .fbx or new textures landed, AND the operator did NOT upload a
+ *  pre-packaged zip (which is already the bundle). */
+function shouldDispatchFbxBundle(fd: FormData): boolean {
+  const fbxPath = str(fd, "fbx_path");
+  const texturesChanged = str(fd, "textures_changed");
+  const uploadedZip = str(fd, "fbx_bundle_path");
+  return Boolean((fbxPath || texturesChanged) && !uploadedZip);
+}
+
 export async function updateProduct(id: string, fd: FormData): Promise<void> {
   const payload = await parsePayload(fd);
   const supabase = createServiceRoleClient();
@@ -740,91 +816,19 @@ export async function updateProduct(id: string, fd: FormData): Promise<void> {
   //     - Form parse + validate + UPDATE products
   //     - Attach staged raw image rows (no rembg run)
 
-  // ── Manual GLB upload (validate path, set fields) ────────────
-  const glbPathInRequest = str(fd, "glb_path");
+  // ── Manual GLB / FBX / FBX-zip / thumbnail upload ────────────
+  // Sprint 1 (PART B): the asset→column mapping + path validation now
+  // lives in the shared buildUploadUpdates() so bulk-create applies the
+  // exact same logic. Dispatch decisions read the FormData directly via
+  // shouldDispatch* helpers below.
   const updates: ProductUpdate = { ...payload };
-  try {
-    if (glbPathInRequest) {
-      // Same validation as createProduct — the signed-URL mint used
-      // this exact path, so anything else is a crafted request.
-      if (!validGlbPath(glbPathInRequest, id)) {
-        redirect(
-          `/admin/products/${id}/edit?err=upload&msg=${encodeURIComponent("invalid glb path")}`,
-        );
-      }
-      updates.glb_url = glbPublicUrl(id);
-      updates.glb_size_kb = num(fd, "glb_size_kb");
-      // Decoded-budget metadata (mig 0031). Computed in the dropzone
-      // by lib/admin/glb-budget#checkGlbBudget at pick time, shipped
-      // as 3 hidden form fields. The server-side render gate
-      // (lib/glb-display#glbUrlForGallery) reads these to decide
-      // whether <model-viewer> should mount on the product page —
-      // preventing iOS Safari OOM on borderline-too-heavy GLBs.
-      // num() returns null on missing/invalid input → the DB columns
-      // accept null and the gate treats null as "render anyway"
-      // (backward compat with pre-mig-0031 products).
-      updates.glb_vertex_count = num(fd, "glb_vertex_count");
-      updates.glb_max_texture_dim = num(fd, "glb_max_texture_dim");
-      updates.glb_decoded_ram_mb = num(fd, "glb_decoded_ram_mb");
-      // Manual upload → mark provenance + generated time so the
-      // "Meshy only runs once" gate trips correctly even if the
-      // operator clears glb_url and re-runs Generate 3D later.
-      updates.glb_source = "manual_upload";
-      updates.glb_generated_at = new Date().toISOString();
-      // Wave 9 — a fresh .glb invalidates any previous compressed
-      // artifact. Reset the worker state to 'pending' and clear the
-      // stale URL/size so the storefront falls back to glb_url
-      // until the new compression run finishes. Dispatcher fires
-      // below (inside after() after the DB UPDATE commits).
-      updates.compression_status = "pending";
-      updates.compression_error = null;
-      updates.glb_compressed_url = null;
-      updates.glb_compressed_size_kb = null;
-    }
-    // Wave 9 — FBX original (paid designer download). Independent of
-    // the .glb dropzone: an operator can upload one without the other,
-    // or both in the same Save. FBX bytes never enter any pipeline;
-    // we just record the URL/size and serve via signed-URL download.
-    const fbxPathInRequest = str(fd, "fbx_path");
-    if (fbxPathInRequest) {
-      if (!validFbxPath(fbxPathInRequest, id)) {
-        redirect(
-          `/admin/products/${id}/edit?err=upload&msg=${encodeURIComponent("invalid fbx path")}`,
-        );
-      }
-      updates.fbx_url = fbxPublicUrl(id);
-      updates.fbx_size_kb = num(fd, "fbx_size_kb");
-    }
-    // Sprint 1 (PART B) — operator-PACKAGED FBX zip. The single FBX
-    // dropzone yields either a bare .fbx (above) OR a .zip (here), never
-    // both. Validate the uploaded zip actually contains a .fbx, then
-    // record fbx_bundle_url directly — NO repackage (operator packaged
-    // it). The download button already prefers fbx_bundle_url.
-    const fbxBundlePathInRequest = str(fd, "fbx_bundle_path");
-    if (fbxBundlePathInRequest) {
-      if (fbxBundlePathInRequest !== `products/${id}/fbx-bundle.zip`) {
-        redirect(
-          `/admin/products/${id}/edit?err=upload&msg=${encodeURIComponent("invalid fbx zip path")}`,
-        );
-      }
-      const v = await validateFbxZipContainsFbx(id);
-      if (!v.ok) {
-        redirect(
-          `/admin/products/${id}/edit?err=upload&msg=${encodeURIComponent(v.error)}`,
-        );
-      }
-      updates.fbx_bundle_url = fbxBundlePublicUrl(id);
-      updates.fbx_bundle_size_kb = num(fd, "fbx_bundle_size_kb");
-    }
-    const thumb = fileOrNull(fd, "thumbnail_file");
-    if (thumb) {
-      updates.thumbnail_url = await uploadThumbnail(id, thumb);
-    }
-  } catch (err) {
+  const built = await buildUploadUpdates(id, fd);
+  if (built.error) {
     redirect(
-      `/admin/products/${id}/edit?err=upload&msg=${encodeURIComponent(uploadErrMsg(err, "upload failed"))}`,
+      `/admin/products/${id}/edit?err=upload&msg=${encodeURIComponent(built.error)}`,
     );
   }
+  Object.assign(updates, built.updates);
 
   // ── Publish gates (Wave 2B · Commit 7) ──────────────────────
   //
@@ -875,25 +879,15 @@ export async function updateProduct(id: string, fd: FormData): Promise<void> {
   // which has its own maxDuration=120; the row's state machine is:
   //   'pending' → 'processing' → ('done' | 'failed')
   // and the banner polls getCompressionStatus every 5 s.
-  if (glbPathInRequest) {
+  if (shouldDispatchGlbCompression(fd)) {
     after(() => dispatchGlbCompression(id));
   }
 
   // Wave 11b — (re)build the FBX zip bundle when this save landed a
-  // fresh .fbx OR new texture maps. The .fbx + textures already live
-  // in Storage (signed-URL PUTs); the dispatcher fires the packager
-  // route which zips model.fbx + textures/ and writes fbx_bundle_url.
-  // Fire-and-forget — the bare fbx_url stays the download fallback
-  // until the zip lands.
-  // Re-read fbx_path here (the earlier parse lives inside the upload
-  // try-block scope). str() is pure; cheap to read twice.
-  const fbxPathForBundle = str(fd, "fbx_path");
-  const texturesChanged = str(fd, "textures_changed");
-  // Skip the packager entirely when the operator uploaded a pre-packaged
-  // zip this save — there's no model.fbx to build from and the zip is
-  // already the bundle (mutually exclusive with the bare-.fbx path).
-  const uploadedFbxZip = str(fd, "fbx_bundle_path");
-  if ((fbxPathForBundle || texturesChanged) && !uploadedFbxZip) {
+  // fresh .fbx OR new texture maps (but NOT when the operator uploaded
+  // a pre-packaged zip — that's already the bundle). Shared decision via
+  // shouldDispatchFbxBundle so bulk-create matches exactly.
+  if (shouldDispatchFbxBundle(fd)) {
     after(() => dispatchFbxBundle(id));
   }
 
