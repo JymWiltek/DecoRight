@@ -95,5 +95,20 @@
     "login": "Login",
     "empty": "No products in this category yet. Check back soon.",
     "notFound": "Category not found"
+  },
+  "bundle": {
+    "notFound": "Bundle not found",
+    "pieces": "{count, plural, =0 {Empty bundle} one {# piece} other {# pieces}}",
+    "save": "Save {pct}%",
+    "was": "was {credit} credit",
+    "credit": "{credit} credit",
+    "download": "Download Bundle FBX",
+    "downloadSoon": "Bundle FBX — coming soon",
+    "includes": "Included products",
+    "empty": "No products in this bundle yet."
+  },
+  "style": {
+    "notFound": "Style not found",
+    "empty": "No products in this style yet."
   }
 }

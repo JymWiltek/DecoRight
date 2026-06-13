@@ -95,5 +95,20 @@
     "login": "Log Masuk",
     "empty": "Tiada produk dalam kategori ini lagi.",
     "notFound": "Kategori tidak dijumpai"
+  },
+  "bundle": {
+    "notFound": "Pakej tidak dijumpai",
+    "pieces": "{count, plural, other {# barang}}",
+    "save": "Jimat {pct}%",
+    "was": "asal {credit} kredit",
+    "credit": "{credit} kredit",
+    "download": "Muat Turun FBX Pakej",
+    "downloadSoon": "FBX Pakej — akan datang",
+    "includes": "Produk disertakan",
+    "empty": "Tiada produk dalam pakej ini lagi."
+  },
+  "style": {
+    "notFound": "Gaya tidak dijumpai",
+    "empty": "Tiada produk untuk gaya ini lagi."
   }
 }

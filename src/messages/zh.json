@@ -95,5 +95,20 @@
     "login": "登录",
     "empty": "该分类暂无产品，敬请期待。",
     "notFound": "分类不存在"
+  },
+  "bundle": {
+    "notFound": "套餐不存在",
+    "pieces": "{count, plural, other {# 件全套}}",
+    "save": "立省 {pct}%",
+    "was": "原价 {credit} credit",
+    "credit": "{credit} credit",
+    "download": "下载套餐 FBX",
+    "downloadSoon": "套餐 FBX — 即将推出",
+    "includes": "包含产品",
+    "empty": "该套餐暂无产品。"
+  },
+  "style": {
+    "notFound": "风格不存在",
+    "empty": "该风格暂无产品。"
   }
 }

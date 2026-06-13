@@ -1,7 +1,7 @@
 import { unstable_cache, updateTag } from "next/cache";
 import { createClient as createAnonSbClient } from "@supabase/supabase-js";
 import { createClient } from "./supabase/server";
-import type { Database, ProductRow } from "./supabase/types";
+import type { Database, ProductRow, BundleRow } from "./supabase/types";
 
 export type ProductFilters = {
   itemTypes?: string[];
@@ -395,4 +395,64 @@ export async function getRelatedProducts(
   const { data, error } = await query.limit(limit);
   if (error) throw error;
   return data ?? [];
+}
+
+// ─── Wave 12 — storefront bundle read ───────────────────────────────
+export type BundleWithProducts = { bundle: BundleRow; products: ProductRow[] };
+
+const BUNDLE_UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Wave 12 — fetch a published bundle + its published products in
+ * sort_order, for /bundle/[id]. The route param may be the bundle UUID
+ * OR its slug (we only probe the uuid column when the param actually
+ * looks like a uuid, else Postgres throws on a bad-uuid cast). Reuses
+ * the Wave 10 `bundles` / `bundle_products` tables — no new schema.
+ * Unpublished bundles / products are excluded; null → 404.
+ */
+export async function getPublishedBundle(
+  idOrSlug: string,
+): Promise<BundleWithProducts | null> {
+  const supabase = await createClient();
+  let bundle: BundleRow | null = null;
+  if (BUNDLE_UUID_RE.test(idOrSlug)) {
+    const { data } = await supabase
+      .from("bundles")
+      .select("*")
+      .eq("status", "published")
+      .eq("id", idOrSlug)
+      .maybeSingle();
+    bundle = data ?? null;
+  }
+  if (!bundle) {
+    const { data } = await supabase
+      .from("bundles")
+      .select("*")
+      .eq("status", "published")
+      .eq("slug", idOrSlug)
+      .maybeSingle();
+    bundle = data ?? null;
+  }
+  if (!bundle) return null;
+
+  const { data: links } = await supabase
+    .from("bundle_products")
+    .select("product_id, sort_order")
+    .eq("bundle_id", bundle.id)
+    .order("sort_order", { ascending: true });
+  const ids = (links ?? []).map((l) => l.product_id);
+  if (ids.length === 0) return { bundle, products: [] };
+
+  const { data: prods } = await supabase
+    .from("products")
+    .select("*")
+    .in("id", ids)
+    .eq("status", "published");
+  // Preserve sort_order (the .in() result order is unspecified).
+  const byId = new Map((prods ?? []).map((p) => [p.id, p]));
+  const products = ids
+    .map((id) => byId.get(id))
+    .filter((p): p is ProductRow => Boolean(p));
+  return { bundle, products };
 }
