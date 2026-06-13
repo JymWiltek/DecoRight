@@ -27,7 +27,15 @@
     "heroStat": "{count} 个模型 · FBX & GLB · AR",
     "featuredBundles": "精选套餐",
     "browseByCategory": "按品类浏览",
-    "latestAdditions": "最新上架"
+    "latestAdditions": "最新上架",
+    "bannerArTitle": "先在你的空间里看见，再下单。",
+    "bannerArSub": "AR 里的是真实产品 — 不是概念渲染图。",
+    "bannerArCta": "试用 AR",
+    "bannerBuyTitle": "每个模型都是可购买的真实产品",
+    "bannerBuySub": "别的模型库给你看买不到的渲染图。DecoRight 打通从看到买。",
+    "bannerBuyCta": "浏览全部",
+    "browseByType": "按产品类型浏览",
+    "browseByRoom": "按空间浏览"
   },
   "room": {
     "pickItem": "选择物件",
@@ -100,7 +108,8 @@
     "searchPlaceholder": "搜索产品",
     "login": "登录",
     "empty": "该分类暂无产品，敬请期待。",
-    "notFound": "分类不存在"
+    "notFound": "分类不存在",
+    "viewAll": "查看全部"
   },
   "bundle": {
     "notFound": "套餐不存在",

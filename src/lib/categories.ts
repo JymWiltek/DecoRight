@@ -76,3 +76,48 @@ export function categoryForItemType(itemType: string | null | undefined): Catego
   if (!itemType) return null;
   return CATEGORIES.find((c) => c.itemTypes.includes(itemType)) ?? null;
 }
+
+// ── Sprint 1 — dynamic, full-catalog categories ─────────────────────
+//
+// The full home catalog drops the hardcoded 7-bathroom rollup in favor
+// of "category = item_type": the nav shows every item_type that has
+// published products (so it grows automatically as Jym adds sofas,
+// lighting, …). /c/[category] keys on the item_type slug directly. The
+// legacy CATEGORIES rollup above stays only to power the 301 redirects
+// from the old /category/[slug] URLs.
+
+export type ActiveCategory = {
+  /** item_type slug — also the /c/[category] route param. */
+  slug: string;
+  count: number;
+  coverUrl: string | null;
+  /** subtype slugs under this item_type, for the header mega-menu. */
+  subtypeSlugs: string[];
+};
+
+/**
+ * Build the live category list for the nav / browse-by-type / home from
+ * already-loaded taxonomy + counts + covers (all tag-cached by the
+ * caller — keeps this a pure function with no DB/locale coupling; the
+ * caller resolves labels via labelMap). Only item_types with ≥1
+ * published product appear; ordered by stock desc, then slug for a
+ * stable nav.
+ */
+export function buildActiveCategories(
+  itemTypes: { slug: string }[],
+  counts: Record<string, number>,
+  covers: Record<string, string>,
+  subtypes: { slug: string; item_type_slug: string }[],
+): ActiveCategory[] {
+  return itemTypes
+    .filter((it) => (counts[it.slug] ?? 0) > 0)
+    .map((it) => ({
+      slug: it.slug,
+      count: counts[it.slug] ?? 0,
+      coverUrl: covers[it.slug] ?? null,
+      subtypeSlugs: subtypes
+        .filter((s) => s.item_type_slug === it.slug)
+        .map((s) => s.slug),
+    }))
+    .sort((a, b) => b.count - a.count || a.slug.localeCompare(b.slug));
+}

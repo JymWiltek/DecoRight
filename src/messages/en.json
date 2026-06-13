@@ -27,7 +27,15 @@
     "heroStat": "{count} models · FBX & GLB · AR",
     "featuredBundles": "Featured Bundles",
     "browseByCategory": "Browse by Category",
-    "latestAdditions": "Latest Additions"
+    "latestAdditions": "Latest Additions",
+    "bannerArTitle": "See It In Your Space. Then Buy It.",
+    "bannerArSub": "Real products in AR — not concept renders.",
+    "bannerArCta": "Try AR",
+    "bannerBuyTitle": "Every Model Is a Real Product You Can Buy",
+    "bannerBuySub": "Other libraries show renders you can’t purchase. DecoRight closes the loop.",
+    "bannerBuyCta": "Browse Catalog",
+    "browseByType": "Browse by Product Type",
+    "browseByRoom": "Browse by Room"
   },
   "room": {
     "pickItem": "Pick an item",
@@ -100,7 +108,8 @@
     "searchPlaceholder": "Search products",
     "login": "Login",
     "empty": "No products in this category yet. Check back soon.",
-    "notFound": "Category not found"
+    "notFound": "Category not found",
+    "viewAll": "View all"
   },
   "bundle": {
     "notFound": "Bundle not found",

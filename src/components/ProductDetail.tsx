@@ -167,7 +167,10 @@ export default function ProductDetail({
           )}
         </dl>
 
-        {product.purchase_url ? (
+        {/* Sprint 1 — only render Buy Now when there's a real purchase
+            link. The old disabled "No purchase link yet" button made the
+            page feel half-built; drop it entirely when absent. */}
+        {product.purchase_url && (
           <a
             href={product.purchase_url}
             target="_blank"
@@ -176,13 +179,6 @@ export default function ProductDetail({
           >
             {t("buyNow")}
           </a>
-        ) : (
-          <button
-            disabled
-            className="inline-flex cursor-not-allowed items-center justify-center rounded-md bg-neutral-200 px-5 py-3 text-sm font-medium text-neutral-500"
-          >
-            {t("noPurchaseLink")}
-          </button>
         )}
 
         {/* Download .glb — surfaced only when a model exists. The

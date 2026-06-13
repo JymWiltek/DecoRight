@@ -27,7 +27,15 @@
     "heroStat": "{count} model · FBX & GLB · AR",
     "featuredBundles": "Pakej Pilihan",
     "browseByCategory": "Layari Mengikut Kategori",
-    "latestAdditions": "Tambahan Terkini"
+    "latestAdditions": "Tambahan Terkini",
+    "bannerArTitle": "Lihat Dalam Ruang Anda. Kemudian Beli.",
+    "bannerArSub": "Produk sebenar dalam AR — bukan render konsep.",
+    "bannerArCta": "Cuba AR",
+    "bannerBuyTitle": "Setiap Model Ialah Produk Sebenar Yang Boleh Dibeli",
+    "bannerBuySub": "Pustaka lain tunjuk render yang tak boleh dibeli. DecoRight lengkapkan kitaran.",
+    "bannerBuyCta": "Layari Katalog",
+    "browseByType": "Layari Mengikut Jenis Produk",
+    "browseByRoom": "Layari Mengikut Ruang"
   },
   "room": {
     "pickItem": "Pilih barang",
@@ -100,7 +108,8 @@
     "searchPlaceholder": "Cari produk",
     "login": "Log Masuk",
     "empty": "Tiada produk dalam kategori ini lagi.",
-    "notFound": "Kategori tidak dijumpai"
+    "notFound": "Kategori tidak dijumpai",
+    "viewAll": "Lihat semua"
   },
   "bundle": {
     "notFound": "Pakej tidak dijumpai",

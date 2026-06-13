@@ -8,16 +8,12 @@ import SiteHeader from "@/components/SiteHeader";
 import FilterPanel from "@/components/FilterPanel";
 import ProductCard from "@/components/ProductCard";
 import Breadcrumb from "@/components/Breadcrumb";
-import {
-  listPublishedProducts,
-  type ProductFilters,
-} from "@/lib/products";
+import { listPublishedProducts, type ProductFilters } from "@/lib/products";
 import { loadTaxonomy, labelFor, labelMap, colorHexMap } from "@/lib/taxonomy";
-import { getCategory, CATEGORIES, type CategorySlug } from "@/lib/categories";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 type PageProps = {
-  params: Promise<{ slug: string }>;
+  params: Promise<{ category: string }>;
   searchParams: Promise<SearchParams>;
 };
 
@@ -38,58 +34,52 @@ function pickMany(v: string | string[] | undefined, allowed: Set<string>): strin
     .filter((s) => s && allowed.has(s));
 }
 
-// Pre-render the 7 category slugs; unknown slugs 404 via notFound().
-export function generateStaticParams() {
-  return CATEGORIES.map((c) => ({ slug: c.slug }));
-}
-
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
-  const { slug } = await params;
-  const category = getCategory(slug);
-  const tCat = await getTranslations("category");
-  if (!category) return { title: tCat("notFound") };
-  const label = tCat(category.slug as CategorySlug);
+  const { category } = await params;
+  const [taxonomy, locale, tItem] = await Promise.all([
+    loadTaxonomy(),
+    getLocale() as Promise<Locale>,
+    getTranslations("itemType"),
+  ]);
+  const row = taxonomy.itemTypes.find((r) => r.slug === category);
+  if (!row) return { title: tItem("notFound") };
+  const label = labelFor(row, locale);
   return {
     title: label,
-    description: `Browse ${category.labelEn.toLowerCase()} on DecoRight — every model shoppable in 3D, AR, and downloadable as FBX/GLB for designers.`,
+    description: `Browse ${label.toLowerCase()} on DecoRight — every model shoppable in 3D, AR, and downloadable as FBX/GLB for designers.`,
   };
 }
 
 /**
- * Wave 12 — category-first listing. The 7 bathroom categories
- * (/category/bathtub, /toilet, …) are the primary navigation axis.
- * Each category rolls up one or more `item_type` slugs (see
- * lib/categories.ts), so the product query filters `item_type IN (…)`.
- *
- * Reuses the existing FilterPanel (style / color / material / sort /
- * search — independent, additive) + subtype pills aggregated across the
- * category's item_types. item_type + room filters are hidden: the
- * category already fixes the item_type set, and the bathroom range isn't
- * room-scoped here.
+ * Sprint 1 — full-catalog category page. "Category = item_type": the
+ * route param IS the item_type slug (e.g. /c/bathtub, /c/toilet,
+ * /c/sofa). Replaces Wave 12's 7-bathroom-rollup /category/[slug]
+ * (which now 301-redirects here via next.config). Reuses FilterPanel
+ * (style/color/material/sort/search — independent + additive) + subtype
+ * pills. item_type + room filters are hidden (the category fixes the
+ * item_type; the full catalog isn't room-scoped here).
  */
 export default async function CategoryPage({ params, searchParams }: PageProps) {
-  const { slug } = await params;
+  const { category } = await params;
   const sp = await searchParams;
 
-  const category = getCategory(slug);
-  if (!category) notFound();
-
-  const [taxonomy, tHome, tCat, tItem, tSite, locale] = await Promise.all([
+  const [taxonomy, tHome, tItem, tSite, locale] = await Promise.all([
     loadTaxonomy(),
     getTranslations("home"),
-    getTranslations("category"),
     getTranslations("itemType"),
     getTranslations("site"),
     getLocale() as Promise<Locale>,
   ]);
 
-  // Subtypes that belong to ANY of this category's item_types.
-  const subtypesForCategory = taxonomy.itemSubtypes.filter((s) =>
-    category.itemTypes.includes(s.item_type_slug),
+  const itemType = taxonomy.itemTypes.find((r) => r.slug === category);
+  if (!itemType) notFound();
+
+  const subtypesForItemType = taxonomy.itemSubtypes.filter(
+    (s) => s.item_type_slug === itemType.slug,
   );
   const subtypeSlug = pickOne(
     sp.subtype,
-    subtypesForCategory.map((s) => s.slug),
+    subtypesForItemType.map((s) => s.slug),
   );
 
   const styleSlugs = new Set(taxonomy.styles.map((r) => r.slug));
@@ -98,7 +88,7 @@ export default async function CategoryPage({ params, searchParams }: PageProps) 
 
   const filters: ProductFilters = {
     q: typeof sp.q === "string" ? sp.q : undefined,
-    itemTypes: category.itemTypes,
+    itemTypes: [itemType.slug],
     subtypes: subtypeSlug ? [subtypeSlug] : undefined,
     styles: pickMany(sp.styles, styleSlugs),
     colors: pickMany(sp.colors, colorSlugs),
@@ -115,7 +105,7 @@ export default async function CategoryPage({ params, searchParams }: PageProps) 
   const styleLabels = labelMap(taxonomy.styles, locale);
   const subtypeLabels = labelMap(taxonomy.itemSubtypes, locale);
   const colorHex = colorHexMap(taxonomy.colors);
-  const categoryLabel = tCat(category.slug as CategorySlug);
+  const categoryLabel = labelFor(itemType, locale);
 
   return (
     <>
@@ -134,9 +124,7 @@ export default async function CategoryPage({ params, searchParams }: PageProps) 
           </div>
         </div>
 
-        {/* Subtype pills — aggregated across the category's item_types.
-            Hidden when the category has no subtypes. */}
-        {subtypesForCategory.length > 0 ? (
+        {subtypesForItemType.length > 0 ? (
           <div
             className="-mx-4 mb-6 overflow-x-auto px-4 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
             role="group"
@@ -144,7 +132,7 @@ export default async function CategoryPage({ params, searchParams }: PageProps) 
           >
             <div className="flex gap-2">
               <Link
-                href={`/category/${category.slug}`}
+                href={`/c/${itemType.slug}`}
                 className={`shrink-0 whitespace-nowrap rounded-full border px-3 py-1 text-xs font-medium transition ${
                   !subtypeSlug
                     ? "border-black bg-black text-white"
@@ -153,12 +141,12 @@ export default async function CategoryPage({ params, searchParams }: PageProps) 
               >
                 {tItem("subtypeAll")}
               </Link>
-              {subtypesForCategory.map((s) => {
+              {subtypesForItemType.map((s) => {
                 const active = subtypeSlug === s.slug;
                 return (
                   <Link
                     key={s.slug}
-                    href={`/category/${category.slug}?subtype=${s.slug}`}
+                    href={`/c/${itemType.slug}?subtype=${s.slug}`}
                     className={`shrink-0 whitespace-nowrap rounded-full border px-3 py-1 text-xs font-medium transition ${
                       active
                         ? "border-black bg-black text-white"
@@ -181,7 +169,7 @@ export default async function CategoryPage({ params, searchParams }: PageProps) 
           <section>
             {products.length === 0 ? (
               <div className="flex min-h-[40vh] items-center justify-center rounded-lg border border-dashed border-neutral-300 px-4 text-center text-sm text-neutral-500">
-                {tCat("empty")}
+                {tItem("empty")}
               </div>
             ) : (
               <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">

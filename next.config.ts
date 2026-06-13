@@ -45,6 +45,22 @@ const nextConfig: NextConfig = {
       "./node_modules/draco3dgltf/draco3dgltf.js",
     ],
   },
+  // Sprint 1 — the catalog moved from Wave 12's 7-bathroom-rollup
+  // /category/[slug] to the full-catalog /c/[category] (category =
+  // item_type). 301 the old URLs so shared links + search engines
+  // follow. `cabinet` mapped to item_type `bathroom_vanity`;
+  // `accessory` had no products → home.
+  async redirects() {
+    return [
+      { source: "/category/bathtub", destination: "/c/bathtub", permanent: true },
+      { source: "/category/toilet", destination: "/c/toilet", permanent: true },
+      { source: "/category/basin", destination: "/c/basin", permanent: true },
+      { source: "/category/faucet", destination: "/c/faucet", permanent: true },
+      { source: "/category/shower", destination: "/c/shower", permanent: true },
+      { source: "/category/cabinet", destination: "/c/bathroom_vanity", permanent: true },
+      { source: "/category/accessory", destination: "/", permanent: true },
+    ];
+  },
 };
 
 export default withNextIntl(nextConfig);
