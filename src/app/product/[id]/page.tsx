@@ -8,6 +8,7 @@ import ProductCard from "@/components/ProductCard";
 import Markdown from "@/components/Markdown";
 import Breadcrumb, { type BreadcrumbItem } from "@/components/Breadcrumb";
 import { getPublishedProductById, getRelatedProducts } from "@/lib/products";
+import { getDesignerSession } from "@/lib/auth/require-designer";
 import { createServiceRoleClient } from "@/lib/supabase/service";
 import { getSignedRawUrl } from "@/lib/storage";
 import { labelFor, labelMap, colorHexMap, loadTaxonomy } from "@/lib/taxonomy";
@@ -151,6 +152,9 @@ export default async function ProductPage({ params }: PageProps) {
   // Wave 12 — Similar Products: same item_type, excluding self (4 cards).
   const related = await getRelatedProducts(product, 4);
   const designerGuide = product.designer_guide?.trim() ?? "";
+  // Sprint 1 C2 — is the visitor a logged-in designer? Drives the gated
+  // FBX download button (login CTA vs credit-deduct download).
+  const designerLoggedIn = (await getDesignerSession()) !== null;
 
   const itemTypeLabel = product.item_type
     ? (itemTypeLabels[product.item_type] ?? product.item_type)
@@ -220,6 +224,7 @@ export default async function ProductPage({ params }: PageProps) {
           colors={colorOptions}
           regionLabels={regionLabelList}
           galleryUrls={galleryUrls}
+          designerLoggedIn={designerLoggedIn}
         />
 
         {/* Wave 12 — Designer's Guide. Operator-written markdown blurb

@@ -17,5 +17,8 @@ export async function requireAdmin(): Promise<void> {
   const jar = await cookies();
   const token = jar.get(SESSION_COOKIE)?.value;
   const session = await verifySession(token);
-  if (!session) throw new Error("unauthorized");
+  // Sprint 1 — designers share the same cookie but carry sub="designer:…".
+  // Scope admin strictly to the admin session so a designer login can
+  // never reach admin actions.
+  if (!session || session.sub !== "admin") throw new Error("unauthorized");
 }

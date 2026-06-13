@@ -94,7 +94,10 @@
     "arHintLine2": "iOS 需要 USDZ（Phase 3 开放），当前 Android Scene Viewer 可用。",
     "designerGuide": "设计师指南",
     "similarProducts": "相似产品",
-    "styleTags": "风格"
+    "styleTags": "风格",
+    "signInToDownload": "登录后下载",
+    "insufficientCredit": "credit 不足 — 请 WhatsApp 充值。",
+    "downloadFailed": "下载失败 — 请重试。"
   },
   "category": {
     "bathtub": "浴缸",

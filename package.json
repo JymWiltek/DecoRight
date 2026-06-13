@@ -17,6 +17,8 @@
     "@google/model-viewer": "^4.2.0",
     "@supabase/ssr": "^0.10.2",
     "@supabase/supabase-js": "^2.103.3",
+    "@types/bcryptjs": "^2.4.6",
+    "bcryptjs": "^3.0.3",
     "draco3dgltf": "^1.5.7",
     "gltf-validator": "^2.0.0-dev.3.10",
     "jszip": "^3.10.1",

@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useTranslations, useLocale } from "next-intl";
 import ProductGallery from "./ProductGallery";
 import ColorSwitcher, { type ColorOption } from "./ColorSwitcher";
+import FbxDownloadButton from "./FbxDownloadButton";
 import { buildGlbDownload, buildFbxDownload, formatMYR } from "@/lib/format";
 import { glbUrlForGallery } from "@/lib/glb-display";
 import type { ProductRow } from "@/lib/supabase/types";
@@ -24,6 +25,9 @@ type Props = {
    *  by upload time. Server-resolved to public-or-signed URLs already.
    *  Empty array → gallery falls back to its empty-state placeholder. */
   galleryUrls: string[];
+  /** Sprint 1 C2 — whether the current visitor is a logged-in designer.
+   *  Drives the FBX button (login CTA vs credit-deduct download). */
+  designerLoggedIn: boolean;
 };
 
 export default function ProductDetail({
@@ -35,6 +39,7 @@ export default function ProductDetail({
   colors,
   regionLabels,
   galleryUrls,
+  designerLoggedIn,
 }: Props) {
   const t = useTranslations("product");
   const locale = useLocale();
@@ -202,31 +207,17 @@ export default function ProductDetail({
           </a>
         )}
 
-        {/* Wave 9 — Download .fbx for designer DCC tools (3ds Max /
-            Maya / SketchUp / Blender). Same `?download=<slug>.fbx`
-            query trick as the GLB button so the file lands with a
-            useful name. No paywall this wave — Wave 10 will wrap
-            this with a credit check. */}
+        {/* Sprint 1 C2 — Download .fbx is gated behind designer login +
+            credit. The button component handles login redirect / credit
+            deduction; GLB above stays free. */}
         {fbxDownload && (
-          <a
-            href={fbxDownload.href}
-            download={fbxDownload.filename}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center justify-center rounded-md bg-neutral-100 px-5 py-3 text-sm font-medium text-neutral-800 transition hover:bg-neutral-200"
-          >
-            {t("downloadFbx")}
-            {/* Wave 12 — credit price on the button (display-only; no
-                paywall this wave). */}
-            <span className="ml-2 rounded-full bg-neutral-900/90 px-2 py-0.5 text-xs font-medium text-white">
-              {product.download_credit_cost} credit
-            </span>
-            {product.fbx_size_kb != null && (
-              <span className="ml-2 text-xs text-neutral-500">
-                ({(product.fbx_size_kb / 1024).toFixed(1)} MB)
-              </span>
-            )}
-          </a>
+          <FbxDownloadButton
+            productId={product.id}
+            creditCost={product.download_credit_cost}
+            fbxSizeKb={product.fbx_size_kb}
+            designerLoggedIn={designerLoggedIn}
+            loginHref={`/designer/login?next=${encodeURIComponent(`/product/${product.id}`)}`}
+          />
         )}
 
         {/* Wave 12 — Style Tags (#Modern #Minimalist). */}
