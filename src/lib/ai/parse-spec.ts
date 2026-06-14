@@ -62,6 +62,13 @@ export type SpecSheetParse = {
   /** Weight in kilograms. Sometimes spec sheets give pounds — the
    *  model converts. Null if missing. */
   weight_kg: number | null;
+  /** Selling / promo price in MYR (number, no "RM"/commas). Null if
+   *  no price printed. */
+  price_myr: number | null;
+  /** Original / RCP / list price in MYR — only when a discount is
+   *  shown (a higher struck/"was" price alongside the selling price).
+   *  Null when there's a single price. */
+  price_original_myr: number | null;
   /** Free-form note for the operator. Used for low-confidence
    *  extractions, ambiguous units, or "this looks like a product
    *  photo, not a spec sheet". Empty string = no note. */
@@ -78,6 +85,8 @@ const RESPONSE_SCHEMA = {
     "description",
     "dimensions_mm",
     "weight_kg",
+    "price_myr",
+    "price_original_myr",
     "notes",
   ],
   properties: {
@@ -96,6 +105,8 @@ const RESPONSE_SCHEMA = {
       },
     },
     weight_kg: { type: ["number", "null"] },
+    price_myr: { type: ["number", "null"] },
+    price_original_myr: { type: ["number", "null"] },
     notes: { type: "string" },
   },
 } as const;
@@ -112,8 +123,10 @@ Rules:
     "S-Trap 100–300mm or P-Trap 180mm. Dual-flush 3/6L. Soft-close PP/UF seat optional."
     "Single bowl, deck-mounted. Ceramic. Includes pop-up waste."
   Avoid marketing language ("luxurious", "elegant"). Prefer numbers and named features.
-- dimensions_mm: ALWAYS millimeters. If the sheet uses inches/cm/etc., convert. Order: length × width × height (sometimes called depth × width × height in datasheets — pick the values consistent with the orthographic views shown). Null any axis you can't read confidently. If fewer than 3 axes are legible return null for the whole object.
+- dimensions_mm: ALWAYS millimeters. If the sheet uses inches/cm/etc., convert. Read from dimension diagrams AND text labels like "Size: 1800 × 1200 × 650 MM". Order: length × width × height. Fill EVERY axis you can read — return null for an individual axis you can't read, but do NOT discard the whole object just because one axis is unclear.
 - weight_kg: kilograms. Convert from lb if needed.
+- price_myr: selling price in Malaysian Ringgit as a plain number (strip "RM"/"MYR"/commas — "RM 14,999" → 14999). If a discount is shown, this is the LOWER current price. Null if no price printed. Never guess.
+- price_original_myr: original / RCP / list / "was" price as a plain number, ONLY when a discount is shown (a higher price struck through or labelled RCP/RRP/List/U.P. beside the selling price); must be > price_myr. Null when there's a single price.
 - notes: empty string by default. Use it for:
     • "Image looks like a product photo, not a spec sheet" if you couldn't find any spec data.
     • A 1-line caveat if you had to guess at a value.
@@ -341,6 +354,13 @@ export type SpecSheetParseV2 = {
       height: number | null;
     }>;
     weight_kg: FieldV2<number>;
+    /** Selling / promo price in MYR (number, no "RM"/commas). When the
+     *  spec sheet prints a discount, this is the LOWER (selling) price. */
+    price_myr: FieldV2<number>;
+    /** Original / RCP / list / "was" price in MYR. Only set when a
+     *  discount is shown (a higher struck/original price alongside the
+     *  selling price). null when there's a single price. */
+    price_original_myr: FieldV2<number>;
     /** Taxonomy slug from the provided allowed list. Null = no
      *  match. NEVER a made-up slug. */
     item_type_slug: FieldV2<string>;
@@ -404,6 +424,8 @@ const RESPONSE_SCHEMA_V2 = {
         "description",
         "dimensions_mm",
         "weight_kg",
+        "price_myr",
+        "price_original_myr",
         "item_type_slug",
         "subtype_slug",
         "room_slugs",
@@ -427,6 +449,8 @@ const RESPONSE_SCHEMA_V2 = {
           },
         }),
         weight_kg: fieldSchema({ type: ["number", "null"] }),
+        price_myr: fieldSchema({ type: ["number", "null"] }),
+        price_original_myr: fieldSchema({ type: ["number", "null"] }),
         item_type_slug: fieldSchema({ type: ["string", "null"] }),
         subtype_slug: fieldSchema({ type: ["string", "null"] }),
         room_slugs: fieldSchema({
@@ -512,11 +536,15 @@ Field-by-field rules:
 
 - brand: identify the brand from any visible logo, tag, or label. Common brands you'll see: DOCASA, Roca, TOTO, Kohler, Wiltek, American Standard, Duravit, Hansgrohe, Ideal Standard. mark "high" if a logo or text proves it; "low" otherwise. null if no evidence at all.
 
-- sku_id: ONLY extract if a SKU/model code is explicitly written on the image (e.g. "WC-2090", "A400-PS"). NEVER guess SKUs. confidence is always "high" if extracted; null if not visible.
+- sku_id: extract the model/SKU code when written on the image. Look for labels like "Model", "Model No.", "SKU", "Art. No.", "Code", or a standalone alphanumeric code (e.g. "ARS-M1306", "WC-2090", "A400-PS"). Take the code verbatim. NEVER invent one. confidence "high" if printed; null if not visible.
 
-- description: 1–3 plain factual sentences. Combine evidence across images. mark "high" if from a spec sheet, "medium" if inferred from photos.
+- description: 1–3 plain factual sentences built from the REAL specifics you can read on the images — incorporate the model code, the actual dimensions, the material/finish, and any printed features (e.g. jets, soft-close, overflow). Example: "DOCASA ARS-M1306 freestanding whirlpool bathtub, 1800×1200×650 mm, acrylic shell with built-in massage jets." DO NOT write a generic template that ignores the printed specs. mark "high" if from a spec sheet, "medium" if inferred from photos.
 
-- dimensions_mm: ALWAYS millimeters; convert from inches/cm/feet. Read from dimension diagrams if present. null any axis you can't confidently read. If fewer than 3 axes are legible, return null for the whole object. mark "high" if all 3 axes are printed, "medium" if you inferred 1–2.
+- dimensions_mm: ALWAYS millimeters; convert from inches/cm/feet. Read from dimension diagrams AND from text labels like "Size: 1800 × 1200 × 650 MM" or "L×W×H". The order on the sheet is typically length × width × height. Fill EVERY axis you can read — do NOT discard the whole object just because one axis is unclear; return that one axis as null and keep the others. mark "high" if printed, "medium" if you inferred from the drawing.
+
+- price_myr: the SELLING price in Malaysian Ringgit as a plain number (strip "RM", "MYR", and commas — "RM 14,999" → 14999). If the sheet shows a single price, that is price_myr. If it shows a discount (a higher original/RCP/list price AND a lower current price), price_myr is the LOWER current/selling price. null if no price is printed. mark "high" if printed verbatim; never guess a price.
+
+- price_original_myr: the ORIGINAL / RCP / list / "was" price as a plain number, ONLY when a discount is shown (i.e. there is a higher price struck through or labelled "RCP"/"RRP"/"List"/"U.P." next to the selling price). It must be greater than price_myr. null when there is just one price. mark "high" if printed.
 
 - weight_kg: kilograms; convert from lb. null if not stated. mark "high" if printed.
 

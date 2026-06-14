@@ -50,6 +50,10 @@ export type ProductRow = {
   dimensions_mm: Dimensions | null;
   weight_kg: number | null;
   price_myr: number | null;
+  /** Compare-at / RCP / original list price in MYR (mig 0047). When set
+   *  and > price_myr the storefront shows it struck-through next to the
+   *  selling price. NULL = no discount. */
+  price_original_myr: number | null;
   price_tier: PriceTier | null;
   purchase_url: string | null;
   supplier: string | null;
@@ -170,6 +174,8 @@ export type ProductInsert = {
   dimensions_mm?: Dimensions | null;
   weight_kg?: number | null;
   price_myr?: number | null;
+  /** Compare-at / RCP / original list price in MYR (mig 0047). */
+  price_original_myr?: number | null;
   price_tier?: PriceTier | null;
   purchase_url?: string | null;
   supplier?: string | null;

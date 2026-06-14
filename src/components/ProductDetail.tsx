@@ -91,7 +91,20 @@ export default function ProductDetail({
           <h1 className="mt-1 text-2xl font-semibold">{product.name}</h1>
         </div>
 
-        <div className="text-3xl font-semibold">{formatMYR(product.price_myr)}</div>
+        <div className="flex items-baseline gap-3">
+          <span className="text-3xl font-semibold">
+            {formatMYR(product.price_myr)}
+          </span>
+          {/* mig 0047 — struck-through original/RCP price when a real
+              discount is recorded (original strictly above selling). */}
+          {product.price_original_myr != null &&
+            product.price_myr != null &&
+            product.price_original_myr > product.price_myr && (
+              <span className="text-lg text-neutral-400 line-through">
+                {formatMYR(product.price_original_myr)}
+              </span>
+            )}
+        </div>
 
         {colors.length > 0 && (
           <ColorSwitcher

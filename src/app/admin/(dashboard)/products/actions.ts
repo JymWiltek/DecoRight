@@ -252,6 +252,7 @@ async function parsePayload(fd: FormData): Promise<Omit<ProductInsert, "id">> {
     dimensions_mm: parseDimensions(fd),
     weight_kg: num(fd, "weight_kg"),
     price_myr: num(fd, "price_myr"),
+    price_original_myr: num(fd, "price_original_myr"),
     price_tier: pickOne(str(fd, "price_tier"), PRICE_TIERS) as PriceTier | null,
     purchase_url: str(fd, "purchase_url"),
     supplier: str(fd, "supplier"),
@@ -2482,6 +2483,25 @@ async function processDraftAsync(d: BulkCreateDraft): Promise<void> {
     confidences.weight_kg = f.weight_kg.confidence;
   } else {
     missing.push("weight_kg");
+  }
+
+  // Price. price_myr is the selling price; price_original_myr is the
+  // struck-through original, kept ONLY when it's a real discount
+  // (strictly greater than the selling price). Tracking price_myr in
+  // `missing` when absent keeps the confidence badge honest — a product
+  // with no price is NOT "fully filled".
+  if (typeof f.price_myr.value === "number" && f.price_myr.value > 0) {
+    updates.price_myr = f.price_myr.value;
+    filled.push("price_myr");
+    confidences.price_myr = f.price_myr.confidence;
+    const orig = f.price_original_myr.value;
+    if (typeof orig === "number" && orig > f.price_myr.value) {
+      updates.price_original_myr = orig;
+      filled.push("price_original_myr");
+      confidences.price_original_myr = f.price_original_myr.confidence;
+    }
+  } else {
+    missing.push("price_myr");
   }
 
   // Taxonomy

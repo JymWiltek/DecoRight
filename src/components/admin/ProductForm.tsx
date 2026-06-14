@@ -661,6 +661,19 @@ export default function ProductForm({
                 className={inputCls}
               />
             </Field>
+            {/* Compare-at / RCP / original price (mig 0047). When set and
+                > Price, the storefront shows it struck-through. The AI
+                auto-fill writes it only when a discount is on the sheet. */}
+            <Field label="Original price (MYR) — optional, shows struck-through">
+              <input
+                form={FORM_ID}
+                type="number"
+                step="0.01"
+                name="price_original_myr"
+                defaultValue={p?.price_original_myr ?? ""}
+                className={inputCls}
+              />
+            </Field>
             {/* Wave 12 — "X credit" download price shown on storefront
                 cards + the FBX button. Display-only (no paywall yet). */}
             <Field label="Download credit cost">

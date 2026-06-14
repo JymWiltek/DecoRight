@@ -51,7 +51,9 @@ type SuggestionRow = {
     | "dim_length"
     | "dim_width"
     | "dim_height"
-    | "weight_kg";
+    | "weight_kg"
+    | "price_myr"
+    | "price_original_myr";
   label: string;
   /** AI-suggested value. null = AI returned null (nothing to apply). */
   value: string | null;
@@ -173,6 +175,19 @@ export default function SpecSheetAutofillBlock({
           value: r.weight_kg != null ? String(r.weight_kg) : null,
           checked: r.weight_kg != null,
         },
+        {
+          key: "price_myr",
+          label: "Price (MYR)",
+          value: r.price_myr != null ? String(r.price_myr) : null,
+          checked: r.price_myr != null,
+        },
+        {
+          key: "price_original_myr",
+          label: "Original price (MYR)",
+          value:
+            r.price_original_myr != null ? String(r.price_original_myr) : null,
+          checked: r.price_original_myr != null,
+        },
       ];
       setSuggestions(rows);
       setCostUsd(res.estCostUsd);
@@ -209,7 +224,9 @@ export default function SpecSheetAutofillBlock({
         r.key === "dim_length" ||
         r.key === "dim_width" ||
         r.key === "dim_height" ||
-        r.key === "weight_kg"
+        r.key === "weight_kg" ||
+        r.key === "price_myr" ||
+        r.key === "price_original_myr"
       ) {
         const input = document.querySelector<HTMLInputElement>(
           `input[name="${r.key}"][form="${formId}"]`,
@@ -415,6 +432,8 @@ function mapRowKeyToDbField(key: SuggestionRow["key"]): string | null {
     case "sku_id":
     case "description":
     case "weight_kg":
+    case "price_myr":
+    case "price_original_myr":
       return key;
     case "dim_length":
       return "dimensions_mm.length";
