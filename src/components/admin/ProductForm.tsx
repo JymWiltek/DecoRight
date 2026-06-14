@@ -42,10 +42,9 @@ import RegionsPicker from "./RegionsPicker";
 import FileDropzone from "./FileDropzone";
 import TextureDropzone from "./TextureDropzone";
 import CompressionStatusBanner from "./CompressionStatusBanner";
-import SpecSheetAutofillBlock from "./SpecSheetAutofillBlock";
 import ReunifyThumbnailButton from "./ReunifyThumbnailButton";
 import FitCenterButton from "./FitCenterButton";
-import AIInferButton from "./AIInferButton";
+import AiAutofillButton from "./AiAutofillButton";
 import { AutofillTextInput, AutofillTextarea } from "./AutofillTextInput";
 import DeleteButton from "./DeleteButton";
 import SavedToast from "./SavedToast";
@@ -102,7 +101,9 @@ export default function ProductForm({
   errMsg,
   imagesSection,
   meshyBanner,
-  aiCandidateImages = [],
+  // aiCandidateImages: retired — the single AiAutofillButton reads
+  // Feed-to-AI images server-side. Prop kept on Props for the page that
+  // still passes it; intentionally not destructured here.
   fbxTextureNames,
 }: Props) {
   const p = product;
@@ -459,23 +460,11 @@ export default function ProductForm({
             Operators uploading a real photo just drop it into the
             same dropzone as cutout candidates. */}
 
-        <Section title="AI assist">
-          {/* Two AI buttons, deliberately split:
-              • Auto-classify from photo — reads a product photo and
-                fills item_type / room / style / color / material.
-              • Auto-fill from spec sheet — reads a brand datasheet
-                screenshot and fills name / brand / sku / dimensions
-                / weight / description.
-              They are non-overlapping; running both sequentially is
-              the typical operator flow for a brand-new product. */}
-          <div className="flex flex-col gap-3">
-            <AIInferButton productId={p?.id ?? null} form={FORM_ID} />
-            <SpecSheetAutofillBlock
-              productId={p?.id ?? null}
-              formId={FORM_ID}
-              candidates={aiCandidateImages}
-            />
-          </div>
+        <Section
+          title="AI assist"
+          hint="One button reads every “Feed to AI” image and fills name, brand, SKU, description, dimensions, weight, price, category, rooms, styles, colors & materials — each with the model’s real per-field confidence. Verify amber/red before publishing."
+        >
+          <AiAutofillButton productId={p?.id ?? null} form={FORM_ID} />
         </Section>
 
         <Section title="Basics">

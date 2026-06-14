@@ -2038,6 +2038,208 @@ export async function attachUploadedImages(
   return { ok: true, count: valid.length };
 }
 
+/**
+ * BUG-3+2 fix — ONE AI button for the edit page. Reads the product's
+ * Feed-to-AI images and runs the V2 spec parser (the same engine bulk
+ * uses) which extracts EVERYTHING in one pass — name / brand / sku /
+ * description / dimensions / weight / price / item_type / subtype /
+ * rooms / styles / colors / materials — each with a REAL per-field
+ * confidence (high / medium / low), not the old flat 90%. Returns the
+ * values + confidences for the client to apply; no DB write (Save still
+ * flows through updateProduct).
+ *
+ * Replaces the two older buttons: the classify-only inferProductFields
+ * path (whose confidence GPT pinned at 0.9 for every field) and the V1
+ * spec-sheet block.
+ */
+export type RunSpecV2Result =
+  | {
+      ok: true;
+      /** Flat applied values keyed by the client's apply targets. */
+      fields: {
+        name: string | null;
+        brand: string | null;
+        sku_id: string | null;
+        description: string | null;
+        weight_kg: number | null;
+        price_myr: number | null;
+        price_original_myr: number | null;
+        dim_length: number | null;
+        dim_width: number | null;
+        dim_height: number | null;
+        item_type: string | null;
+        subtype_slug: string | null;
+        room_slugs: string[];
+        styles: string[];
+        colors: string[];
+        materials: string[];
+      };
+      /** Per-field honest confidence from the model (high/medium/low). */
+      confidence: Record<string, Confidence>;
+      /** Keys that got a non-empty value (drives the chips + ai_filled_fields). */
+      inferredKeys: string[];
+      note: string;
+      debug: { imageCount: number; latencyMs: number; tokens: number | null };
+    }
+  | { ok: false; error: string };
+
+export async function runSpecParseV2(
+  productId: string,
+): Promise<RunSpecV2Result> {
+  try {
+    return await runSpecParseV2Inner(productId);
+  } catch (e) {
+    // Never 500 the client — surface a readable banner + log the cause.
+    const msg = e instanceof Error ? `${e.message}` : String(e);
+    console.error(`[runSpecParseV2] threw for ${productId}:`, e);
+    return { ok: false, error: `AI parse error: ${msg}` };
+  }
+}
+
+async function runSpecParseV2Inner(
+  productId: string,
+): Promise<RunSpecV2Result> {
+  await requireAdmin();
+  if (!UUID_RE.test(productId)) {
+    return { ok: false, error: `invalid productId: ${productId}` };
+  }
+  const supabase = createServiceRoleClient();
+  const { data: imgs } = await supabase
+    .from("product_images")
+    .select("id, raw_image_url, feed_to_ai")
+    .eq("product_id", productId)
+    .eq("feed_to_ai", true)
+    .order("created_at", { ascending: true })
+    .limit(MERGED_PARSE_MAX_IMAGES);
+  if (!imgs || imgs.length === 0) {
+    return {
+      ok: false,
+      error:
+        "No images with “Feed to AI” on. Drop a product photo / spec sheet above first (it uploads right away), then run AI.",
+    };
+  }
+  const inputs: { url: string }[] = [];
+  for (const img of imgs) {
+    if (!img.raw_image_url) continue;
+    try {
+      inputs.push({ url: await getSignedRawUrl(img.raw_image_url) });
+    } catch {
+      // skip rows we can't sign; keep the rest
+    }
+  }
+  if (inputs.length === 0) {
+    return { ok: false, error: "Could not read any of the Feed-to-AI images." };
+  }
+
+  let taxonomy: TaxonomyHints;
+  try {
+    taxonomy = await loadTaxonomyHints();
+  } catch (e) {
+    return {
+      ok: false,
+      error: `taxonomy load failed: ${e instanceof Error ? e.message : String(e)}`,
+    };
+  }
+
+  const started = Date.now();
+  const parsed = await parseImagesMergedV2(inputs, taxonomy).catch(
+    (e: unknown) => {
+      console.error(
+        `[runSpecParseV2] ${productId}: ${e instanceof Error ? e.message : String(e)}`,
+      );
+      return null;
+    },
+  );
+  if (!parsed) return { ok: false, error: "AI parse failed — try again." };
+  const latencyMs = Date.now() - started;
+  const f = sanitizeV2Slugs(parsed.result, taxonomy).fields;
+
+  // Telemetry (best-effort).
+  await supabase
+    .from("api_usage")
+    .insert({
+      service: "gpt4o_vision_spec_v2",
+      product_id: productId,
+      product_image_id: null,
+      cost_usd: Number(parsed.usage.estCostUsd.toFixed(6)),
+      status: "ok",
+      note: `edit-v2 images=${inputs.length}`,
+    })
+    .then(({ error }) => {
+      if (error) console.error(`[runSpecParseV2] api_usage: ${error.message}`);
+    });
+
+  const dims = f.dimensions_mm.value;
+  const numOrNull = (v: unknown) =>
+    typeof v === "number" && v > 0 ? v : null;
+  const strOrNull = (v: unknown) =>
+    typeof v === "string" && v.trim() ? v.trim() : null;
+  const fields = {
+    name: strOrNull(f.name.value),
+    brand: strOrNull(f.brand.value),
+    sku_id: strOrNull(f.sku_id.value),
+    description: strOrNull(f.description.value),
+    weight_kg: numOrNull(f.weight_kg.value),
+    price_myr: numOrNull(f.price_myr.value),
+    price_original_myr: numOrNull(f.price_original_myr.value),
+    dim_length: numOrNull(dims?.length),
+    dim_width: numOrNull(dims?.width),
+    dim_height: numOrNull(dims?.height),
+    item_type: f.item_type_slug.value ?? null,
+    subtype_slug: f.subtype_slug.value ?? null,
+    room_slugs: f.room_slugs.value ?? [],
+    styles: f.style_slugs.value ?? [],
+    colors: f.color_slugs.value ?? [],
+    materials: f.material_slugs.value ?? [],
+  };
+
+  // Confidence per field — only for fields that actually got a value, so
+  // the badges reflect what was filled (honest: missing = no badge).
+  const confidence: Record<string, Confidence> = {};
+  const inferredKeys: string[] = [];
+  const mark = (key: string, has: boolean, conf: Confidence) => {
+    if (has) {
+      inferredKeys.push(key);
+      confidence[key] = conf;
+    }
+  };
+  mark("name", !!fields.name, f.name.confidence);
+  mark("brand", !!fields.brand, f.brand.confidence);
+  mark("sku_id", !!fields.sku_id, f.sku_id.confidence);
+  mark("description", !!fields.description, f.description.confidence);
+  mark("weight_kg", fields.weight_kg != null, f.weight_kg.confidence);
+  mark("price_myr", fields.price_myr != null, f.price_myr.confidence);
+  mark(
+    "price_original_myr",
+    fields.price_original_myr != null,
+    f.price_original_myr.confidence,
+  );
+  mark(
+    "dimensions_mm",
+    fields.dim_length != null || fields.dim_width != null || fields.dim_height != null,
+    f.dimensions_mm.confidence,
+  );
+  mark("item_type", !!fields.item_type, f.item_type_slug.confidence);
+  mark("subtype_slug", !!fields.subtype_slug, f.subtype_slug.confidence);
+  mark("room_slugs", fields.room_slugs.length > 0, f.room_slugs.confidence);
+  mark("styles", fields.styles.length > 0, f.style_slugs.confidence);
+  mark("colors", fields.colors.length > 0, f.color_slugs.confidence);
+  mark("materials", fields.materials.length > 0, f.material_slugs.confidence);
+
+  return {
+    ok: true,
+    fields,
+    confidence,
+    inferredKeys,
+    note: parsed.result.notes ?? "",
+    debug: {
+      imageCount: inputs.length,
+      latencyMs,
+      tokens: parsed.usage.promptTokens + parsed.usage.completionTokens,
+    },
+  };
+}
+
 /** Wave 6 · Commit 3 — create up to 10 draft products in one call.
  *
  *  Synchronous part:
