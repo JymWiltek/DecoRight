@@ -2,43 +2,47 @@
 
 /**
  * Wave 6 · Commit 4 — bulk-create form orchestrator.
+ * Sprint 1 (PART B) — rewired onto the SHARED server path.
  *
- * Holds the array of cards, the "+ Add another product" / "Save all"
- * controls, and the upload-then-create state machine. The actual
- * upload + bulkCreateProducts call run in `submit()`:
+ * Each card now carries the FULL single-product upload set (photos +
+ * type · glb · fbx/zip · textures · dimensions · category · room) and
+ * saves through `createProductFromUpload` — the SAME server action the
+ * single-product edit page reaches via updateProduct's shared helpers
+ * (buildUploadUpdates / attachStaged* / shouldDispatch*). So the two
+ * pages can no longer drift on how an asset is persisted, which is
+ * exactly where Wave 9 FBX + Phase A texture handling diverged before.
  *
- *   1. Mint a productId UUID per card.
- *   2. Concurrently upload every photo + GLB via signed-URL PUTs
- *      (existing direct-upload flow — same getSignedUploadUrl as the
- *      single-product dropzones).
- *   3. Call bulkCreateProducts(drafts) with the URLs we just minted.
- *   4. router.push("/admin") on success — list page will show the
- *      new drafts; AI fill arrives in the background within ~30s.
+ * Per card, submit():
+ *   1. Mint a productId UUID.
+ *   2. Direct-upload every photo / glb / fbx(/zip) / texture via the
+ *      existing signed-URL PUT flow (unchanged — this is the proven
+ *      bulk byte path).
+ *   3. Build a FormData with the SAME field names the single-edit form
+ *      emits, then call createProductFromUpload(productId, fd).
+ *   4. After all cards succeed, router.push("/admin").
  *
- * Failure modes (all surfaced as a banner above the cards):
- *   • Signed-URL mint fails       → bail before any upload
- *   • PUT bytes fails             → bail; retried by clicking Save again
- *   • bulkCreateProducts({error}) → show the server's reason
- *
- * No partial-success: if anything fails the whole batch is aborted.
- * Storage objects already PUT remain orphaned — same trade-off as
- * the single-product save path. The bulk page's value is rapid
- * scanning, not transactional reliability; orphans are cheap.
+ * Batch capability is preserved: up to 10 cards, each a full product,
+ * created in one Save. Failure of any card aborts the whole batch
+ * (orphaned storage objects are cheap — same trade-off as before).
  */
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import ProductDraftCard, {
   type DraftCardState,
+  type TaxoOption,
   defaultPhotoType,
 } from "./ProductDraftCard";
 import { getSignedUploadUrl } from "@/app/admin/(dashboard)/products/upload-actions";
-import {
-  bulkCreateProducts,
-  type BulkCreateDraft,
-} from "@/app/admin/(dashboard)/products/actions";
+import { createProductFromUpload } from "@/app/admin/(dashboard)/products/actions";
 
 const MAX_CARDS = 10;
+
+type Props = {
+  itemTypeOptions: TaxoOption[];
+  roomOptions: TaxoOption[];
+  subtypesByItemType: Record<string, TaxoOption[]>;
+};
 
 function newCard(): DraftCardState {
   return {
@@ -47,16 +51,24 @@ function newCard(): DraftCardState {
     photoTypes: [],
     glbFile: null,
     glbBudget: null,
-    // Wave 9 — bulk-create now matches the single-product edit page:
-    // FBX original (for paid designer downloads) + real dimensions
-    // (drives storefront AR scale). Both optional; empty values fall
-    // through to the same defaults a legacy product gets.
+    // Sprint 1 (PART B) — full single-edit parity: FBX original (bare
+    // .fbx OR pre-packaged .zip) + loose textures + real dimensions +
+    // category (item_type) + room (room_slugs). All optional.
     fbxFile: null,
+    fbxIsZip: false,
+    textureFiles: [],
     realDimensions: {},
+    itemType: null,
+    subtypeSlug: null,
+    roomSlugs: [],
   };
 }
 
-export default function BulkCreateForm() {
+export default function BulkCreateForm({
+  itemTypeOptions,
+  roomOptions,
+  subtypesByItemType,
+}: Props) {
   const router = useRouter();
   const [cards, setCards] = useState<DraftCardState[]>(() => [newCard()]);
   const [busy, setBusy] = useState(false);
@@ -76,30 +88,42 @@ export default function BulkCreateForm() {
     setCards((cs) => cs.map((c, j) => (j === i ? next : c)));
   }
 
-  // Cards with at least 1 photo are submittable; empty cards are
-  // ignored. Operator can leave a half-finished card in the list and
-  // still save the others — matches Gmail draft semantics.
-  const submittable = cards.filter((c) => c.photos.length > 0);
+  // A card is submittable once it carries any real asset — a photo, a
+  // GLB, or an FBX. Empty cards are ignored so the operator can leave a
+  // half-finished card in the list and still save the others (Gmail
+  // draft semantics). Photo-less model-only cards are valid: the AI
+  // spec-parse tail simply no-ops without images.
+  const submittable = cards.filter(
+    (c) => c.photos.length > 0 || c.glbFile || c.fbxFile,
+  );
 
   async function submit() {
     if (submittable.length === 0) {
-      setError("Add at least one photo to a card before saving.");
+      setError("Add a photo, a GLB, or an FBX to a card before saving.");
       return;
     }
     setError(null);
     setBusy(true);
     try {
-      const drafts: BulkCreateDraft[] = [];
-
       for (let i = 0; i < submittable.length; i++) {
         const card = submittable[i];
-        setProgress(`Uploading product ${i + 1}/${submittable.length}…`);
+        const n = `${i + 1}/${submittable.length}`;
+        setProgress(`Uploading product ${n}…`);
         const productId = crypto.randomUUID();
+        const fd = new FormData();
 
-        // Photos: parallel within a card. Each photo carries its
-        // operator-picked `type` so the server action can decide
-        // image_kind + show_on_storefront + whether to fire rembg.
-        const imageEntries = await Promise.all(
+        // ── Scalars: category (item_type) + subtype + rooms + dims ──
+        if (card.itemType) fd.set("item_type", card.itemType);
+        if (card.subtypeSlug) fd.set("subtype_slug", card.subtypeSlug);
+        for (const r of card.roomSlugs) fd.append("room_slugs", r);
+        const dims = card.realDimensions;
+        if (dims.length != null) fd.set("dim_length", String(dims.length));
+        if (dims.width != null) fd.set("dim_width", String(dims.width));
+        if (dims.height != null) fd.set("dim_height", String(dims.height));
+
+        // ── Photos: split into product vs reference, mirroring the
+        //    single-edit dropzones (raw_image_entries / real_photo_entries).
+        const uploaded = await Promise.all(
           card.photos.map(async (file, idx) => {
             const ticket = await getSignedUploadUrl(
               "raw_image",
@@ -107,24 +131,31 @@ export default function BulkCreateForm() {
               file.name,
               file.type,
             );
-            if (!ticket.ok) {
-              throw new Error(`signed URL: ${ticket.error}`);
-            }
+            if (!ticket.ok) throw new Error(`photo signed URL: ${ticket.error}`);
             await putBytes(ticket.ticket.signedUrl, file);
             const ext =
               ticket.ticket.path.split(".").pop()?.toLowerCase() ?? "jpg";
-            const type =
-              card.photoTypes[idx] ?? defaultPhotoType(idx);
             return {
               imageId: ticket.ticket.imageId!,
               ext,
-              type,
+              type: card.photoTypes[idx] ?? defaultPhotoType(idx),
             };
           }),
         );
+        const rawEntries = uploaded
+          .filter((u) => u.type === "product")
+          .map(({ imageId, ext }) => ({ imageId, ext }));
+        const realEntries = uploaded
+          .filter((u) => u.type === "reference")
+          .map(({ imageId, ext }) => ({ imageId, ext }));
+        if (rawEntries.length) {
+          fd.set("raw_image_entries", JSON.stringify(rawEntries));
+        }
+        if (realEntries.length) {
+          fd.set("real_photo_entries", JSON.stringify(realEntries));
+        }
 
-        // GLB (optional)
-        let glbMeta: BulkCreateDraft["glb"] = null;
+        // ── GLB (optional) ──
         if (card.glbFile && card.glbBudget) {
           const ticket = await getSignedUploadUrl(
             "glb",
@@ -132,67 +163,82 @@ export default function BulkCreateForm() {
             card.glbFile.name,
             card.glbFile.type || "model/gltf-binary",
           );
-          if (!ticket.ok) {
-            throw new Error(`GLB signed URL: ${ticket.error}`);
-          }
+          if (!ticket.ok) throw new Error(`GLB signed URL: ${ticket.error}`);
           await putBytes(ticket.ticket.signedUrl, card.glbFile);
-          glbMeta = {
-            sizeKb: card.glbBudget.sizeKb,
-            vertexCount: card.glbBudget.vertexCount,
-            maxTextureDim: card.glbBudget.maxTextureDim,
-            decodedRamMb: card.glbBudget.decodedRamMb,
-          };
+          fd.set("glb_path", ticket.ticket.path);
+          fd.set("glb_size_kb", String(card.glbBudget.sizeKb));
+          fd.set("glb_vertex_count", String(card.glbBudget.vertexCount));
+          fd.set("glb_max_texture_dim", String(card.glbBudget.maxTextureDim));
+          fd.set("glb_decoded_ram_mb", String(card.glbBudget.decodedRamMb));
         }
 
-        // Wave 9 — FBX original (optional, paid designer download).
-        // Independent of the GLB: operator can attach either, both,
-        // or neither. Same signed-URL flow as single-product edit.
-        let fbxMeta: BulkCreateDraft["fbx"] = null;
+        // ── FBX (optional): bare .fbx + loose textures, OR a pre-packaged
+        //    .zip. The two are mutually exclusive — the server validates
+        //    a zip contains a .fbx and skips packageFbxBundle for it.
         if (card.fbxFile) {
-          const ticket = await getSignedUploadUrl(
-            "fbx",
-            productId,
-            card.fbxFile.name,
-            card.fbxFile.type || "application/octet-stream",
-          );
-          if (!ticket.ok) {
-            throw new Error(`FBX signed URL: ${ticket.error}`);
+          if (card.fbxIsZip) {
+            const ticket = await getSignedUploadUrl(
+              "fbx_bundle",
+              productId,
+              card.fbxFile.name,
+              card.fbxFile.type || "application/zip",
+            );
+            if (!ticket.ok) {
+              throw new Error(`FBX zip signed URL: ${ticket.error}`);
+            }
+            await putBytes(ticket.ticket.signedUrl, card.fbxFile);
+            fd.set("fbx_bundle_path", ticket.ticket.path);
+            fd.set(
+              "fbx_bundle_size_kb",
+              String(Math.round(card.fbxFile.size / 1024)),
+            );
+          } else {
+            const ticket = await getSignedUploadUrl(
+              "fbx",
+              productId,
+              card.fbxFile.name,
+              card.fbxFile.type || "application/octet-stream",
+            );
+            if (!ticket.ok) throw new Error(`FBX signed URL: ${ticket.error}`);
+            await putBytes(ticket.ticket.signedUrl, card.fbxFile);
+            fd.set("fbx_path", ticket.ticket.path);
+            fd.set("fbx_size_kb", String(Math.round(card.fbxFile.size / 1024)));
+
+            // Loose texture maps → products/<id>/textures/<name>. The
+            // server's shouldDispatchFbxBundle picks up textures_changed
+            // and folds them into the zip alongside the .fbx.
+            if (card.textureFiles.length) {
+              await Promise.all(
+                card.textureFiles.map(async (tf) => {
+                  const t = await getSignedUploadUrl(
+                    "texture",
+                    productId,
+                    tf.name,
+                    tf.type || "application/octet-stream",
+                  );
+                  if (!t.ok) throw new Error(`texture signed URL: ${t.error}`);
+                  await putBytes(t.ticket.signedUrl, tf);
+                }),
+              );
+              fd.set("textures_changed", "1");
+            }
           }
-          await putBytes(ticket.ticket.signedUrl, card.fbxFile);
-          fbxMeta = {
-            sizeKb: Math.round(card.fbxFile.size / 1024),
-          };
+        } else if (card.textureFiles.length) {
+          // Textures without an FBX make no sense for a new product —
+          // surface it instead of silently dropping the uploads.
+          throw new Error(
+            `Product ${n}: add the .fbx before its texture maps (or clear the textures).`,
+          );
         }
 
-        // Wave 9 — real dimensions (mm). Null when the operator left
-        // every field empty; the server treats that as "use the GLB's
-        // intrinsic scale on the storefront" (legacy fallback).
-        const dims = card.realDimensions;
-        const dimensions_mm =
-          dims.length != null || dims.width != null || dims.height != null
-            ? dims
-            : null;
-
-        drafts.push({
-          productId,
-          images: imageEntries,
-          glb: glbMeta,
-          fbx: fbxMeta,
-          dimensions_mm,
-        });
-      }
-
-      setProgress(
-        `Creating ${drafts.length} product${drafts.length === 1 ? "" : "s"}…`,
-      );
-      const res = await bulkCreateProducts(drafts);
-      if (!res.ok) {
-        throw new Error(res.error);
+        setProgress(`Creating product ${n}…`);
+        const res = await createProductFromUpload(productId, fd);
+        if (!res.ok) throw new Error(`Product ${n}: ${res.error}`);
       }
 
       // Push to /admin so the operator sees the freshly-minted drafts.
-      // The async tail (rembg + AI parse) keeps running on the server;
-      // the operator can refresh in ~30s to see the AI-filled fields.
+      // The async tail (AI spec parse + glb compression + fbx bundling)
+      // keeps running server-side; refresh in ~30s to see AI-filled fields.
       router.push("/admin");
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -226,6 +272,9 @@ export default function BulkCreateForm() {
             canDelete={cards.length > 1}
             onChange={(next) => updateCard(i, next)}
             onDelete={() => deleteCard(i)}
+            itemTypeOptions={itemTypeOptions}
+            roomOptions={roomOptions}
+            subtypesByItemType={subtypesByItemType}
           />
         ))}
       </div>

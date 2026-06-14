@@ -34,13 +34,20 @@ const PHOTO_MAX = 5;
 const PHOTO_ACCEPT = "image/jpeg,image/png,image/webp";
 const PHOTO_MIMES = new Set(["image/jpeg", "image/png", "image/webp"]);
 const GLB_ACCEPT = ".glb,model/gltf-binary,application/octet-stream";
-const FBX_ACCEPT = ".fbx,application/octet-stream";
+// Sprint 1 (PART B) — the FBX dropzone now also accepts a pre-packaged
+// .zip (model.fbx + textures/), same as the single-product edit page.
+const FBX_ACCEPT = ".fbx,.zip,application/octet-stream,application/zip";
 const PHOTO_MAX_MB = 8;
 const GLB_MAX_MB = 60;
 // Wave 9 — FBX original for paid designer downloads. 100MB cap is
 // the same Wave 9 admin edit page uses; the models bucket was bumped
 // to 120MB in mig 0042 so this fits with headroom.
 const FBX_MAX_MB = 100;
+// Sprint 1 (PART B) — loose FBX texture maps. Server folds them into
+// the zip bundle (packageFbxBundle). Generous caps: a PBR set can be
+// 4-8 maps at 2-4K each.
+const TEXTURE_MAX = 12;
+const TEXTURE_MAX_MB = 25;
 // Wave 9 — hard cap on real dimensions to keep typos from producing
 // absurd AR scales. 10 m matches the single-product action's check.
 const REAL_DIM_MAX_MM = 10_000;
@@ -94,12 +101,27 @@ export type DraftCardState = {
   glbBudget: GlbBudgetMeta | null;
   /** Wave 9 — FBX original for paid designer downloads. Independent
    *  of the GLB (operator can attach either, both, or neither). No
-   *  budget metadata: FBX is never rendered in the storefront. */
+   *  budget metadata: FBX is never rendered in the storefront. The
+   *  file may be a bare .fbx OR a pre-packaged .zip — see fbxIsZip. */
   fbxFile: File | null;
+  /** Sprint 1 (PART B) — true when fbxFile is a pre-packaged .zip
+   *  (model.fbx + textures/). Drives the fbx_bundle upload kind and
+   *  which server column gets written; textureFiles are ignored. */
+  fbxIsZip: boolean;
+  /** Sprint 1 (PART B) — loose FBX texture maps the server folds into
+   *  the zip bundle. Ignored when fbxIsZip (the zip already carries
+   *  its own textures/). */
+  textureFiles: File[];
   /** Wave 9 — real-world dimensions in mm. Operator types these from
    *  the product spec sheet; the storefront ModelViewer rescales
    *  the loaded GLB so AR placement matches true size. */
   realDimensions: RealDimensionsMm;
+  /** Sprint 1 (PART B) — category (reuses item_type) + room
+   *  (reuses room_slugs), the SAME columns single-edit writes. All
+   *  optional: the AI tail can infer item_type from the photos. */
+  itemType: string | null;
+  subtypeSlug: string | null;
+  roomSlugs: string[];
 };
 
 /** Default the per-photo type. First slot is the hero (Product),
@@ -108,6 +130,9 @@ export type DraftCardState = {
 export function defaultPhotoType(slotIndex: number): PhotoType {
   return slotIndex === 0 ? "product" : "reference";
 }
+
+/** {slug,label} pair for a taxonomy <select>/checkbox. */
+export type TaxoOption = { slug: string; label: string };
 
 type Props = {
   index: number;
@@ -118,6 +143,12 @@ type Props = {
   canDelete: boolean;
   onChange: (next: DraftCardState) => void;
   onDelete: () => void;
+  /** Sprint 1 (PART B) — category (= item_type) options, room options,
+   *  and the subtype list keyed by item_type. Loaded server-side and
+   *  passed down so the card matches single-edit's taxonomy exactly. */
+  itemTypeOptions: TaxoOption[];
+  roomOptions: TaxoOption[];
+  subtypesByItemType: Record<string, TaxoOption[]>;
 };
 
 export default function ProductDraftCard({
@@ -127,14 +158,19 @@ export default function ProductDraftCard({
   canDelete,
   onChange,
   onDelete,
+  itemTypeOptions,
+  roomOptions,
+  subtypesByItemType,
 }: Props) {
   const photoInputRef = useRef<HTMLInputElement>(null);
   const glbInputRef = useRef<HTMLInputElement>(null);
   const fbxInputRef = useRef<HTMLInputElement>(null);
+  const textureInputRef = useRef<HTMLInputElement>(null);
   const [photoUrls, setPhotoUrls] = useState<string[]>([]);
   const [photoErrors, setPhotoErrors] = useState<string[]>([]);
   const [glbError, setGlbError] = useState<string | null>(null);
   const [fbxError, setFbxError] = useState<string | null>(null);
+  const [textureError, setTextureError] = useState<string | null>(null);
   const [photoDragging, setPhotoDragging] = useState(false);
   const [glbDragging, setGlbDragging] = useState(false);
   const [fbxDragging, setFbxDragging] = useState(false);
@@ -310,8 +346,13 @@ export default function ProductDraftCard({
   function acceptFbx(file: File | null) {
     setFbxError(null);
     if (!file) return;
-    if (!/\.fbx$/i.test(file.name)) {
-      setFbxError(`${file.name}: not a .fbx file`);
+    // Sprint 1 (PART B) — accept a bare .fbx OR a pre-packaged .zip
+    // (model.fbx + textures/). Extension-gated: browsers report "" or
+    // "application/octet-stream" for .fbx, and .zip is octet too.
+    const isZip = /\.zip$/i.test(file.name);
+    const isFbx = /\.fbx$/i.test(file.name);
+    if (!isZip && !isFbx) {
+      setFbxError(`${file.name}: not a .fbx or .zip file`);
       return;
     }
     if (file.size > FBX_MAX_MB * 1024 * 1024) {
@@ -320,7 +361,7 @@ export default function ProductDraftCard({
       );
       return;
     }
-    onChange({ ...state, fbxFile: file });
+    onChange({ ...state, fbxFile: file, fbxIsZip: isZip });
   }
 
   function onFbxPick(e: ChangeEvent<HTMLInputElement>) {
@@ -349,8 +390,85 @@ export default function ProductDraftCard({
   }
 
   function clearFbx() {
-    onChange({ ...state, fbxFile: null });
+    onChange({ ...state, fbxFile: null, fbxIsZip: false });
     setFbxError(null);
+  }
+
+  // ─── Sprint 1 (PART B) — texture handlers ─────────────────
+  //
+  // Loose FBX texture maps the server folds into the zip bundle
+  // (packageFbxBundle). Multi-pick, click-only (no drag) to keep the
+  // card compact. No mime gate — .tga / .exr report empty mime — only
+  // a size cap and a count cap. Ignored when fbxIsZip (the zip carries
+  // its own textures/).
+
+  function acceptTextures(incoming: File[]) {
+    setTextureError(null);
+    if (incoming.length === 0) return;
+    const errs: string[] = [];
+    const vetted = incoming.filter((f) => {
+      if (f.size > TEXTURE_MAX_MB * 1024 * 1024) {
+        errs.push(
+          `${f.name}: ${(f.size / 1024 / 1024).toFixed(1)} MB > ${TEXTURE_MAX_MB} MB`,
+        );
+        return false;
+      }
+      return true;
+    });
+    if (errs.length) setTextureError(errs.join(" · "));
+    if (vetted.length === 0) return;
+    const remaining = TEXTURE_MAX - state.textureFiles.length;
+    if (remaining <= 0) {
+      setTextureError(`max ${TEXTURE_MAX} textures`);
+      return;
+    }
+    onChange({
+      ...state,
+      textureFiles: [...state.textureFiles, ...vetted.slice(0, remaining)],
+    });
+  }
+
+  function onTexturePick(e: ChangeEvent<HTMLInputElement>) {
+    const incoming = Array.from(e.target.files ?? []);
+    e.target.value = "";
+    acceptTextures(incoming);
+  }
+
+  function removeTexture(i: number) {
+    const next = state.textureFiles.slice();
+    next.splice(i, 1);
+    onChange({ ...state, textureFiles: next });
+  }
+
+  // ─── Sprint 1 (PART B) — category (item_type) + room handlers ──
+  //
+  // Reuses the same columns single-edit writes (item_type / subtype_slug
+  // / room_slugs). All optional — the AI tail can infer item_type from
+  // the photos when the operator leaves it blank.
+
+  function setItemType(slug: string) {
+    const next = slug || null;
+    // Drop a now-orphaned subtype if it doesn't belong to the new type.
+    const allowed = next ? (subtypesByItemType[next] ?? []) : [];
+    const keepSub =
+      state.subtypeSlug && allowed.some((s) => s.slug === state.subtypeSlug)
+        ? state.subtypeSlug
+        : null;
+    onChange({ ...state, itemType: next, subtypeSlug: keepSub });
+  }
+
+  function setSubtype(slug: string) {
+    onChange({ ...state, subtypeSlug: slug || null });
+  }
+
+  function toggleRoom(slug: string) {
+    const has = state.roomSlugs.includes(slug);
+    onChange({
+      ...state,
+      roomSlugs: has
+        ? state.roomSlugs.filter((r) => r !== slug)
+        : [...state.roomSlugs, slug],
+    });
   }
 
   // ─── Wave 9 — real dimensions handler ─────────────────────
@@ -533,7 +651,10 @@ export default function ProductDraftCard({
                 <strong className="text-neutral-700">Product photo</strong> = shown on
                 storefront, background removed.{" "}
                 <strong className="text-neutral-700">Reference</strong> = spec sheet /
-                screenshot, AI reads it but customers don&apos;t see it.
+                screenshot, AI reads it but customers don&apos;t see it.{" "}
+                <span className="text-amber-700">
+                  Remove&nbsp;Background / Unify&nbsp;Center 在保存后打开该草稿的编辑页使用（产品行此刻还不存在）。
+                </span>
               </div>
             </>
           )}
@@ -545,6 +666,82 @@ export default function ProductDraftCard({
             ))}
           </div>
         )}
+      </div>
+
+      {/* Sprint 1 (PART B) — category (item_type) + subtype + room.
+          Reuses the same columns single-edit writes; all optional. The
+          AI tail can fill item_type when the operator leaves it blank. */}
+      <div className="mb-3 grid grid-cols-2 gap-3">
+        <label className="flex flex-col gap-1">
+          <span className="text-xs font-medium uppercase tracking-wide text-neutral-500">
+            Category
+          </span>
+          <select
+            value={state.itemType ?? ""}
+            onChange={(e) => setItemType(e.target.value)}
+            disabled={busy}
+            data-testid={`item-type-${index}`}
+            className="w-full rounded border border-neutral-300 bg-white px-2 py-1.5 text-xs text-neutral-800 disabled:opacity-50"
+          >
+            <option value="">— optional (AI can fill) —</option>
+            {itemTypeOptions.map((o) => (
+              <option key={o.slug} value={o.slug}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="flex flex-col gap-1">
+          <span className="text-xs font-medium uppercase tracking-wide text-neutral-500">
+            Subtype
+          </span>
+          <select
+            value={state.subtypeSlug ?? ""}
+            onChange={(e) => setSubtype(e.target.value)}
+            disabled={busy || !state.itemType}
+            data-testid={`subtype-${index}`}
+            className="w-full rounded border border-neutral-300 bg-white px-2 py-1.5 text-xs text-neutral-800 disabled:opacity-50"
+          >
+            <option value="">
+              {state.itemType ? "— optional —" : "— pick a category first —"}
+            </option>
+            {(state.itemType
+              ? (subtypesByItemType[state.itemType] ?? [])
+              : []
+            ).map((o) => (
+              <option key={o.slug} value={o.slug}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+      <div className="mb-3">
+        <span className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-neutral-500">
+          Rooms ({state.roomSlugs.length})
+        </span>
+        <div className="flex flex-wrap gap-1.5">
+          {roomOptions.map((o) => {
+            const on = state.roomSlugs.includes(o.slug);
+            return (
+              <button
+                key={o.slug}
+                type="button"
+                onClick={() => toggleRoom(o.slug)}
+                disabled={busy}
+                aria-pressed={on}
+                data-testid={`room-${o.slug}-${index}`}
+                className={`rounded-full border px-2.5 py-1 text-[11px] transition disabled:opacity-50 ${
+                  on
+                    ? "border-black bg-black text-white"
+                    : "border-neutral-300 bg-white text-neutral-700 hover:border-neutral-500"
+                }`}
+              >
+                {o.label}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       {/* 3D MODEL section header — UI parity with single-product edit.
@@ -716,12 +913,14 @@ export default function ProductDraftCard({
               <div className="font-mono">{state.fbxFile.name}</div>
               <div className="mt-0.5 text-[11px] text-neutral-500">
                 {(state.fbxFile.size / 1024).toFixed(0)} KB · designer download
+                {state.fbxIsZip ? " · zip bundle (.fbx + textures/)" : ""}
               </div>
             </div>
           ) : (
             <div className="px-3 py-3 text-center text-xs text-neutral-500">
-              Drop a .fbx here, or click — for designer downloads (3ds Max
-              / Maya / SketchUp). Max {FBX_MAX_MB} MB.
+              Drop a .fbx or a .zip here, or click — for designer downloads
+              (3ds Max / Maya / SketchUp). A .zip should hold model.fbx +
+              a textures/ folder. Max {FBX_MAX_MB} MB.
             </div>
           )}
         </div>
@@ -731,6 +930,80 @@ export default function ProductDraftCard({
           </div>
         )}
       </div>
+
+      {/* Sprint 1 (PART B) — loose FBX texture maps. Folded into the
+          zip bundle server-side (packageFbxBundle). Hidden when the
+          operator uploaded a pre-packaged .zip — that already carries
+          its own textures/. */}
+      {!state.fbxIsZip && (
+        <div className="mt-3">
+          <div className="mb-1.5 flex items-center justify-between">
+            <span className="text-xs font-medium uppercase tracking-wide text-neutral-500">
+              FBX textures (optional, {state.textureFiles.length}/{TEXTURE_MAX})
+            </span>
+            {state.textureFiles.length < TEXTURE_MAX && (
+              <button
+                type="button"
+                onClick={() => textureInputRef.current?.click()}
+                disabled={busy}
+                className="text-xs text-sky-700 hover:text-sky-900 disabled:opacity-40"
+              >
+                + Add textures
+              </button>
+            )}
+          </div>
+          <input
+            ref={textureInputRef}
+            type="file"
+            multiple
+            onChange={onTexturePick}
+            className="hidden"
+            data-testid={`texture-input-${index}`}
+          />
+          {state.textureFiles.length === 0 ? (
+            <button
+              type="button"
+              onClick={() => !busy && textureInputRef.current?.click()}
+              disabled={busy}
+              className="w-full rounded-md border-2 border-dashed border-neutral-300 bg-neutral-50 px-3 py-3 text-center text-xs text-neutral-500 hover:border-neutral-500 disabled:opacity-60"
+            >
+              Add the .fbx&apos;s texture maps (jpg/png/tga…) — bundled with
+              the FBX for designer download. Max {TEXTURE_MAX_MB} MB each.
+            </button>
+          ) : (
+            <ul className="space-y-1">
+              {state.textureFiles.map((f, i) => (
+                <li
+                  key={`${state.cardId}-tex-${i}-${f.name}`}
+                  className="flex items-center justify-between rounded border border-neutral-200 bg-white px-2 py-1 text-[11px] text-neutral-700"
+                >
+                  <span className="truncate font-mono">{f.name}</span>
+                  <span className="flex items-center gap-2 pl-2">
+                    <span className="shrink-0 text-neutral-400">
+                      {(f.size / 1024).toFixed(0)} KB
+                    </span>
+                    {!busy && (
+                      <button
+                        type="button"
+                        onClick={() => removeTexture(i)}
+                        aria-label={`Remove texture ${f.name}`}
+                        className="text-rose-600 hover:text-rose-800"
+                      >
+                        ×
+                      </button>
+                    )}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+          {textureError && (
+            <div className="mt-1 rounded bg-rose-50 px-2 py-1 text-[11px] text-rose-700">
+              {textureError}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Wave 9 — real product dimensions in mm. Same shape as the
           single-product Price & dimensions section (length / width /

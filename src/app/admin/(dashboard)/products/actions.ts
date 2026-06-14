@@ -1897,6 +1897,108 @@ export type BulkCreateResult =
   | { ok: true; created: Array<{ productId: string }> }
   | { ok: false; error: string };
 
+/**
+ * Sprint 1 (PART B) — create ONE draft product from an upload card.
+ *
+ * This is the bulk-create per-card counterpart of updateProduct, and the
+ * two now share their entire upload-asset path: buildUploadUpdates (glb /
+ * fbx / fbx-zip / thumbnail columns + validation), attachStagedRawImages
+ * / attachStagedRealPhotos (the Wave 11b skip-cutout default), and the
+ * shouldDispatch* decisions. So a server-side upload change (the Wave 9
+ * FBX / Phase A texture class of drift) lands on BOTH pages at once.
+ *
+ * Differs from updateProduct only in lifecycle: this INSERTs a fresh
+ * draft (name optional → "Untitled product"; the AI tail fills it) and
+ * queues processDraftAsync for the GPT spec parse. The bulk client
+ * uploads bytes via signed URLs (unchanged), then hands us a FormData
+ * with the SAME field names the single-edit form emits.
+ */
+export async function createProductFromUpload(
+  productId: string,
+  fd: FormData,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  await requireAdmin();
+  if (!UUID_RE.test(productId)) {
+    return { ok: false, error: `invalid productId: ${productId}` };
+  }
+
+  const supabase = createServiceRoleClient();
+  const valid = await loadValidSlugs();
+
+  // Scalars from the card. name is OPTIONAL (the AI tail fills it);
+  // category = item_type, room = room_slugs (reused columns).
+  const itemType = pickOneFromSet(str(fd, "item_type"), valid.itemTypes);
+  let subtype: string | null = null;
+  const subtypeRaw = str(fd, "subtype_slug");
+  if (subtypeRaw && itemType) {
+    const allowed = valid.subtypesByItemType.get(itemType);
+    if (allowed?.has(subtypeRaw)) subtype = subtypeRaw;
+  }
+  const insert: ProductInsert = {
+    id: productId,
+    name: str(fd, "name") ?? "Untitled product",
+    status: "draft",
+    item_type: itemType,
+    subtype_slug: subtype,
+    room_slugs: pickManyFromSet(fd, "room_slugs", valid.rooms),
+    styles: pickManyFromSet(fd, "styles", valid.styles),
+    colors: pickManyFromSet(fd, "colors", valid.colors),
+    materials: pickManyFromSet(fd, "materials", valid.materials),
+    store_locations: [],
+    dimensions_mm: parseDimensions(fd),
+    ai_filled_fields: [],
+  };
+  const { error: insErr } = await supabase.from("products").insert(insert);
+  if (insErr) {
+    return { ok: false, error: `product insert failed: ${insErr.message}` };
+  }
+
+  // Shared upload-asset columns (glb / fbx / fbx-zip / thumbnail) — the
+  // SAME helper single-edit uses, so the persistence can't drift.
+  const built = await buildUploadUpdates(productId, fd);
+  if (built.error) return { ok: false, error: built.error };
+  if (Object.keys(built.updates).length > 0) {
+    const { error: updErr } = await supabase
+      .from("products")
+      .update(built.updates)
+      .eq("id", productId);
+    if (updErr) {
+      return { ok: false, error: `asset update failed: ${updErr.message}` };
+    }
+  }
+
+  // Attach images — product photos (skip-cutout default) + reference
+  // photos, exactly like single-edit.
+  const rawEntries = parseRawImageEntries(fd);
+  if (rawEntries.length > 0) {
+    const r = await attachStagedRawImages(productId, rawEntries);
+    if (!r.ok) return { ok: false, error: `image insert failed: ${r.error}` };
+  }
+  const realEntries = parseRealPhotoEntries(fd);
+  if (realEntries.length > 0) {
+    const r = await attachStagedRealPhotos(productId, realEntries);
+    if (!r.ok) {
+      return { ok: false, error: `reference insert failed: ${r.error}` };
+    }
+  }
+
+  revalidatePath("/admin");
+  revalidatePath("/");
+  invalidatePublishedCountsCache();
+
+  // Async tails — SAME dispatch decisions as single-edit, plus the AI
+  // spec parse (bulk-specific: fills name/sku/brand/etc from the photos).
+  if (shouldDispatchGlbCompression(fd)) {
+    after(() => dispatchGlbCompression(productId));
+  }
+  if (shouldDispatchFbxBundle(fd)) {
+    after(() => dispatchFbxBundle(productId));
+  }
+  after(() => processDraftAsync({ productId, images: [] }));
+
+  return { ok: true };
+}
+
 /** Wave 6 · Commit 3 — create up to 10 draft products in one call.
  *
  *  Synchronous part:

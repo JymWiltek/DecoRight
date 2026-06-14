@@ -2,33 +2,39 @@ import "server-only";
 import Link from "next/link";
 import { requireAdmin } from "@/lib/auth/require-admin";
 import BulkCreateForm from "@/components/admin/BulkCreateForm";
+import { loadTaxonomy, labelFor } from "@/lib/taxonomy";
+import { getLocale } from "next-intl/server";
+import type { Locale } from "@/i18n/config";
 
 export const dynamic = "force-dynamic";
 
 /**
- * Wave 6 · Commit 4 — bulk-create page.
- *
- * Operator drops 1-10 products' photos (and optionally their GLBs)
- * into stacked cards, clicks "Save all & create drafts", and the
- * client-side handler:
- *   1. mints a productId UUID per card
- *   2. for each photo: getSignedUploadUrl("raw_image", productId,
- *      filename, mime) → PUT bytes (parallel within & across cards)
- *   3. for each GLB: same flow with kind="glb" + checkGlbBudget
- *      (lib/admin/glb-budget) at pick time
- *   4. when every byte landed, calls bulkCreateProducts(drafts)
- *      which inserts product rows + product_images + GLB columns,
- *      then schedules rembg + parseImagesMerged in a next/server
- *      `after` tail.
- *
- * The actual list refresh + AI-fill are async — the operator gets
- * sent back to /admin where the rows show up at status='draft' with
- * "Untitled product" + ⚠️ AI-completeness flags. Within ~30s the
- * tail finishes and the names / SKUs / dimensions populate; refresh
- * shows ✅.
+ * Wave 6 · Commit 4 — bulk-create page. Sprint 1 (PART B): each card now
+ * carries the FULL upload set (photos+type · glb · fbx/zip · textures ·
+ * dimensions · category · room) and saves via the SHARED
+ * createProductFromUpload action — same server path as single-edit, so
+ * the two pages can't drift. Up to 10 products at once.
  */
 export default async function BulkCreatePage() {
   await requireAdmin();
+  const [taxonomy, locale] = await Promise.all([
+    loadTaxonomy(),
+    getLocale() as Promise<Locale>,
+  ]);
+  const itemTypeOptions = taxonomy.itemTypes.map((t) => ({
+    slug: t.slug,
+    label: labelFor(t, locale),
+  }));
+  const roomOptions = [...taxonomy.rooms]
+    .sort((a, b) => a.sort_order - b.sort_order)
+    .map((r) => ({ slug: r.slug, label: labelFor(r, locale) }));
+  const subtypesByItemType: Record<string, { slug: string; label: string }[]> = {};
+  for (const st of taxonomy.itemSubtypes) {
+    (subtypesByItemType[st.item_type_slug] ??= []).push({
+      slug: st.slug,
+      label: labelFor(st, locale),
+    });
+  }
 
   return (
     <div className="mx-auto max-w-5xl px-6 py-8 pb-32">
@@ -36,9 +42,10 @@ export default async function BulkCreatePage() {
         <div>
           <h1 className="text-2xl font-semibold">Bulk create products</h1>
           <p className="mt-1 text-sm text-neutral-500">
-            Up to 10 products at once. Each card: 1-5 photos +
-            optional 3D model. After save, AI auto-fill runs in the
-            background — refresh /admin in ~30s to see filled fields.
+            Up to 10 products at once — each card has the full upload set
+            (photos · 3D · FBX/zip · textures · size · category · room),
+            the same as single-product edit. After save, AI auto-fill runs
+            in the background — refresh /admin in ~30s to see filled fields.
           </p>
         </div>
         <Link
@@ -48,7 +55,11 @@ export default async function BulkCreatePage() {
           ← Back to products
         </Link>
       </div>
-      <BulkCreateForm />
+      <BulkCreateForm
+        itemTypeOptions={itemTypeOptions}
+        roomOptions={roomOptions}
+        subtypesByItemType={subtypesByItemType}
+      />
     </div>
   );
 }
