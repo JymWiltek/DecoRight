@@ -75,7 +75,7 @@ const PRODUCT_BOX = Math.floor(CANVAS * TARGET_BBOX_FRACTION); // 1200
  */
 const ALPHA_BBOX_THRESHOLD = 8;
 
-async function alphaBbox(
+export async function alphaBbox(
   buf: Buffer,
 ): Promise<{ left: number; top: number; width: number; height: number } | null> {
   const { data, info } = await sharp(buf)

@@ -44,6 +44,7 @@ import TextureDropzone from "./TextureDropzone";
 import CompressionStatusBanner from "./CompressionStatusBanner";
 import SpecSheetAutofillBlock from "./SpecSheetAutofillBlock";
 import ReunifyThumbnailButton from "./ReunifyThumbnailButton";
+import FitCenterButton from "./FitCenterButton";
 import AIInferButton from "./AIInferButton";
 import { AutofillTextInput, AutofillTextarea } from "./AutofillTextInput";
 import DeleteButton from "./DeleteButton";
@@ -364,6 +365,21 @@ export default function ProductForm({
           hint="Auto-runs after a cutout is approved. Use this if the storefront thumbnail looks stale or you re-cropped the cutout."
         >
           <ReunifyThumbnailButton
+            productId={p?.id ?? null}
+            currentThumbnailUrl={p?.thumbnail_url ?? null}
+          />
+        </Section>
+
+        {/* Wave: fit-&-center the card thumbnail while KEEPING the
+            original scene background (vs. the white-canvas unify above).
+            For Wiltek's rendered scene photos — centers the product at
+            ~65% of the 3:4 card frame. Runs rembg once only to locate
+            the product; the original pixels are what get cropped. */}
+        <Section
+          title="Card framing — keep background"
+          hint="Centers the product to ~65% of the 3:4 card frame WITHOUT removing the scene. Use this for real scene photos; use Unified thumbnail above for a clean white-canvas look."
+        >
+          <FitCenterButton
             productId={p?.id ?? null}
             currentThumbnailUrl={p?.thumbnail_url ?? null}
           />

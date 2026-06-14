@@ -643,3 +643,29 @@ export async function uploadUnifiedThumbnailPng(
   const { data } = supabase.storage.from(THUMBS_BUCKET).getPublicUrl(path);
   return data.publicUrl;
 }
+
+/**
+ * Fit-&-center thumbnail that KEEPS the original scene background (the
+ * counterpart to uploadUnifiedThumbnailPng's white-canvas output). A
+ * JPEG, not PNG — the content is a photographic crop, so JPEG is far
+ * smaller with no visible loss. Separate filename so it coexists with
+ * unified.png and thumbnail.<ext>. Caller appends `?v=<ts>` for cache
+ * busting; THUMBS_BUCKET is public with 1-year Cache-Control.
+ */
+export async function uploadFramedThumbnail(
+  productId: string,
+  bytes: Uint8Array,
+): Promise<string> {
+  const supabase = createServiceRoleClient();
+  const path = `products/${productId}/framed.jpg`;
+  const { error } = await supabase.storage
+    .from(THUMBS_BUCKET)
+    .upload(path, new Blob([bytes as BlobPart], { type: "image/jpeg" }), {
+      upsert: true,
+      contentType: "image/jpeg",
+      cacheControl: "31536000",
+    });
+  if (error) throw error;
+  const { data } = supabase.storage.from(THUMBS_BUCKET).getPublicUrl(path);
+  return data.publicUrl;
+}
