@@ -387,9 +387,9 @@ export default function ProductForm({
 
         <Section
           title="3D models"
-          hint="Optional dual upload. Recommended Tripo/Meshy settings: HD Texture ON, PBR OFF, Polycount 300K-500K — Decoright auto-compresses the .glb to AR-ready ~3 MB on Save (no need to compress before uploading). The .fbx is preserved bit-exact for paid designer downloads. Set real dimensions in the Price & dimensions section so the storefront AR shows true size."
+          hint="Three separate slots — each optional. Box 1 = the web/AR model (auto-compressed). Box 2 = the editable original for paid designer downloads. Box 3 = loose texture maps, ONLY needed when Box 2 is a bare .fbx. Recommended Tripo/Meshy: HD Texture ON, PBR OFF, Polycount 300K-500K. Set real dimensions in Price & dimensions so AR shows true size."
         >
-          <Field label=".glb (high-quality, becomes the web AR file)">
+          <Field label="Box 1 · .glb — the web + AR model (auto-compressed to ~3 MB on Save)">
             <FileDropzone
               kind="glb"
               accept=".glb,model/gltf-binary"
@@ -400,7 +400,7 @@ export default function ProductForm({
               hint="Drop .glb here, or click to pick"
             />
           </Field>
-          <Field label=".fbx or .zip (designer download — 3ds Max / Maya / SketchUp)">
+          <Field label="Box 2 · .fbx or .zip — editable original for paid designer downloads (3ds Max / Maya / SketchUp)">
             <FileDropzone
               kind="fbx"
               accept=".fbx,.zip,application/zip,application/octet-stream"
@@ -408,13 +408,20 @@ export default function ProductForm({
               productId={p?.id ?? null}
               currentUrl={p?.fbx_url ?? null}
               currentMeta={p?.fbx_size_kb != null ? `${p.fbx_size_kb} KB` : null}
-              hint="Drop a .fbx (we'll bundle your textures into a zip) OR a pre-packaged .zip (must contain a .fbx)"
+              hint="Two ways: drop a bare .fbx (then add its textures in Box 3) OR drop a ready .zip that already contains model.fbx + a textures/ folder (then SKIP Box 3)."
             />
           </Field>
           {/* Wave 11b — texture maps. Bundled with the .fbx into a zip
               on Save so 3ds Max auto-resolves materials. Filenames
-              preserved (the .fbx references maps by name). */}
-          <Field label="FBX textures (JPEG/PNG — bundled into the .fbx zip)">
+              preserved (the .fbx references maps by name).
+              BUG-4 clarity: this slot is ONLY for the bare-.fbx path —
+              a .zip in Box 2 already carries its own textures/. */}
+          <Field label="Box 3 · FBX textures (JPEG/PNG) — only when Box 2 is a bare .fbx">
+            <div className="mb-1.5 rounded bg-amber-50 px-2 py-1 text-[11px] leading-tight text-amber-800">
+              Skip this box if you uploaded a <strong>.zip</strong> in Box 2 —
+              it already contains the <code>textures/</code> folder. Only add
+              maps here when Box 2 is a <strong>bare .fbx</strong>.
+            </div>
             <TextureDropzone
               productId={p?.id ?? null}
               currentNames={fbxTextureNames ?? undefined}

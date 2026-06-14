@@ -29,7 +29,9 @@
  */
 
 import { useEffect, useRef, useState, type DragEvent } from "react";
+import { useRouter } from "next/navigation";
 import { getSignedUploadUrl } from "@/app/admin/(dashboard)/products/upload-actions";
+import { attachUploadedImages } from "@/app/admin/(dashboard)/products/actions";
 import {
   useLatestRef,
   useRegisterStagedUploader,
@@ -78,13 +80,19 @@ export function UploadDropzone({
   const formDataField =
     kind === "real_photo" ? "real_photo_entries" : "raw_image_entries";
   const inputRef = useRef<HTMLInputElement>(null);
+  const router = useRouter();
   const [isDragging, setIsDragging] = useState(false);
   const [previews, setPreviews] = useState<Preview[]>([]);
   const [errors, setErrors] = useState<string[]>([]);
+  // BUG-1 fix — the edit-page dropzone now uploads on drop (the product
+  // already exists), so the operator can pick a cover / run AI / center
+  // immediately instead of being stuck behind a Save. This tracks the
+  // in-flight immediate upload.
+  const [committing, setCommitting] = useState(false);
 
   const maxBytes = maxFileMb * 1024 * 1024;
   const { busy } = useStagedUploads();
-  const disabled = busy;
+  const disabled = busy || committing;
 
   // Parent's submit handler needs to read the *current* previews
   // list, but we only want to register the uploader once on mount
@@ -206,6 +214,53 @@ export function UploadDropzone({
     });
   }
 
+  /**
+   * BUG-1 fix — upload the just-added files RIGHT NOW (the product
+   * already exists from /new), creating product_images rows so the
+   * operator can immediately set a cover, run the AI parser, and
+   * Fit-&-center — none of which work on un-saved staged files. No
+   * rembg / no spend: rows land skip-cutout (same as bulk); AI +
+   * centering remain explicit button clicks.
+   */
+  async function commitNow(files: File[]) {
+    setCommitting(true);
+    const entries: { imageId: string; ext: string }[] = [];
+    const errs: string[] = [];
+    for (const f of files) {
+      try {
+        const r = await getSignedUploadUrl("raw_image", productId, f.name, f.type);
+        if (!r.ok || !r.ticket.imageId) {
+          throw new Error(r.ok ? "missing image id" : r.error);
+        }
+        await putBytes(r.ticket.signedUrl, f);
+        const ext = r.ticket.path.split(".").pop() ?? "jpg";
+        entries.push({ imageId: r.ticket.imageId, ext });
+      } catch (err) {
+        errs.push(`${f.name}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+    let attached = false;
+    if (entries.length > 0) {
+      const res = await attachUploadedImages(productId, kind, entries);
+      if (res.ok) attached = true;
+      else errs.push(res.error);
+    }
+    if (errs.length) setErrors((prev) => [...prev, ...errs]);
+    setCommitting(false);
+    if (attached) {
+      // Bytes + DB rows are committed — drop the local previews (the
+      // server-rendered image grid now shows the real rows) and refresh
+      // so primary/feed-to-AI/AI/centering see the new images.
+      setPreviews((prev) => {
+        for (const p of prev) URL.revokeObjectURL(p.objectUrl);
+        return [];
+      });
+      router.refresh();
+    }
+    // On total failure we KEEP the previews so the Save-time staged
+    // uploader can retry — no bytes/rows are lost.
+  }
+
   function handleDrop(e: DragEvent<HTMLDivElement>) {
     e.preventDefault();
     setIsDragging(false);
@@ -214,6 +269,7 @@ export function UploadDropzone({
     setErrors(errs);
     if (ok.length === 0) return;
     appendFiles(ok);
+    void commitNow(ok);
   }
 
   function handleDragOver(e: DragEvent<HTMLDivElement>) {
@@ -276,7 +332,10 @@ export function UploadDropzone({
               Array.from(e.currentTarget.files ?? []),
             );
             setErrors(errs);
-            if (ok.length > 0) appendFiles(ok);
+            if (ok.length > 0) {
+              appendFiles(ok);
+              void commitNow(ok);
+            }
             // Reset the native picker so picking the same file twice
             // still triggers onChange.
             e.currentTarget.value = "";
@@ -294,7 +353,9 @@ export function UploadDropzone({
           {multiple ? " · multi-select" : ""}
         </div>
         <div className="mt-1 text-[11px] text-neutral-400">
-          Nothing uploads until you click Save / Publish.
+          {committing
+            ? "Uploading…"
+            : "Uploads right away — then you can pick a cover, run AI, and center."}
         </div>
       </div>
 
@@ -302,8 +363,9 @@ export function UploadDropzone({
         <div className="flex flex-col gap-2 rounded-md border border-neutral-200 bg-white p-3">
           <div className="flex items-baseline justify-between">
             <div className="text-xs font-medium text-neutral-800">
-              {previews.length} file{previews.length === 1 ? "" : "s"} staged
-              — upload on Save / Publish
+              {committing
+                ? `Uploading ${previews.length} file${previews.length === 1 ? "" : "s"}…`
+                : `${previews.length} file${previews.length === 1 ? "" : "s"} — will retry on Save`}
             </div>
             <button
               type="button"

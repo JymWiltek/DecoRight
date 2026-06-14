@@ -2000,6 +2000,44 @@ export async function createProductFromUpload(
   return { ok: true };
 }
 
+/**
+ * BUG-1 fix — attach already-uploaded raw images to a product as DB rows
+ * IMMEDIATELY (the edit-page dropzone now PUTs bytes on drop, not on
+ * Save). This is what un-sticks the "staged image can't be primary / fed
+ * to AI / centered" chicken-and-egg: once the row exists (feed_to_ai
+ * defaults true, first becomes primary), the spec-AI, primary toggle and
+ * Fit-&-center all work without a Save first. No rembg / no money spent —
+ * same skip-cutout default as bulk; AI + centering stay explicit clicks.
+ */
+export async function attachUploadedImages(
+  productId: string,
+  kind: "cutout" | "real_photo",
+  entries: { imageId: string; ext: string }[],
+): Promise<{ ok: true; count: number } | { ok: false; error: string }> {
+  await requireAdmin();
+  if (!UUID_RE.test(productId)) {
+    return { ok: false, error: `invalid productId: ${productId}` };
+  }
+  const valid = (Array.isArray(entries) ? entries : []).filter(
+    (e) =>
+      e &&
+      typeof e.imageId === "string" &&
+      UUID_RE.test(e.imageId) &&
+      typeof e.ext === "string" &&
+      ALLOWED_IMAGE_EXTS.has(e.ext.toLowerCase().replace(/^\./, "")),
+  );
+  if (valid.length === 0) return { ok: false, error: "no valid image entries" };
+  const r =
+    kind === "real_photo"
+      ? await attachStagedRealPhotos(productId, valid)
+      : await attachStagedRawImages(productId, valid);
+  if (!r.ok) return { ok: false, error: r.error };
+  revalidatePath("/admin");
+  revalidatePath(`/admin/products/${productId}/edit`);
+  revalidatePath("/");
+  return { ok: true, count: valid.length };
+}
+
 /** Wave 6 · Commit 3 — create up to 10 draft products in one call.
  *
  *  Synchronous part:
