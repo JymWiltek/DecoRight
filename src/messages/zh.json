@@ -130,5 +130,22 @@
   "style": {
     "notFound": "风格不存在",
     "empty": "该风格暂无产品。"
+  },
+  "whereToBuy": {
+    "title": "哪里买得到",
+    "verified": "DecoRight 已核实真实在售",
+    "buy": "前往购买",
+    "whatsapp": "WhatsApp 询价",
+    "viewStore": "查看门店",
+    "visitSite": "访问品牌官网",
+    "exclusive": "独家",
+    "enquire": "询价",
+    "email": "邮件询价",
+    "noChannelTitle": "想买这件?点此询价 / 求货",
+    "noChannelBody": "暂时还没有渠道上架——联系我们,我们帮你找货或订货。",
+    "waText": "你好,我对「{name}」有兴趣,请问价格和现货情况?",
+    "stockIn": "现货",
+    "stockOrder": "订货",
+    "stockDiscontinued": "停产"
   }
 }

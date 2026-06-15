@@ -5,6 +5,7 @@ import { useTranslations, useLocale } from "next-intl";
 import ProductGallery from "./ProductGallery";
 import ColorSwitcher, { type ColorOption } from "./ColorSwitcher";
 import FbxDownloadButton from "./FbxDownloadButton";
+import WhereToBuy, { type WhereToBuyChannel } from "./WhereToBuy";
 import { buildGlbDownload, buildFbxDownload, formatMYR } from "@/lib/format";
 import { glbUrlForGallery } from "@/lib/glb-display";
 import type { ProductRow } from "@/lib/supabase/types";
@@ -28,6 +29,12 @@ type Props = {
   /** Sprint 1 C2 — whether the current visitor is a logged-in designer.
    *  Drives the FBX button (login CTA vs credit-deduct download). */
   designerLoggedIn: boolean;
+  /** Mig 0048 — "Where to buy" channels (server-resolved + sorted) +
+   *  the verified badge flag + lead-capture contacts. */
+  whereToBuy: WhereToBuyChannel[];
+  isVerifiedRealProduct: boolean;
+  leadEmail: string;
+  leadWhatsapp: string;
 };
 
 export default function ProductDetail({
@@ -40,8 +47,13 @@ export default function ProductDetail({
   regionLabels,
   galleryUrls,
   designerLoggedIn,
+  whereToBuy,
+  isVerifiedRealProduct,
+  leadEmail,
+  leadWhatsapp,
 }: Props) {
   const t = useTranslations("product");
+  const tWhere = useTranslations("whereToBuy");
   const locale = useLocale();
   // Locale-correct list joiner — `、` for zh, `, ` for en/ms. Built
   // into the runtime; no extra i18n key needed. `style: "narrow"`
@@ -89,6 +101,13 @@ export default function ProductDetail({
             </div>
           )}
           <h1 className="mt-1 text-2xl font-semibold">{product.name}</h1>
+          {/* Mig 0048 — DecoRight-verified real product badge. */}
+          {isVerifiedRealProduct && (
+            <div className="mt-2 inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-medium text-emerald-700">
+              <span aria-hidden>✓</span>
+              {tWhere("verified")}
+            </div>
+          )}
         </div>
 
         <div className="flex items-baseline gap-3">
@@ -232,6 +251,17 @@ export default function ProductDetail({
             loginHref={`/designer/login?next=${encodeURIComponent(`/product/${product.id}`)}`}
           />
         )}
+
+        {/* Mig 0048 — "Where to buy" (real purchasable product). Directly
+            below the download/get area, per spec. Always renders (3 states,
+            never a dead end). */}
+        <WhereToBuy
+          channels={whereToBuy}
+          productName={product.name}
+          sku={product.sku_id}
+          leadEmail={leadEmail}
+          leadWhatsapp={leadWhatsapp}
+        />
 
         {/* Wave 12 — Style Tags (#Modern #Minimalist). */}
         {styleLabels.length > 0 && (

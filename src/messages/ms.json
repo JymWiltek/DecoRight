@@ -130,5 +130,22 @@
   "style": {
     "notFound": "Gaya tidak dijumpai",
     "empty": "Tiada produk untuk gaya ini lagi."
+  },
+  "whereToBuy": {
+    "title": "Di mana untuk beli",
+    "verified": "Produk sebenar disahkan DecoRight",
+    "buy": "Beli sekarang",
+    "whatsapp": "Tanya di WhatsApp",
+    "viewStore": "Lihat kedai",
+    "visitSite": "Lawati laman jenama",
+    "exclusive": "Eksklusif",
+    "enquire": "Tanya",
+    "email": "E-mel kami",
+    "noChannelTitle": "Mahukan ini? Minta kami carikan",
+    "noChannelBody": "Belum ada peruncit disenaraikan — hubungi kami dan kami akan bantu cari atau tempah.",
+    "waText": "Hai, saya berminat dengan {name}. Boleh kongsi harga dan ketersediaan?",
+    "stockIn": "Ada stok",
+    "stockOrder": "Tempahan",
+    "stockDiscontinued": "Dihentikan"
   }
 }

@@ -4,10 +4,13 @@ import type { Metadata, ResolvingMetadata } from "next";
 import type { Locale } from "@/i18n/config";
 import SiteHeader from "@/components/SiteHeader";
 import ProductDetail from "@/components/ProductDetail";
+import { type WhereToBuyChannel } from "@/components/WhereToBuy";
 import ProductCard from "@/components/ProductCard";
 import Markdown from "@/components/Markdown";
 import Breadcrumb, { type BreadcrumbItem } from "@/components/Breadcrumb";
 import { getPublishedProductById, getRelatedProducts } from "@/lib/products";
+import { getProductSupplierLinks } from "@/lib/suppliers";
+import { BRAND } from "@config/brand";
 import { getDesignerSession } from "@/lib/auth/require-designer";
 import { createServiceRoleClient } from "@/lib/supabase/service";
 import { getSignedRawUrl } from "@/lib/storage";
@@ -146,6 +149,30 @@ export default async function ProductPage({ params }: PageProps) {
   const subtypeLabels = labelMap(taxonomy.itemSubtypes, locale);
   const materialLabels = labelMap(taxonomy.materials, locale);
   const regionLabels = labelMap(taxonomy.regions, locale);
+
+  // Mig 0048 — "Where to buy" channels: this product's supplier links
+  // (cheapest-first) resolved to display rows. Each supplier's covered
+  // states become a short region label.
+  const supplierLinks = await getProductSupplierLinks(id);
+  const whereToBuy: WhereToBuyChannel[] = supplierLinks
+    .filter((l) => l.supplier) // drop orphaned links defensively
+    .map((l) => {
+      const sup = l.supplier!;
+      return {
+        supplierName: sup.name,
+        type: sup.type,
+        regionLabel: sup.region_slugs
+          .map((s) => regionLabels[s] ?? s)
+          .join("、"),
+        priceMyr: l.price_myr,
+        stockStatus: l.stock_status,
+        buyUrl: l.buy_url,
+        storeAddress: l.store_address,
+        websiteUrl: sup.website_url,
+        whatsapp: sup.whatsapp,
+        isExclusive: l.is_exclusive,
+      };
+    });
   const colorHex = colorHexMap(taxonomy.colors);
   const colorsBySlug = new Map(taxonomy.colors.map((c) => [c.slug, c]));
 
@@ -225,6 +252,10 @@ export default async function ProductPage({ params }: PageProps) {
           regionLabels={regionLabelList}
           galleryUrls={galleryUrls}
           designerLoggedIn={designerLoggedIn}
+          whereToBuy={whereToBuy}
+          isVerifiedRealProduct={product.is_verified_real_product}
+          leadEmail={BRAND.email}
+          leadWhatsapp={BRAND.whatsapp}
         />
 
         {/* Wave 12 — Designer's Guide. Operator-written markdown blurb

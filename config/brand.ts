@@ -2,6 +2,10 @@ export const BRAND = {
   name: "DecoRight",
   tagline: "看到什么，就买到什么",
   email: "hello@decoright.my",
+  /** Mig 0048 — lead-capture WhatsApp (digits only, e.g. "60123456789")
+   *  for the storefront "Where to buy" no-channel state. Empty → that
+   *  state shows the email only. Set this to DecoRight's enquiry line. */
+  whatsapp: "",
   /** Apex domain — appears in copy ("decoright.my"), not used as a
    *  metadata base today (the site lives on Vercel; see siteUrl). */
   domain: "decoright.my",

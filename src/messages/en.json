@@ -130,5 +130,22 @@
   "style": {
     "notFound": "Style not found",
     "empty": "No products in this style yet."
+  },
+  "whereToBuy": {
+    "title": "Where to buy",
+    "verified": "DecoRight-verified real product",
+    "buy": "Buy now",
+    "whatsapp": "WhatsApp enquiry",
+    "viewStore": "View store",
+    "visitSite": "Visit brand site",
+    "exclusive": "Exclusive",
+    "enquire": "Enquire",
+    "email": "Email us",
+    "noChannelTitle": "Want this? Ask us to source it",
+    "noChannelBody": "No retailer is listed yet — message us and we will help you find it or order it in.",
+    "waText": "Hi, I am interested in {name}. Could you share the price and availability?",
+    "stockIn": "In stock",
+    "stockOrder": "On order",
+    "stockDiscontinued": "Discontinued"
   }
 }
