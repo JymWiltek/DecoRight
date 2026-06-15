@@ -143,7 +143,7 @@
     "email": "E-mel kami",
     "noChannelTitle": "Mahukan ini? Minta kami carikan",
     "noChannelBody": "Belum ada peruncit disenaraikan — hubungi kami dan kami akan bantu cari atau tempah.",
-    "waText": "Hai, saya berminat dengan {name}. Boleh kongsi harga dan ketersediaan?",
+    "waText": "Hai, saya berminat dengan {name} ({url}). Boleh kongsi harga dan ketersediaan?",
     "stockIn": "Ada stok",
     "stockOrder": "Tempahan",
     "stockDiscontinued": "Dihentikan"

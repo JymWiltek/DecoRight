@@ -3,6 +3,7 @@ import { Inter } from "next/font/google";
 import { NextIntlClientProvider } from "next-intl";
 import { getMessages, getLocale, getTranslations } from "next-intl/server";
 import { BRAND } from "@config/brand";
+import { siteUrl } from "@/lib/site-url";
 import { LOCALES } from "@/i18n/config";
 import "./globals.css";
 
@@ -30,13 +31,12 @@ export async function generateMetadata(): Promise<Metadata> {
   const defaultTitle = `${BRAND.name} — ${tSite("tagline")}`;
   const description = tSite("metaDescription");
   return {
-    // Resolves every relative URL in this metadata tree (and every
-    // child page that doesn't supply its own metadataBase) against
-    // the canonical origin. Without this, Next emits a build-time
-    // warning AND falls back to localhost:3000 in dev / VERCEL_URL
-    // in prod — neither of which is the URL you want crawlers to
-    // store. See config/brand.ts for the rationale on hard-coding.
-    metadataBase: new URL(BRAND.siteUrl),
+    // Resolves every relative URL in this metadata tree (OG images,
+    // canonical, AR share previews) against the canonical origin —
+    // now resolved dynamically from NEXT_PUBLIC_SITE_URL → VERCEL_URL
+    // → fallback (src/lib/site-url.ts), so a domain change is one env
+    // var, never a code edit. No hard-coded vercel.app.
+    metadataBase: new URL(siteUrl()),
     title: {
       default: defaultTitle,
       template: `%s · ${BRAND.name}`,

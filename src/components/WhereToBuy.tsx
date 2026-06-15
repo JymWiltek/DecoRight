@@ -41,19 +41,24 @@ const TYPE_BADGE: Record<SupplierType, string> = {
 export default function WhereToBuy({
   channels,
   productName,
+  productUrl,
   sku,
   leadEmail,
   leadWhatsapp,
 }: {
   channels: WhereToBuyChannel[];
   productName: string;
+  /** Absolute product-page URL (server-resolved origin) embedded in the
+   *  WhatsApp message so the supplier can open the listing directly. */
+  productUrl: string;
   sku: string | null;
   leadEmail: string;
   leadWhatsapp: string;
 }) {
   const t = useTranslations("whereToBuy");
   const waText =
-    t("waText", { name: productName }) + (sku ? ` (SKU: ${sku})` : "");
+    t("waText", { name: productName, url: productUrl }) +
+    (sku ? ` (SKU: ${sku})` : "");
   // Lead-capture WhatsApp (no-channel state). null when BRAND.whatsapp
   // is unset / unnormalizable → that state shows email only.
   const leadWa = waLink(leadWhatsapp, waText);

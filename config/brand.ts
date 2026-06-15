@@ -9,17 +9,12 @@ export const BRAND = {
   /** Apex domain — appears in copy ("decoright.my"), not used as a
    *  metadata base today (the site lives on Vercel; see siteUrl). */
   domain: "decoright.my",
-  /** Canonical site URL — the absolute origin every metadata URL is
-   *  resolved against (Next.js `metadataBase`). Must include the
-   *  protocol and NO trailing slash. Update this when the apex
-   *  domain becomes the primary URL — at that point also rewrite
-   *  outgoing share previews so social caches refresh.
-   *
-   *  Why a constant and not `process.env.VERCEL_URL`: VERCEL_URL is
-   *  the per-deployment subdomain (deco-right-abc123.vercel.app),
-   *  so OG previews would point at preview deploys and break in
-   *  Slack/WhatsApp once the deploy is rotated. The canonical URL
-   *  has to be stable across deploys. */
+  /** FALLBACK canonical origin only. The live origin is resolved at
+   *  runtime by `siteUrl()` (src/lib/site-url.ts): NEXT_PUBLIC_SITE_URL
+   *  → VERCEL_URL → (this, in prod) / localhost (dev). To switch to the
+   *  real apex domain, set NEXT_PUBLIC_SITE_URL — do NOT edit code or
+   *  this value. Kept as the last-resort default if both env vars are
+   *  missing in a production build. Protocol + no trailing slash. */
   siteUrl: "https://deco-right.vercel.app",
   locale: "zh-CN",
   primaryColor: "#000000",

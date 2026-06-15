@@ -35,6 +35,8 @@ type Props = {
   isVerifiedRealProduct: boolean;
   leadEmail: string;
   leadWhatsapp: string;
+  /** Absolute product-page URL (server-resolved) for the WhatsApp text. */
+  productUrl: string;
 };
 
 export default function ProductDetail({
@@ -51,6 +53,7 @@ export default function ProductDetail({
   isVerifiedRealProduct,
   leadEmail,
   leadWhatsapp,
+  productUrl,
 }: Props) {
   const t = useTranslations("product");
   const tWhere = useTranslations("whereToBuy");
@@ -258,6 +261,7 @@ export default function ProductDetail({
         <WhereToBuy
           channels={whereToBuy}
           productName={product.name}
+          productUrl={productUrl}
           sku={product.sku_id}
           leadEmail={leadEmail}
           leadWhatsapp={leadWhatsapp}

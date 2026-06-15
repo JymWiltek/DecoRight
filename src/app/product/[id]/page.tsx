@@ -10,6 +10,7 @@ import Markdown from "@/components/Markdown";
 import Breadcrumb, { type BreadcrumbItem } from "@/components/Breadcrumb";
 import { getPublishedProductById, getRelatedProducts } from "@/lib/products";
 import { getProductSupplierLinks } from "@/lib/suppliers";
+import { absoluteUrl } from "@/lib/site-url";
 import { BRAND } from "@config/brand";
 import { getDesignerSession } from "@/lib/auth/require-designer";
 import { createServiceRoleClient } from "@/lib/supabase/service";
@@ -256,6 +257,7 @@ export default async function ProductPage({ params }: PageProps) {
           isVerifiedRealProduct={product.is_verified_real_product}
           leadEmail={BRAND.email}
           leadWhatsapp={BRAND.whatsapp}
+          productUrl={absoluteUrl(`/product/${id}`)}
         />
 
         {/* Wave 12 — Designer's Guide. Operator-written markdown blurb
