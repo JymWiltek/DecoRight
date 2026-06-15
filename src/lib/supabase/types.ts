@@ -1,4 +1,9 @@
-import type { PriceTier, ProductStatus } from "@/lib/constants/enums";
+import type {
+  PriceTier,
+  ProductStatus,
+  SupplierType,
+  StockStatus,
+} from "@/lib/constants/enums";
 
 export type Dimensions = {
   length?: number;
@@ -109,6 +114,9 @@ export type ProductRow = {
    *  Download FBX button. DISPLAY-ONLY (no paywall this wave); defaults
    *  to 5 so every product shows a number without a backfill. */
   download_credit_cost: number;
+  /** Mig 0048 — "DecoRight has verified this is a real product on sale"
+   *  badge on the product page. Operator toggle; default false. */
+  is_verified_real_product: boolean;
   status: ProductStatus;
   ai_filled_fields: string[];
   /** Mig 0039 — per-field confidence the V2 parser returned for this
@@ -198,6 +206,8 @@ export type ProductInsert = {
   designer_guide?: string | null;
   /** Mig 0046 — DB-defaulted to 5, so optional on insert. */
   download_credit_cost?: number;
+  /** Mig 0048 — DB-defaulted false, optional on insert. */
+  is_verified_real_product?: boolean;
   status?: ProductStatus;
   ai_filled_fields?: string[];
   ai_confidences?: Record<string, "high" | "medium" | "low">;
@@ -586,6 +596,58 @@ export type CreditBalanceRow = {
   designer_id: string;
   credit_balance: number;
   updated_at: string;
+};
+
+// ── Mig 0048 — supplier system (products ↔ suppliers many-to-many) ──
+
+export type SupplierRow = {
+  id: string;
+  name: string;
+  logo_url: string | null;
+  type: SupplierType;
+  website_url: string | null;
+  /** Malaysian number, digits only (e.g. "60123456789"). */
+  whatsapp: string | null;
+  /** Covered states — regions.slug values. */
+  region_slugs: string[];
+  created_at: string;
+  updated_at: string;
+};
+
+export type SupplierInsert = {
+  id?: string;
+  name: string;
+  logo_url?: string | null;
+  type?: SupplierType;
+  website_url?: string | null;
+  whatsapp?: string | null;
+  region_slugs?: string[];
+};
+
+export type SupplierUpdate = Partial<Omit<SupplierRow, "id" | "created_at">>;
+
+/** One product↔supplier link with this channel's own commercial fields. */
+export type ProductSupplierRow = {
+  id: string;
+  product_id: string;
+  supplier_id: string;
+  price_myr: number | null;
+  stock_status: StockStatus;
+  buy_url: string | null;
+  store_address: string | null;
+  is_exclusive: boolean;
+  updated_at: string;
+};
+
+export type ProductSupplierInsert = {
+  id?: string;
+  product_id: string;
+  supplier_id: string;
+  price_myr?: number | null;
+  stock_status?: StockStatus;
+  buy_url?: string | null;
+  store_address?: string | null;
+  is_exclusive?: boolean;
 };
 
 export type CreditBalanceInsert = {

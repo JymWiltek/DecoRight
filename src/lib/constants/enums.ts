@@ -16,3 +16,15 @@ export const PRODUCT_STATUSES = [
   "link_broken",
 ] as const;
 export type ProductStatus = (typeof PRODUCT_STATUSES)[number];
+
+// Mig 0048 — supplier system. Structural, operator-internal enums.
+export const SUPPLIER_TYPES = [
+  "official", // brand official store
+  "dealer", // authorised dealer
+  "store", // physical retail store
+  "marketplace", // online marketplace listing
+] as const;
+export type SupplierType = (typeof SUPPLIER_TYPES)[number];
+
+export const STOCK_STATUSES = ["in_stock", "order", "discontinued"] as const;
+export type StockStatus = (typeof STOCK_STATUSES)[number];
