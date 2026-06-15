@@ -867,6 +867,18 @@ export type Database = {
         Update: Partial<DesignerRow>;
         Relationships: [];
       };
+      suppliers: {
+        Row: SupplierRow;
+        Insert: SupplierInsert;
+        Update: SupplierUpdate;
+        Relationships: [];
+      };
+      product_suppliers: {
+        Row: ProductSupplierRow;
+        Insert: ProductSupplierInsert;
+        Update: Partial<ProductSupplierRow>;
+        Relationships: [];
+      };
       credit_balances: {
         Row: CreditBalanceRow;
         Insert: CreditBalanceInsert;

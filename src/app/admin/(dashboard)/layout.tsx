@@ -28,6 +28,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             <Link href="/admin/bundles" className="hover:text-black">
               Bundles
             </Link>
+            <Link href="/admin/suppliers" className="hover:text-black">
+              Suppliers
+            </Link>
           </nav>
         </div>
         <div className="flex items-center gap-4 text-xs text-neutral-500">
