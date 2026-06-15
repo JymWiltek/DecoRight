@@ -759,6 +759,69 @@ export default function ProductDraftCard({
           })}
         </div>
       </div>
+      {/* Real dimensions — grouped with the other product ATTRIBUTES
+          (category / rooms), matching the single-edit form's chapter 5.0.
+          Persisted to products.dimensions_mm; drives storefront AR scale. */}
+      <div className="mb-3">
+        <div className="mb-1.5 flex items-center justify-between">
+          <span className="text-xs font-medium uppercase tracking-wide text-neutral-500">
+            Real dimensions (mm) — optional, drives AR scale
+          </span>
+        </div>
+        <div className="grid grid-cols-3 gap-2">
+          <label className="flex flex-col gap-1">
+            <span className="text-[10px] uppercase text-neutral-500">
+              Length
+            </span>
+            <input
+              type="number"
+              inputMode="numeric"
+              min={1}
+              max={REAL_DIM_MAX_MM}
+              value={state.realDimensions.length ?? ""}
+              onChange={(e) => setDim("length", e.target.value)}
+              disabled={busy}
+              placeholder="mm"
+              data-testid={`dim-length-${index}`}
+              className="w-full rounded border border-neutral-300 bg-white px-2 py-1 text-xs text-neutral-800 disabled:opacity-50"
+            />
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-[10px] uppercase text-neutral-500">
+              Width
+            </span>
+            <input
+              type="number"
+              inputMode="numeric"
+              min={1}
+              max={REAL_DIM_MAX_MM}
+              value={state.realDimensions.width ?? ""}
+              onChange={(e) => setDim("width", e.target.value)}
+              disabled={busy}
+              placeholder="mm"
+              data-testid={`dim-width-${index}`}
+              className="w-full rounded border border-neutral-300 bg-white px-2 py-1 text-xs text-neutral-800 disabled:opacity-50"
+            />
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-[10px] uppercase text-neutral-500">
+              Height
+            </span>
+            <input
+              type="number"
+              inputMode="numeric"
+              min={1}
+              max={REAL_DIM_MAX_MM}
+              value={state.realDimensions.height ?? ""}
+              onChange={(e) => setDim("height", e.target.value)}
+              disabled={busy}
+              placeholder="mm"
+              data-testid={`dim-height-${index}`}
+              className="w-full rounded border border-neutral-300 bg-white px-2 py-1 text-xs text-neutral-800 disabled:opacity-50"
+            />
+          </label>
+        </div>
+      </div>
       {supplierOptions.length > 0 && (
         <div className="mb-3">
           <span className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-neutral-500">
@@ -1054,72 +1117,6 @@ export default function ProductDraftCard({
         </div>
       )}
 
-      {/* Wave 9 — real product dimensions in mm. Same shape as the
-          single-product Price & dimensions section (length / width /
-          height), persisted to products.dimensions_mm JSONB. The
-          storefront ModelViewer rescales the loaded GLB uniformly
-          so AR placement matches true size. Optional — null fields
-          fall back to the GLB's intrinsic scale. */}
-      <div className="mt-3">
-        <div className="mb-1.5 flex items-center justify-between">
-          <span className="text-xs font-medium uppercase tracking-wide text-neutral-500">
-            Real dimensions (mm) — optional, drives AR scale
-          </span>
-        </div>
-        <div className="grid grid-cols-3 gap-2">
-          <label className="flex flex-col gap-1">
-            <span className="text-[10px] uppercase text-neutral-500">
-              Length
-            </span>
-            <input
-              type="number"
-              inputMode="numeric"
-              min={1}
-              max={REAL_DIM_MAX_MM}
-              value={state.realDimensions.length ?? ""}
-              onChange={(e) => setDim("length", e.target.value)}
-              disabled={busy}
-              placeholder="mm"
-              data-testid={`dim-length-${index}`}
-              className="w-full rounded border border-neutral-300 bg-white px-2 py-1 text-xs text-neutral-800 disabled:opacity-50"
-            />
-          </label>
-          <label className="flex flex-col gap-1">
-            <span className="text-[10px] uppercase text-neutral-500">
-              Width
-            </span>
-            <input
-              type="number"
-              inputMode="numeric"
-              min={1}
-              max={REAL_DIM_MAX_MM}
-              value={state.realDimensions.width ?? ""}
-              onChange={(e) => setDim("width", e.target.value)}
-              disabled={busy}
-              placeholder="mm"
-              data-testid={`dim-width-${index}`}
-              className="w-full rounded border border-neutral-300 bg-white px-2 py-1 text-xs text-neutral-800 disabled:opacity-50"
-            />
-          </label>
-          <label className="flex flex-col gap-1">
-            <span className="text-[10px] uppercase text-neutral-500">
-              Height
-            </span>
-            <input
-              type="number"
-              inputMode="numeric"
-              min={1}
-              max={REAL_DIM_MAX_MM}
-              value={state.realDimensions.height ?? ""}
-              onChange={(e) => setDim("height", e.target.value)}
-              disabled={busy}
-              placeholder="mm"
-              data-testid={`dim-height-${index}`}
-              className="w-full rounded border border-neutral-300 bg-white px-2 py-1 text-xs text-neutral-800 disabled:opacity-50"
-            />
-          </label>
-        </div>
-      </div>
     </div>
   );
 }

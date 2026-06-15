@@ -15,6 +15,7 @@
 
 import { useTranslations } from "next-intl";
 import { formatMYR } from "@/lib/format";
+import { waLink } from "@/lib/whatsapp";
 import type { SupplierType, StockStatus } from "@/lib/constants/enums";
 
 export type WhereToBuyChannel = {
@@ -37,10 +38,6 @@ const TYPE_BADGE: Record<SupplierType, string> = {
   marketplace: "Marketplace",
 };
 
-function waLink(digits: string, text: string): string {
-  return `https://wa.me/${digits}?text=${encodeURIComponent(text)}`;
-}
-
 export default function WhereToBuy({
   channels,
   productName,
@@ -57,6 +54,9 @@ export default function WhereToBuy({
   const t = useTranslations("whereToBuy");
   const waText =
     t("waText", { name: productName }) + (sku ? ` (SKU: ${sku})` : "");
+  // Lead-capture WhatsApp (no-channel state). null when BRAND.whatsapp
+  // is unset / unnormalizable → that state shows email only.
+  const leadWa = waLink(leadWhatsapp, waText);
   const stockLabel = (s: StockStatus) =>
     s === "in_stock"
       ? t("stockIn")
@@ -83,9 +83,9 @@ export default function WhereToBuy({
           </div>
           <p className="mt-1 text-xs text-neutral-500">{t("noChannelBody")}</p>
           <div className="mt-3 flex flex-wrap gap-2">
-            {leadWhatsapp && (
+            {leadWa && (
               <a
-                href={waLink(leadWhatsapp, waText)}
+                href={leadWa}
                 target="_blank"
                 rel="noopener noreferrer"
                 className={primaryBtn}
@@ -97,7 +97,7 @@ export default function WhereToBuy({
               href={`mailto:${leadEmail}?subject=${encodeURIComponent(
                 `Enquiry: ${productName}${sku ? ` (${sku})` : ""}`,
               )}`}
-              className={leadWhatsapp ? secondaryBtn : primaryBtn}
+              className={leadWa ? secondaryBtn : primaryBtn}
             >
               {t("email")}
             </a>
@@ -118,10 +118,11 @@ export default function WhereToBuy({
                     {t("buy")}
                   </a>
                 );
-              if (c.whatsapp)
+              const channelWa = waLink(c.whatsapp, waText);
+              if (channelWa)
                 return (
                   <a
-                    href={waLink(c.whatsapp, waText)}
+                    href={channelWa}
                     target="_blank"
                     rel="noopener noreferrer"
                     className={primaryBtn}

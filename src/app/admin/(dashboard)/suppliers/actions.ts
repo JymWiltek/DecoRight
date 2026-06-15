@@ -14,17 +14,10 @@ import { requireAdmin } from "@/lib/auth/require-admin";
 import { createServiceRoleClient } from "@/lib/supabase/service";
 import { SUPPLIER_TYPES, type SupplierType } from "@/lib/constants/enums";
 import { invalidateSuppliersCache } from "@/lib/suppliers";
+import { toWaNumber } from "@/lib/whatsapp";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-/** Digits-only Malaysian WhatsApp number (strip +, spaces, dashes).
- *  We don't hard-validate the MY format — operator owns correctness —
- *  only normalize so wa.me links work. */
-function normalizeWhatsapp(raw: string): string | null {
-  const digits = raw.replace(/[^\d]/g, "");
-  return digits.length >= 8 ? digits : null;
-}
 
 function parseForm(fd: FormData): {
   name: string;
@@ -42,7 +35,10 @@ function parseForm(fd: FormData): {
       ? (type as SupplierType)
       : "store",
     website_url: String(fd.get("website_url") ?? "").trim() || null,
-    whatsapp: normalizeWhatsapp(String(fd.get("whatsapp") ?? "")),
+    // Store the canonical wa.me form (prepend 60, strip leading 0 / +
+    // / spaces / dashes) so links work no matter how the operator typed
+    // the local number. WhereToBuy also normalizes defensively.
+    whatsapp: toWaNumber(String(fd.get("whatsapp") ?? "")),
     region_slugs: fd.getAll("region_slugs").map((s) => s.toString()),
   };
 }

@@ -100,6 +100,41 @@ const FORM_ID = "product-form";
 
 type Intent = "save" | "draft" | "publish";
 
+/** Numbered chapters for the sticky jump-nav. Order = top-to-bottom of
+ *  the form. Field grouping: dimensions live with product attributes
+ *  (5.0); price + suppliers + store locations live in sales (6.0). */
+const CHAPTERS = [
+  { id: "ch-images", num: "1.0", title: "Images · 照片" },
+  { id: "ch-3d", num: "2.0", title: "3D Models · 3D 模型" },
+  { id: "ch-ai", num: "3.0", title: "AI Assist · AI 助手" },
+  { id: "ch-basics", num: "4.0", title: "Basics · 基本信息" },
+  { id: "ch-attrs", num: "5.0", title: "Attributes · 产品属性" },
+  { id: "ch-sales", num: "6.0", title: "Sales & Channels · 销售与渠道" },
+] as const;
+
+/** A numbered form chapter — anchor target for the jump-nav. The
+ *  scroll-mt offset keeps the heading clear of the sticky nav bar. */
+function Chapter({
+  id,
+  num,
+  title,
+  children,
+}: {
+  id: string;
+  num: string;
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <section id={id} className="scroll-mt-24 space-y-8">
+      <h2 className="border-b border-neutral-200 pb-2 text-lg font-semibold text-neutral-900">
+        <span className="tabular-nums text-neutral-400">{num}</span> {title}
+      </h2>
+      {children}
+    </section>
+  );
+}
+
 export default function ProductForm({
   product,
   taxonomy,
@@ -366,7 +401,29 @@ export default function ProductForm({
           Don't reorder without updating the matching docs in Notion.
         */}
 
-        {imagesSection}
+        {/* Sticky chapter jump-nav. Click → smooth-scroll to the
+            anchor. No required-field validation this pass (per Jym). */}
+        <nav className="sticky top-0 z-20 -mx-6 mb-2 flex flex-wrap gap-1 border-b border-neutral-200 bg-white/95 px-6 py-2 backdrop-blur">
+          {CHAPTERS.map((c) => (
+            <a
+              key={c.id}
+              href={`#${c.id}`}
+              onClick={(e) => {
+                e.preventDefault();
+                document
+                  .getElementById(c.id)
+                  ?.scrollIntoView({ behavior: "smooth", block: "start" });
+              }}
+              className="rounded-md px-2.5 py-1 text-xs font-medium text-neutral-600 transition hover:bg-neutral-100 hover:text-black"
+            >
+              <span className="tabular-nums text-neutral-400">{c.num}</span>{" "}
+              {c.title.split(" · ")[0]}
+            </a>
+          ))}
+        </nav>
+
+        <Chapter id="ch-images" num="1.0" title="Images · 照片">
+          {imagesSection}
 
         {/* Manual recovery for the unify-thumbnail pipeline. The
             pg_net trigger fires once per cutout-approval transition;
@@ -396,7 +453,9 @@ export default function ProductForm({
             currentThumbnailUrl={p?.thumbnail_url ?? null}
           />
         </Section>
+        </Chapter>
 
+        <Chapter id="ch-3d" num="2.0" title="3D Models · 3D 模型">
         <Section
           title="3D models"
           hint="Three separate slots — each optional. Box 1 = the web/AR model (auto-compressed). Box 2 = the editable original for paid designer downloads. Box 3 = loose texture maps, ONLY needed when Box 2 is a bare .fbx. Recommended Tripo/Meshy: HD Texture ON, PBR OFF, Polycount 300K-500K. Set real dimensions in Price & dimensions so AR shows true size."
@@ -464,6 +523,8 @@ export default function ProductForm({
           )}
         </Section>
 
+        </Chapter>
+
         {/* Wave 5 (mig 0038) — Real Photos as a separate section was
             retired. The flat image-pool model means every photo lives
             in the main "Images" section and carries 3 toggles
@@ -471,13 +532,16 @@ export default function ProductForm({
             Operators uploading a real photo just drop it into the
             same dropzone as cutout candidates. */}
 
+        <Chapter id="ch-ai" num="3.0" title="AI Assist · AI 助手">
         <Section
           title="AI assist"
           hint="One button reads every “Feed to AI” image and fills name, brand, SKU, description, dimensions, weight, price, category, rooms, styles, colors & materials — each with the model’s real per-field confidence. Verify amber/red before publishing."
         >
           <AiAutofillButton productId={p?.id ?? null} form={FORM_ID} />
         </Section>
+        </Chapter>
 
+        <Chapter id="ch-basics" num="4.0" title="Basics · 基本信息">
         <Section title="Basics">
           <Grid>
             <Field label="Name *">
@@ -584,6 +648,9 @@ export default function ProductForm({
               shows nothing — the marker stays accurate either way.
         */}
 
+        </Chapter>
+
+        <Chapter id="ch-attrs" num="5.0" title="Attributes · 产品属性">
         <Section
           title="Rooms * (A-Z)"
           hint="Which room(s) this product belongs in. Multi-select — a faucet can live in Kitchen AND Bathroom."
@@ -672,7 +739,55 @@ export default function ProductForm({
           />
         </Section>
 
-        <Section title="Price & dimensions">
+        {/* 5.0 — dimensions are product ATTRIBUTES (with colors/materials),
+            split out of the old "Price & dimensions" lump. */}
+        <Section title="Dimensions">
+          <Grid>
+            <Field label="Length (mm)">
+              <input
+                form={FORM_ID}
+                type="number"
+                name="dim_length"
+                defaultValue={p?.dimensions_mm?.length ?? ""}
+                className={inputCls}
+              />
+            </Field>
+            <Field label="Width (mm)">
+              <input
+                form={FORM_ID}
+                type="number"
+                name="dim_width"
+                defaultValue={p?.dimensions_mm?.width ?? ""}
+                className={inputCls}
+              />
+            </Field>
+            <Field label="Height (mm)">
+              <input
+                form={FORM_ID}
+                type="number"
+                name="dim_height"
+                defaultValue={p?.dimensions_mm?.height ?? ""}
+                className={inputCls}
+              />
+            </Field>
+            <Field label="Weight (kg)">
+              <input
+                form={FORM_ID}
+                type="number"
+                step="0.01"
+                name="weight_kg"
+                defaultValue={p?.weight_kg ?? ""}
+                className={inputCls}
+              />
+            </Field>
+          </Grid>
+        </Section>
+        </Chapter>
+
+        <Chapter id="ch-sales" num="6.0" title="Sales & Channels · 销售与渠道">
+        {/* 6.0 — price lives with suppliers + store locations (all
+            sales/channel info), split out of "Price & dimensions". */}
+        <Section title="Price & download">
           <Grid>
             <Field label="Price (MYR)">
               <input
@@ -721,43 +836,6 @@ export default function ProductForm({
                   label: PRICE_TIER_LABELS[t],
                 }))}
                 initial={p?.price_tier ?? null}
-              />
-            </Field>
-            <Field label="Length (mm)">
-              <input
-                form={FORM_ID}
-                type="number"
-                name="dim_length"
-                defaultValue={p?.dimensions_mm?.length ?? ""}
-                className={inputCls}
-              />
-            </Field>
-            <Field label="Width (mm)">
-              <input
-                form={FORM_ID}
-                type="number"
-                name="dim_width"
-                defaultValue={p?.dimensions_mm?.width ?? ""}
-                className={inputCls}
-              />
-            </Field>
-            <Field label="Height (mm)">
-              <input
-                form={FORM_ID}
-                type="number"
-                name="dim_height"
-                defaultValue={p?.dimensions_mm?.height ?? ""}
-                className={inputCls}
-              />
-            </Field>
-            <Field label="Weight (kg)">
-              <input
-                form={FORM_ID}
-                type="number"
-                step="0.01"
-                name="weight_kg"
-                defaultValue={p?.weight_kg ?? ""}
-                className={inputCls}
               />
             </Field>
           </Grid>
@@ -820,6 +898,7 @@ export default function ProductForm({
             initial={p?.store_locations ?? []}
           />
         </Section>
+        </Chapter>
 
         {isEdit && p?.ai_filled_fields && p.ai_filled_fields.length > 0 && (
           <Section title="AI-filled fields">
