@@ -3,6 +3,7 @@ import Link from "next/link";
 import { requireAdmin } from "@/lib/auth/require-admin";
 import BulkCreateForm from "@/components/admin/BulkCreateForm";
 import { loadTaxonomy, labelFor } from "@/lib/taxonomy";
+import { loadSuppliers } from "@/lib/suppliers";
 import { getLocale } from "next-intl/server";
 import type { Locale } from "@/i18n/config";
 
@@ -17,10 +18,12 @@ export const dynamic = "force-dynamic";
  */
 export default async function BulkCreatePage() {
   await requireAdmin();
-  const [taxonomy, locale] = await Promise.all([
+  const [taxonomy, locale, suppliers] = await Promise.all([
     loadTaxonomy(),
     getLocale() as Promise<Locale>,
+    loadSuppliers(),
   ]);
+  const supplierOptions = suppliers.map((s) => ({ id: s.id, name: s.name }));
   const itemTypeOptions = taxonomy.itemTypes.map((t) => ({
     slug: t.slug,
     label: labelFor(t, locale),
@@ -59,6 +62,7 @@ export default async function BulkCreatePage() {
         itemTypeOptions={itemTypeOptions}
         roomOptions={roomOptions}
         subtypesByItemType={subtypesByItemType}
+        supplierOptions={supplierOptions}
       />
     </div>
   );

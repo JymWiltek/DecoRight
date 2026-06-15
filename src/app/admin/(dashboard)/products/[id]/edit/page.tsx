@@ -56,19 +56,23 @@ export default async function EditProductPage({
   const sp = await searchParams;
 
   const supabase = createServiceRoleClient();
-  const [product, taxonomy, imagesResp, rembgUsage] = await Promise.all([
-    getProductById(id),
-    loadTaxonomy(),
-    supabase
-      .from("product_images")
-      .select("*")
-      .eq("product_id", id)
-      .order("created_at", { ascending: true }),
-    // P0-3: lifetime rembg cost rollup so the UI can show
-    // per-image attempt counts and a section-level total instead of
-    // last-attempt-only data on product_images.rembg_cost_usd.
-    getProductRembgUsage(id),
-  ]);
+  const [product, taxonomy, imagesResp, rembgUsage, suppliersResp, linksResp] =
+    await Promise.all([
+      getProductById(id),
+      loadTaxonomy(),
+      supabase
+        .from("product_images")
+        .select("*")
+        .eq("product_id", id)
+        .order("created_at", { ascending: true }),
+      // P0-3: lifetime rembg cost rollup so the UI can show
+      // per-image attempt counts and a section-level total instead of
+      // last-attempt-only data on product_images.rembg_cost_usd.
+      getProductRembgUsage(id),
+      // Mig 0048 — all suppliers (picker) + this product's current links.
+      supabase.from("suppliers").select("*").order("name"),
+      supabase.from("product_suppliers").select("*").eq("product_id", id),
+    ]);
   if (!product) notFound();
 
   // Private-bucket raw paths → short-lived signed URLs so the operator
@@ -164,6 +168,8 @@ export default async function EditProductPage({
       errMsg={productErrMsg}
       aiCandidateImages={aiCandidateImages}
       fbxTextureNames={fbxTextureNames}
+      suppliers={suppliersResp.data ?? []}
+      productSupplierLinks={linksResp.data ?? []}
       meshyBanner={
         <MeshyStatusBanner
           productId={id}

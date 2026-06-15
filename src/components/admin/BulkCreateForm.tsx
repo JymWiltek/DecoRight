@@ -42,6 +42,8 @@ type Props = {
   itemTypeOptions: TaxoOption[];
   roomOptions: TaxoOption[];
   subtypesByItemType: Record<string, TaxoOption[]>;
+  /** Mig 0048 — suppliers available to bulk-link (id + name). */
+  supplierOptions: { id: string; name: string }[];
 };
 
 function newCard(): DraftCardState {
@@ -61,6 +63,7 @@ function newCard(): DraftCardState {
     itemType: null,
     subtypeSlug: null,
     roomSlugs: [],
+    supplierIds: [],
   };
 }
 
@@ -68,6 +71,7 @@ export default function BulkCreateForm({
   itemTypeOptions,
   roomOptions,
   subtypesByItemType,
+  supplierOptions,
 }: Props) {
   const router = useRouter();
   const [cards, setCards] = useState<DraftCardState[]>(() => [newCard()]);
@@ -120,6 +124,23 @@ export default function BulkCreateForm({
         if (dims.length != null) fd.set("dim_length", String(dims.length));
         if (dims.width != null) fd.set("dim_width", String(dims.width));
         if (dims.height != null) fd.set("dim_height", String(dims.height));
+        // Mig 0048 — bulk supplier links: same product_suppliers_json field
+        // single-edit emits, with channel defaults (in-stock, no price).
+        if (card.supplierIds.length > 0) {
+          fd.set(
+            "product_suppliers_json",
+            JSON.stringify(
+              card.supplierIds.map((supplier_id) => ({
+                supplier_id,
+                price_myr: null,
+                stock_status: "in_stock",
+                buy_url: null,
+                store_address: null,
+                is_exclusive: false,
+              })),
+            ),
+          );
+        }
 
         // ── Photos: split into product vs reference, mirroring the
         //    single-edit dropzones (raw_image_entries / real_photo_entries).
@@ -275,6 +296,7 @@ export default function BulkCreateForm({
             itemTypeOptions={itemTypeOptions}
             roomOptions={roomOptions}
             subtypesByItemType={subtypesByItemType}
+            supplierOptions={supplierOptions}
           />
         ))}
       </div>

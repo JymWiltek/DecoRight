@@ -46,12 +46,15 @@ import { retryMeshyForProductCore } from "@/lib/meshy-retry";
 import {
   PRICE_TIERS,
   PRODUCT_STATUSES,
+  STOCK_STATUSES,
   type PriceTier,
   type ProductStatus,
+  type StockStatus,
 } from "@/lib/constants/enums";
 import type {
   Dimensions,
   ProductInsert,
+  ProductSupplierInsert,
   ProductUpdate,
 } from "@/lib/supabase/types";
 
@@ -253,6 +256,8 @@ async function parsePayload(fd: FormData): Promise<Omit<ProductInsert, "id">> {
     weight_kg: num(fd, "weight_kg"),
     price_myr: num(fd, "price_myr"),
     price_original_myr: num(fd, "price_original_myr"),
+    // Mig 0048 — "verified real product" badge toggle (checkbox → "on").
+    is_verified_real_product: fd.get("is_verified_real_product") === "on",
     price_tier: pickOne(str(fd, "price_tier"), PRICE_TIERS) as PriceTier | null,
     purchase_url: str(fd, "purchase_url"),
     supplier: str(fd, "supplier"),
@@ -494,6 +499,88 @@ async function attachStagedRealPhotos(
     .upsert(rows, { onConflict: "id" });
   if (error) return { ok: false, error: error.message };
   return { ok: true, ids: rows.map((r) => r.id) };
+}
+
+/**
+ * Mig 0048 — replace a product's supplier links from the form's
+ * `product_suppliers_json` hidden field (emitted by SuppliersPicker on
+ * single-edit AND by the bulk card). Shape: array of {supplier_id,
+ * price_myr, stock_status, buy_url, store_address, is_exclusive}. We
+ * validate supplier ids against the live suppliers table, then
+ * delete-then-insert so the set is authoritative (matches the form).
+ *
+ * If the field is ABSENT (form didn't include the picker), we leave the
+ * existing links untouched — never clobber on an unrelated save.
+ */
+async function attachProductSuppliers(
+  productId: string,
+  fd: FormData,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const raw = fd.get("product_suppliers_json");
+  if (typeof raw !== "string") return { ok: true };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return { ok: false, error: "invalid product_suppliers_json" };
+  }
+  if (!Array.isArray(parsed)) return { ok: true };
+
+  const supabase = createServiceRoleClient();
+  const { data: validSup } = await supabase.from("suppliers").select("id");
+  const validIds = new Set((validSup ?? []).map((r) => r.id));
+
+  const rows: ProductSupplierInsert[] = [];
+  const seen = new Set<string>();
+  for (const item of parsed) {
+    if (!item || typeof item !== "object") continue;
+    const o = item as Record<string, unknown>;
+    const sid = typeof o.supplier_id === "string" ? o.supplier_id : null;
+    if (!sid || !UUID_RE.test(sid) || !validIds.has(sid) || seen.has(sid)) {
+      continue;
+    }
+    seen.add(sid);
+    const stock = (STOCK_STATUSES as readonly string[]).includes(
+      o.stock_status as string,
+    )
+      ? (o.stock_status as StockStatus)
+      : "in_stock";
+    const price =
+      typeof o.price_myr === "number" &&
+      Number.isFinite(o.price_myr) &&
+      o.price_myr >= 0
+        ? o.price_myr
+        : null;
+    rows.push({
+      product_id: productId,
+      supplier_id: sid,
+      price_myr: price,
+      stock_status: stock,
+      buy_url:
+        typeof o.buy_url === "string" && o.buy_url.trim()
+          ? o.buy_url.trim()
+          : null,
+      store_address:
+        typeof o.store_address === "string" && o.store_address.trim()
+          ? o.store_address.trim()
+          : null,
+      is_exclusive: o.is_exclusive === true,
+    });
+  }
+
+  // Replace the set: delete existing, insert the new authoritative list.
+  const { error: delErr } = await supabase
+    .from("product_suppliers")
+    .delete()
+    .eq("product_id", productId);
+  if (delErr) return { ok: false, error: delErr.message };
+  if (rows.length > 0) {
+    const { error: insErr } = await supabase
+      .from("product_suppliers")
+      .insert(rows);
+    if (insErr) return { ok: false, error: insErr.message };
+  }
+  return { ok: true };
 }
 
 /**
@@ -921,6 +1008,16 @@ export async function updateProduct(id: string, fd: FormData): Promise<void> {
         )}`,
       );
     }
+  }
+
+  // Mig 0048 — replace this product's supplier links from the picker.
+  const supRes = await attachProductSuppliers(id, fd);
+  if (!supRes.ok) {
+    redirect(
+      `/admin/products/${id}/edit?err=db&msg=${encodeURIComponent(
+        `supplier link save failed: ${supRes.error}`,
+      )}`,
+    );
   }
 
   revalidatePath("/admin");
@@ -1981,6 +2078,14 @@ export async function createProductFromUpload(
     if (!r.ok) {
       return { ok: false, error: `reference insert failed: ${r.error}` };
     }
+  }
+
+  // Mig 0048 — bulk supplier parity. The bulk card emits the SAME
+  // product_suppliers_json field single-edit does, so attaching links
+  // is the identical server path.
+  const supRes = await attachProductSuppliers(productId, fd);
+  if (!supRes.ok) {
+    return { ok: false, error: `supplier link failed: ${supRes.error}` };
   }
 
   revalidatePath("/admin");

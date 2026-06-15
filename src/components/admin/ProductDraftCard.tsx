@@ -122,6 +122,9 @@ export type DraftCardState = {
   itemType: string | null;
   subtypeSlug: string | null;
   roomSlugs: string[];
+  /** Mig 0048 — supplier ids linked in bulk (defaults: in_stock, no
+   *  price). Per-channel price/buy-url are set later in single-edit. */
+  supplierIds: string[];
 };
 
 /** Default the per-photo type. First slot is the hero (Product),
@@ -149,6 +152,8 @@ type Props = {
   itemTypeOptions: TaxoOption[];
   roomOptions: TaxoOption[];
   subtypesByItemType: Record<string, TaxoOption[]>;
+  /** Mig 0048 — suppliers to bulk-link (id + name). */
+  supplierOptions: { id: string; name: string }[];
 };
 
 export default function ProductDraftCard({
@@ -161,6 +166,7 @@ export default function ProductDraftCard({
   itemTypeOptions,
   roomOptions,
   subtypesByItemType,
+  supplierOptions,
 }: Props) {
   const photoInputRef = useRef<HTMLInputElement>(null);
   const glbInputRef = useRef<HTMLInputElement>(null);
@@ -471,6 +477,16 @@ export default function ProductDraftCard({
     });
   }
 
+  function toggleSupplier(id: string) {
+    const has = state.supplierIds.includes(id);
+    onChange({
+      ...state,
+      supplierIds: has
+        ? state.supplierIds.filter((x) => x !== id)
+        : [...state.supplierIds, id],
+    });
+  }
+
   // ─── Wave 9 — real dimensions handler ─────────────────────
   //
   // Per-axis numeric input. Empty string clears the axis. Values
@@ -743,6 +759,39 @@ export default function ProductDraftCard({
           })}
         </div>
       </div>
+      {supplierOptions.length > 0 && (
+        <div className="mb-3">
+          <span className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-neutral-500">
+            Suppliers ({state.supplierIds.length})
+          </span>
+          <div className="flex flex-wrap gap-1.5">
+            {supplierOptions.map((o) => {
+              const on = state.supplierIds.includes(o.id);
+              return (
+                <button
+                  key={o.id}
+                  type="button"
+                  onClick={() => toggleSupplier(o.id)}
+                  disabled={busy}
+                  aria-pressed={on}
+                  data-testid={`supplier-${o.id}-${index}`}
+                  className={`rounded-full border px-2.5 py-1 text-[11px] transition disabled:opacity-50 ${
+                    on
+                      ? "border-black bg-black text-white"
+                      : "border-neutral-300 bg-white text-neutral-700 hover:border-neutral-500"
+                  }`}
+                >
+                  {o.name}
+                </button>
+              );
+            })}
+          </div>
+          <p className="mt-1 text-[10px] text-neutral-400">
+            Links these suppliers (in-stock, no price). Set per-channel
+            price / buy URL later in single-product edit.
+          </p>
+        </div>
+      )}
 
       {/* 3D MODEL section header — UI parity with single-product edit.
           Recommended Tripo/Meshy settings + Wave 9 explanation. */}

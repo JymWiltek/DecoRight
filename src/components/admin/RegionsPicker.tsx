@@ -15,8 +15,12 @@
  * grouping there would muddy its API.
  */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { RegionRow } from "@/lib/supabase/types";
+
+/** Mig 0048 — SuppliersPicker dispatches this so picking a supplier
+ *  auto-checks the states it covers (operator can still uncheck). */
+export const ADD_REGIONS_EVENT = "dr:add-regions";
 
 type Props = {
   regions: RegionRow[];
@@ -42,6 +46,26 @@ const GROUP_ORDER: RegionRow["region"][] = [
 
 export default function RegionsPicker({ regions, form, initial }: Props) {
   const [selected, setSelected] = useState<Set<string>>(new Set(initial));
+
+  // Mig 0048 — auto-add a supplier's covered states when it's picked in
+  // SuppliersPicker. ADD-only: we never auto-remove, so the operator's
+  // manual choices survive de-selecting a supplier.
+  useEffect(() => {
+    const valid = new Set(regions.map((r) => r.slug));
+    function onAdd(e: Event) {
+      const slugs = (e as CustomEvent<string[]>).detail ?? [];
+      const fresh = slugs.filter((s) => valid.has(s));
+      if (fresh.length === 0) return;
+      setSelected((prev) => {
+        if (fresh.every((s) => prev.has(s))) return prev;
+        const next = new Set(prev);
+        for (const s of fresh) next.add(s);
+        return next;
+      });
+    }
+    window.addEventListener(ADD_REGIONS_EVENT, onAdd);
+    return () => window.removeEventListener(ADD_REGIONS_EVENT, onAdd);
+  }, [regions]);
 
   function toggle(slug: string) {
     setSelected((prev) => {

@@ -33,12 +33,17 @@ import {
   PRICE_TIER_LABELS,
   PRODUCT_STATUS_LABELS,
 } from "@/lib/constants/enum-labels";
-import type { ProductRow } from "@/lib/supabase/types";
+import type {
+  ProductRow,
+  SupplierRow,
+  ProductSupplierRow,
+} from "@/lib/supabase/types";
 import type { Taxonomy } from "@/lib/taxonomy";
 import PillGrid from "./PillGrid";
 import SubtypePicker from "./SubtypePicker";
 import RoomsPicker from "./RoomsPicker";
 import RegionsPicker from "./RegionsPicker";
+import SuppliersPicker from "./SuppliersPicker";
 import FileDropzone from "./FileDropzone";
 import TextureDropzone from "./TextureDropzone";
 import CompressionStatusBanner from "./CompressionStatusBanner";
@@ -85,6 +90,10 @@ type Props = {
    *  textures/ folder (server-listed on /edit). Shown as "in bundle"
    *  chips under the texture dropzone. /new passes nothing. */
   fbxTextureNames?: string[];
+  /** Mig 0048 — all suppliers (for the picker) + this product's current
+   *  links (to pre-tick + pre-fill the per-channel fields). */
+  suppliers?: SupplierRow[];
+  productSupplierLinks?: ProductSupplierRow[];
 };
 
 const FORM_ID = "product-form";
@@ -105,6 +114,8 @@ export default function ProductForm({
   // Feed-to-AI images server-side. Prop kept on Props for the page that
   // still passes it; intentionally not destructured here.
   fbxTextureNames,
+  suppliers = [],
+  productSupplierLinks = [],
 }: Props) {
   const p = product;
   const isEdit = Boolean(p);
@@ -773,6 +784,30 @@ export default function ProductForm({
               />
             </Field>
           </Grid>
+        </Section>
+
+        {/* Mig 0048 — suppliers (many-to-many) + "verified real product"
+            badge. Ticking a supplier auto-adds its covered states to the
+            Store locations picker below (operator can still adjust). */}
+        <Section
+          title="Suppliers · 哪里买得到"
+          hint="Pick which retailers sell this product (multi-select from the supplier list). Each link carries its own price / stock / buy URL. Powers the storefront's “Where to buy”."
+        >
+          <label className="mb-3 flex items-center gap-2 text-sm text-neutral-700">
+            <input
+              form={FORM_ID}
+              type="checkbox"
+              name="is_verified_real_product"
+              defaultChecked={p?.is_verified_real_product ?? false}
+              className="h-4 w-4 rounded border-neutral-300"
+            />
+            ✅ Verified real product (shows the “DecoRight verified” badge)
+          </label>
+          <SuppliersPicker
+            form={FORM_ID}
+            suppliers={suppliers}
+            initial={productSupplierLinks}
+          />
         </Section>
 
         <Section
