@@ -65,7 +65,8 @@
     "sortLatest": "最新上架",
     "sortPriceAsc": "价格 ↑",
     "sortPriceDesc": "价格 ↓",
-    "clearAll": "清除所有筛选"
+    "clearAll": "清除所有筛选",
+    "price": "价格"
   },
   "product": {
     "notFound": "未找到商品",

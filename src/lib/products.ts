@@ -2,6 +2,7 @@ import { unstable_cache, updateTag } from "next/cache";
 import { createClient as createAnonSbClient } from "@supabase/supabase-js";
 import { createClient } from "./supabase/server";
 import type { Database, ProductRow, BundleRow } from "./supabase/types";
+import type { PriceTier } from "./constants/enums";
 
 export type ProductFilters = {
   itemTypes?: string[];
@@ -26,6 +27,8 @@ export type ProductFilters = {
   materials?: string[];
   minPrice?: number;
   maxPrice?: number;
+  /** Mig 0048 list redesign — top "Price" pill filters by tier bucket. */
+  priceTier?: PriceTier;
   q?: string;
   sort?: "latest" | "price_asc" | "price_desc";
 };
@@ -60,6 +63,7 @@ export async function listPublishedProducts(
 
   if (filters.minPrice != null) query = query.gte("price_myr", filters.minPrice);
   if (filters.maxPrice != null) query = query.lte("price_myr", filters.maxPrice);
+  if (filters.priceTier) query = query.eq("price_tier", filters.priceTier);
   if (filters.q) {
     const q = filters.q.trim();
     if (q) {

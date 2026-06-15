@@ -65,7 +65,8 @@
     "sortLatest": "Latest",
     "sortPriceAsc": "Price ↑",
     "sortPriceDesc": "Price ↓",
-    "clearAll": "Clear all filters"
+    "clearAll": "Clear all filters",
+    "price": "Price"
   },
   "product": {
     "notFound": "Product not found",

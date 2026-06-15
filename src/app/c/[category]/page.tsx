@@ -5,11 +5,12 @@ import { getLocale, getTranslations } from "next-intl/server";
 import type { Metadata } from "next";
 import type { Locale } from "@/i18n/config";
 import SiteHeader from "@/components/SiteHeader";
-import FilterPanel from "@/components/FilterPanel";
+import TopFilters from "@/components/TopFilters";
 import ProductCard from "@/components/ProductCard";
 import Breadcrumb from "@/components/Breadcrumb";
 import { listPublishedProducts, type ProductFilters } from "@/lib/products";
 import { loadTaxonomy, labelFor, labelMap, colorHexMap } from "@/lib/taxonomy";
+import { PRICE_TIERS, type PriceTier } from "@/lib/constants/enums";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 type PageProps = {
@@ -93,6 +94,7 @@ export default async function CategoryPage({ params, searchParams }: PageProps) 
     styles: pickMany(sp.styles, styleSlugs),
     colors: pickMany(sp.colors, colorSlugs),
     materials: pickMany(sp.materials, materialSlugs),
+    priceTier: pickOne(sp.tier, PRICE_TIERS) as PriceTier | undefined,
     sort: pickOne(sp.sort, ["latest", "price_asc", "price_desc"]) as
       | "latest"
       | "price_asc"
@@ -161,33 +163,39 @@ export default async function CategoryPage({ params, searchParams }: PageProps) 
           </div>
         ) : null}
 
-        <div className="grid gap-8 md:grid-cols-[240px_1fr]">
-          <Suspense>
-            <FilterPanel taxonomy={taxonomy} hide={{ itemType: true, room: true }} />
-          </Suspense>
+        {/* Top pill filters (replaced the left sidebar) — list area now
+            spans full width below them. */}
+        <Suspense>
+          <TopFilters taxonomy={taxonomy} />
+        </Suspense>
 
-          <section>
-            {products.length === 0 ? (
-              <div className="flex min-h-[40vh] items-center justify-center rounded-lg border border-dashed border-neutral-300 px-4 text-center text-sm text-neutral-500">
-                {tItem("empty")}
-              </div>
-            ) : (
-              <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
-                {products.map((p, i) => (
+        <section>
+          {products.length === 0 ? (
+            <div className="flex min-h-[40vh] items-center justify-center rounded-lg border border-dashed border-neutral-300 px-4 text-center text-sm text-neutral-500">
+              {tItem("empty")}
+            </div>
+          ) : (
+            // Masonry: CSS columns + break-inside-avoid cards. Each image
+            // flows at its natural aspect ratio (no 3:4 crop) — horizontals
+            // stay wide, verticals tall, white borders trimmed by the card
+            // route. column-gap via `gap`; row spacing via the card's mb.
+            <div className="columns-2 gap-4 sm:columns-3 lg:columns-4 2xl:columns-5">
+              {products.map((p, i) => (
+                <div key={p.id} className="mb-4 break-inside-avoid">
                   <ProductCard
-                    key={p.id}
                     product={p}
+                    masonry
                     priority={i < 4}
                     itemTypeLabels={itemTypeLabels}
                     styleLabels={styleLabels}
                     subtypeLabels={subtypeLabels}
                     colorHex={colorHex}
                   />
-                ))}
-              </div>
-            )}
-          </section>
-        </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
       </main>
     </>
   );

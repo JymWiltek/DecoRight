@@ -16,7 +16,22 @@ type Props = {
    * the first row of the grid.
    */
   priority?: boolean;
+  /**
+   * Masonry mode (the /c listing redesign): render the image at its
+   * NATURAL aspect ratio (no 3:4 crop) and source it from the
+   * /api/card-image trim route (strips white borders off spec drawings).
+   * Default false → fixed 3:4 + raw thumbnail_url (home/related/search
+   * keep the old uniform grid).
+   */
+  masonry?: boolean;
 };
+
+/** Pull the cache-bust token out of a thumbnail_url's `?v=` so the
+ *  trim route's response can be cached hard yet refresh when the
+ *  thumbnail changes. */
+function thumbVersion(url: string): string {
+  return url.match(/[?&]v=([^&]+)/)?.[1] ?? "1";
+}
 
 /**
  * Wave 12 — Pinterest-style product card.
@@ -43,6 +58,7 @@ export default function ProductCard({
   subtypeLabels,
   colorHex,
   priority = false,
+  masonry = false,
 }: Props) {
   const styleLabel = product.styles[0] ? styleLabels[product.styles[0]] : null;
   const subtypeLabel = product.subtype_slug
@@ -63,18 +79,34 @@ export default function ProductCard({
       href={`/product/${product.id}`}
       className="group flex flex-col overflow-hidden rounded-lg border border-neutral-200 bg-white transition hover:border-neutral-400 hover:shadow-sm"
     >
-      <div className="relative aspect-[3/4] w-full overflow-hidden bg-neutral-100">
+      <div
+        className={`relative w-full overflow-hidden bg-neutral-100 ${
+          masonry ? "" : "aspect-[3/4]"
+        }`}
+      >
         {product.thumbnail_url ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
-            src={product.thumbnail_url}
+            src={
+              masonry
+                ? `/api/card-image/${product.id}?v=${thumbVersion(product.thumbnail_url)}`
+                : product.thumbnail_url
+            }
             alt={product.name}
             loading={priority ? "eager" : "lazy"}
             fetchPriority={priority ? "high" : "auto"}
-            className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.03]"
+            className={
+              masonry
+                ? "block w-full h-auto transition duration-300 group-hover:opacity-95"
+                : "h-full w-full object-cover transition duration-300 group-hover:scale-[1.03]"
+            }
           />
         ) : (
-          <div className="flex h-full w-full items-center justify-center text-xs text-neutral-400">
+          <div
+            className={`flex w-full items-center justify-center text-xs text-neutral-400 ${
+              masonry ? "aspect-square" : "h-full"
+            }`}
+          >
             3D · AR
           </div>
         )}

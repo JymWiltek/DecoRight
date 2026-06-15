@@ -65,7 +65,8 @@
     "sortLatest": "Terkini",
     "sortPriceAsc": "Harga ↑",
     "sortPriceDesc": "Harga ↓",
-    "clearAll": "Kosongkan penapis"
+    "clearAll": "Kosongkan penapis",
+    "price": "Harga"
   },
   "product": {
     "notFound": "Produk tidak dijumpai",
