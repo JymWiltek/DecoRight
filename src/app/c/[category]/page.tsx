@@ -176,10 +176,12 @@ export default async function CategoryPage({ params, searchParams }: PageProps) 
             </div>
           ) : (
             // Masonry: CSS columns + break-inside-avoid cards. Each image
-            // flows at its natural aspect ratio (no 3:4 crop) — horizontals
-            // stay wide, verticals tall, white borders trimmed by the card
-            // route. column-gap via `gap`; row spacing via the card's mb.
-            <div className="columns-2 gap-4 sm:columns-3 lg:columns-4 2xl:columns-5">
+            // flows at its natural aspect ratio (no 3:4 crop, but capped at
+            // 2:3 by ProductCard) — horizontals stay wide, verticals tall,
+            // white borders trimmed by the card route. column-gap via `gap`;
+            // row spacing via the card's mb. Max 4 columns (mobile 2 /
+            // tablet 3 / desktop 4) — wider gives bigger, legible cards.
+            <div className="columns-2 gap-4 sm:columns-3 lg:columns-4">
               {products.map((p, i) => (
                 <div key={p.id} className="mb-4 break-inside-avoid">
                   <ProductCard

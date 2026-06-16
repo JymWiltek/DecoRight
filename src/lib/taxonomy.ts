@@ -56,49 +56,32 @@ export async function loadTaxonomy(): Promise<Taxonomy> {
   return unstable_cache(
     async (): Promise<Taxonomy> => {
       const supabase = createAnonClient();
-      // Sort discipline (Phase 1 收尾 P1 #2):
-      //
-      //   • itemTypes / itemSubtypes / rooms / styles / materials →
-      //     ORDER BY label_en. The operator predominantly works in
-      //     English on /admin and a stable A-Z layout means muscle
-      //     memory survives "did Jane add a new room slug last week?"
-      //     scans. The old sort_order was a curated list maintained
-      //     by hand and drifted out of sync as taxonomy grew.
-      //
-      //   • colors → KEEP sort_order. Color sort_order encodes the
-      //     hue ramp (white → yellow → orange → red → … → black)
-      //     so the front-end FilterPanel swatches look like a real
-      //     color picker, not "Beige, Black, Blue, Brown" alphabet
-      //     soup.
-      //
-      //   • regions → KEEP sort_order. RegionsBlock buckets these
-      //     into geographical groups (north / central / south / …)
-      //     and within a group sort_order matches the geographical
-      //     reading order (Penang → KL → Johor). Alpha would jumble
-      //     "Selangor" between "Sabah" and "Sarawak".
-      //
-      //   • itemTypeRooms → KEEP sort_order. It's a join table with
-      //     no label_en column. Order doesn't matter for membership
-      //     checks, but the column is in the schema, so leave it.
-      const [it, sub, itr, rm, st, mt, co, rg] = await Promise.all([
-        supabase.from("item_types").select("*").order("label_en"),
-        supabase.from("item_subtypes").select("*").order("label_en"),
-        supabase.from("item_type_rooms").select("*").order("sort_order"),
-        supabase.from("rooms").select("*").order("label_en"),
-        supabase.from("styles").select("*").order("label_en"),
-        supabase.from("materials").select("*").order("label_en"),
-        supabase.from("colors").select("*").order("sort_order"),
-        supabase.from("regions").select("*").order("sort_order"),
-      ]);
+      // ONE round-trip via the get_taxonomy() RPC (mig 0049) instead of
+      // 8 parallel PostgREST queries — on a constrained link the 8-way
+      // fan-out serialised to ~29s vs ~5s for the single call. Sort order
+      // is baked into the RPC: label_en for itemTypes/itemSubtypes/rooms/
+      // styles/materials (A-Z for the English-first /admin operator);
+      // sort_order for colors (hue ramp), regions (geographic buckets),
+      // and itemTypeRooms (join table). See 0049_get_taxonomy.sql.
+      const { data, error } = await supabase.rpc("get_taxonomy");
+      const tax = data as Taxonomy | null;
+      // Poison guard: NEVER cache an empty/failed taxonomy. A transient
+      // fetch failure used to return all-empty arrays which unstable_cache
+      // then stored for the full 300s TTL → every /c/* 404'd until the
+      // window expired. Throw instead, so nothing is cached and the next
+      // request retries.
+      if (error || !tax || !Array.isArray(tax.itemTypes) || tax.itemTypes.length === 0) {
+        throw new Error(`loadTaxonomy failed: ${error?.message ?? "empty taxonomy"}`);
+      }
       return {
-        itemTypes: it.data ?? [],
-        itemSubtypes: sub.data ?? [],
-        itemTypeRooms: itr.data ?? [],
-        rooms: rm.data ?? [],
-        styles: st.data ?? [],
-        materials: mt.data ?? [],
-        colors: co.data ?? [],
-        regions: rg.data ?? [],
+        itemTypes: tax.itemTypes,
+        itemSubtypes: tax.itemSubtypes ?? [],
+        itemTypeRooms: tax.itemTypeRooms ?? [],
+        rooms: tax.rooms ?? [],
+        styles: tax.styles ?? [],
+        materials: tax.materials ?? [],
+        colors: tax.colors ?? [],
+        regions: tax.regions ?? [],
       };
     },
     // v7 — Mig 0026 standardized 14 ms label strings (audit-driven
@@ -119,7 +102,10 @@ export async function loadTaxonomy(): Promise<Taxonomy> {
     //
     // v5 — mig 0020 added rooms.cover_url. Same reasoning: stale v4
     // payloads would render every room with the typographic fallback.
-    ["taxonomy-v7"],
+    // v8 — switched the fetch from 8 parallel queries to the single
+    // get_taxonomy() RPC (mig 0049). Same payload shape; bumped to force
+    // a clean first fetch through the new path post-deploy.
+    ["taxonomy-v8"],
     { tags: [TAG], revalidate: 300 },
   )();
 }

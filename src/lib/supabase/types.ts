@@ -927,6 +927,12 @@ export type Database = {
         };
         Returns: { usage_id: string; cost_usd: number }[];
       };
+      // mig 0049 — whole taxonomy in one JSON payload. Cast the result to
+      // `Taxonomy` at the call site (loadTaxonomy).
+      get_taxonomy: {
+        Args: Record<string, never>;
+        Returns: unknown;
+      };
     };
     Enums: Record<string, never>;
   };
