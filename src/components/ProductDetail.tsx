@@ -66,11 +66,30 @@ export default function ProductDetail({
   // type: "conjunction" picks the right separator per locale; "unit"
   // would emit just spaces (it's for "5 ft 3 in" patterns).
   const listFormatter = new Intl.ListFormat(locale, { style: "narrow", type: "conjunction" });
-  const [variantIndex, setVariantIndex] = useState(0);
-  const active = colors[variantIndex];
+  // Color preview is OPT-IN. Default (null) shows the product exactly as
+  // uploaded — the GLB's real materials and the original images. Only a
+  // deliberate swatch click recolors the 3D model. Previously this
+  // defaulted to index 0, which silently repainted the model to the
+  // product's first color tag on load — a product tagged "black" rendered
+  // as a flat-black model before the visitor touched anything.
+  const [variantIndex, setVariantIndex] = useState<number | null>(null);
+  const active = variantIndex == null ? null : colors[variantIndex];
   const overrideColorHex = active?.hex ?? null;
   const glbDownload = buildGlbDownload(product);
   const fbxDownload = buildFbxDownload(product);
+
+  // Wave: AR true-size. When the product has real dimensions, point the
+  // viewer at /api/ar-glb/<id>, which bakes dimensions_mm into the GLB so
+  // Android scene-viewer / iOS quick-look (which ignore <model-viewer>'s
+  // runtime `scale`) place it at true size. No dims → the plain gallery
+  // GLB (the route also 302s back to it on any failure). realDimensionsMm
+  // is still forwarded so the inline view self-corrects if the route
+  // falls back.
+  const galleryGlbUrl = glbUrlForGallery(product);
+  const modelSrc =
+    galleryGlbUrl && product.dimensions_mm
+      ? `/api/ar-glb/${product.id}?v=${galleryGlbUrl.match(/[?&]v=([^&]+)/)?.[1] ?? "1"}`
+      : galleryGlbUrl;
 
   return (
     <div className="grid gap-8 md:grid-cols-[1.2fr_1fr]">
@@ -83,7 +102,7 @@ export default function ProductDetail({
         // styled-thumbnail slide. Other consumers of product.glb_url
         // (e.g. the Download .glb button below) still see the real
         // URL — only the in-page 3D viewer is gated.
-        glbUrl={glbUrlForGallery(product)}
+        glbUrl={modelSrc}
         galleryUrls={galleryUrls}
         primaryThumbnailUrl={product.thumbnail_url}
         overrideColorHex={overrideColorHex}
@@ -131,7 +150,7 @@ export default function ProductDetail({
         {colors.length > 0 && (
           <ColorSwitcher
             colors={colors}
-            activeIndex={variantIndex}
+            activeIndex={variantIndex ?? -1}
             onChange={setVariantIndex}
           />
         )}

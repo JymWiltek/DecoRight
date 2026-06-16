@@ -20,6 +20,7 @@ export const dynamic = "force-dynamic";
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const TRIM_THRESHOLD = 11; // tolerate JPEG speckle in white borders
+const WHITE_TRIM_THRESHOLD = 22; // 2nd pass: explicit white, a touch more tolerant
 
 export async function GET(
   _req: NextRequest,
@@ -49,20 +50,40 @@ export async function GET(
     return NextResponse.redirect(src, 302);
   }
 
-  // Trim uniform (white) borders. No-op on photographic edges. Preserve
-  // the source format so transparent cutouts stay transparent.
+  // Trim uniform borders so the product fills the masonry tile.
+  //   Pass 1 — trim against the TOP-LEFT pixel (sharp's default). Handles
+  //            any uniform border colour: white spec sheets, white scene
+  //            cutouts, black-flattened cutouts, etc.
+  //   Pass 2 — opaque images only: explicitly trim a WHITE border that
+  //            pass 1 missed. This is the "product offset to a corner"
+  //            case: when the product touches the top-left, pass 1's
+  //            reference pixel IS the product, so it leaves the white on
+  //            the other three sides. Real scene photos have non-white
+  //            edges, so pass 2 is a no-op on them.
+  // Transparent cutouts (alpha/PNG) skip pass 2 — a white pass could
+  // nibble a white-silhouette product; pass 1 is alpha-aware and enough.
   let out: Buffer;
   let contentType = "image/jpeg";
   try {
     const meta = await sharp(bytes).metadata();
-    const pipeline = sharp(bytes, { failOn: "none" }).trim({
-      threshold: TRIM_THRESHOLD,
-    });
-    if (meta.hasAlpha || meta.format === "png") {
-      out = await pipeline.png({ compressionLevel: 9 }).toBuffer();
+    const isAlpha = Boolean(meta.hasAlpha) || meta.format === "png";
+    let work = await sharp(bytes, { failOn: "none" })
+      .trim({ threshold: TRIM_THRESHOLD })
+      .toBuffer();
+    if (!isAlpha) {
+      try {
+        work = await sharp(work)
+          .trim({ background: "#ffffff", threshold: WHITE_TRIM_THRESHOLD })
+          .toBuffer();
+      } catch {
+        // sharp.trim throws if the image is uniformly white — keep pass 1.
+      }
+    }
+    if (isAlpha) {
+      out = await sharp(work).png({ compressionLevel: 9 }).toBuffer();
       contentType = "image/png";
     } else {
-      out = await pipeline.jpeg({ quality: 82 }).toBuffer();
+      out = await sharp(work).jpeg({ quality: 82 }).toBuffer();
       contentType = "image/jpeg";
     }
   } catch {
