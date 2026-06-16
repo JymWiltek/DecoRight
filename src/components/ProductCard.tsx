@@ -83,6 +83,9 @@ export default function ProductCard({
         className={`relative w-full overflow-hidden bg-neutral-100 ${
           masonry ? "" : "aspect-[3/4]"
         }`}
+        // Masonry: make this the container-query container so the image's
+        // max-height can be expressed relative to the card WIDTH (cqw).
+        style={masonry ? { containerType: "inline-size" } : undefined}
       >
         {product.thumbnail_url ? (
           // eslint-disable-next-line @next/next/no-img-element
@@ -97,7 +100,13 @@ export default function ProductCard({
             fetchPriority={priority ? "high" : "auto"}
             className={
               masonry
-                ? "block w-full h-auto transition duration-300 group-hover:opacity-95"
+                ? // Natural aspect ratio, but capped at 2:3 (height ≤ 1.5×
+                  // width = 150cqw) so runaway-tall images (e.g. a 1:4
+                  // faucet) don't hog a column. Wide/square/normal-tall
+                  // images stay under the cap → h-auto wins, object-cover
+                  // is a no-op. Only over-tall images hit max-h and get
+                  // center-cropped.
+                  "block h-auto max-h-[150cqw] w-full object-cover object-center transition duration-300 group-hover:opacity-95"
                 : "h-full w-full object-cover transition duration-300 group-hover:scale-[1.03]"
             }
           />
