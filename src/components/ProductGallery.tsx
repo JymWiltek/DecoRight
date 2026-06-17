@@ -60,6 +60,9 @@ type Props = {
     width?: number;
     height?: number;
   } | null;
+  /** Reports the loaded model's material count up to ProductDetail so it
+   *  can hide the colour switcher for single-/merged-material models. */
+  onMaterialCount?: (n: number) => void;
   /** Fallback caption shown when nothing can be displayed at all. */
   emptyLabel: string;
 };
@@ -71,6 +74,7 @@ export default function ProductGallery({
   primaryThumbnailUrl,
   overrideColorHex,
   realDimensionsMm,
+  onMaterialCount,
   emptyLabel,
 }: Props) {
   const t = useTranslations("product");
@@ -123,6 +127,7 @@ export default function ProductGallery({
               poster={current.poster}
               overrideColorHex={overrideColorHex}
               realDimensionsMm={realDimensionsMm}
+              onMaterialCount={onMaterialCount}
             />
           </ModelViewerErrorBoundary>
         )}

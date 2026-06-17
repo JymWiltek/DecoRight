@@ -86,10 +86,22 @@ export default function ProductDetail({
   // is still forwarded so the inline view self-corrects if the route
   // falls back.
   const galleryGlbUrl = glbUrlForGallery(product);
+  // Cache-bust the AR GLB on BOTH the model file version and the dimensions:
+  // editing dimensions_mm must invalidate the immutable-cached scaled GLB,
+  // or AR keeps the old size.
+  const dimsSig = product.dimensions_mm
+    ? `${product.dimensions_mm.length ?? 0}x${product.dimensions_mm.width ?? 0}x${product.dimensions_mm.height ?? 0}`
+    : "0";
   const modelSrc =
     galleryGlbUrl && product.dimensions_mm
-      ? `/api/ar-glb/${product.id}?v=${galleryGlbUrl.match(/[?&]v=([^&]+)/)?.[1] ?? "1"}`
+      ? `/api/ar-glb/${product.id}?v=${galleryGlbUrl.match(/[?&]v=([^&]+)/)?.[1] ?? "1"}-${dimsSig}`
       : galleryGlbUrl;
+
+  // Colour swatches only make sense for models with separable materials.
+  // ModelViewer reports the material count once the GLB loads; until then
+  // (and for single-material / no-3D products) the switcher stays hidden,
+  // so we never show a swatch that does nothing.
+  const [modelMaterialCount, setModelMaterialCount] = useState<number | null>(null);
 
   return (
     <div className="grid gap-8 md:grid-cols-[1.2fr_1fr]">
@@ -112,6 +124,7 @@ export default function ProductDetail({
         // ModelViewer falls back to intrinsic scale (the model's
         // own bbox in meters).
         realDimensionsMm={product.dimensions_mm ?? null}
+        onMaterialCount={setModelMaterialCount}
         emptyLabel={t("noImages")}
       />
 
@@ -147,7 +160,7 @@ export default function ProductDetail({
             )}
         </div>
 
-        {colors.length > 0 && (
+        {colors.length > 0 && (modelMaterialCount ?? 0) > 1 && (
           <ColorSwitcher
             colors={colors}
             activeIndex={variantIndex ?? -1}

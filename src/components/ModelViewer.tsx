@@ -41,6 +41,10 @@ type Props = {
     width?: number;
     height?: number;
   } | null;
+  /** Called once the GLB loads with its material count, so the parent can
+   *  hide colour controls for single-/merged-material models that can't be
+   *  recoloured part-wise. */
+  onMaterialCount?: (n: number) => void;
 };
 
 function hexToRgba(hex: string): [number, number, number, number] {
@@ -58,9 +62,15 @@ export default function ModelViewer({
   poster,
   overrideColorHex,
   realDimensionsMm,
+  onMaterialCount,
 }: Props) {
   const ref = useRef<ModelViewerElement | null>(null);
   const loadedRef = useRef(false);
+  // Keep the latest callback in a ref so the load effect doesn't need it in
+  // its dep array (avoids re-running the whole effect when the parent
+  // re-renders with a new function identity).
+  const onMaterialCountRef = useRef(onMaterialCount);
+  onMaterialCountRef.current = onMaterialCount;
 
   // Serialize realDimensionsMm so the useEffect dep array can
   // statically compare its identity. Avoids the
@@ -79,6 +89,7 @@ export default function ModelViewer({
     const onLoad = () => {
       if (cancelled) return;
       loadedRef.current = true;
+      onMaterialCountRef.current?.(el.model?.materials?.length ?? 0);
       applyRealScale();
       applyColor();
     };
@@ -132,6 +143,7 @@ export default function ModelViewer({
     };
     el.addEventListener("load", onLoad);
     if (loadedRef.current) {
+      onMaterialCountRef.current?.(el.model?.materials?.length ?? 0);
       applyRealScale();
       applyColor();
     }
