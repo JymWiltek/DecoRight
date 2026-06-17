@@ -116,6 +116,14 @@ export default function ModelViewer({
       if (!overrideColorHex) return;
       const mats = el.model?.materials;
       if (!mats || mats.length === 0) return;
+      // Single-/merged-material models (every Tripo/Meshy export so far is
+      // ONE mesh + ONE material + ONE baked texture covering the whole
+      // product) CANNOT be recoloured part-wise: setBaseColorFactor
+      // multiplies the entire texture, so tinting the cabinet would also
+      // paint the white basin/mirror. Only recolour when the model has
+      // separable materials — otherwise leave the product as authored
+      // rather than wrongly painting the whole thing one colour.
+      if (mats.length <= 1) return;
       try {
         mats[0].pbrMetallicRoughness.setBaseColorFactor(hexToRgba(overrideColorHex));
       } catch (e) {
