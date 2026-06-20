@@ -173,17 +173,22 @@ export default async function Home() {
             <h2 className="mb-4 text-xl font-semibold text-neutral-900">
               {tHome("latestAdditions")}
             </h2>
-            <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+            {/* Masonry — same as the /c listing: natural aspect ratio
+                (capped at 2:3), white borders trimmed by /api/card-image,
+                max 4 columns. */}
+            <div className="columns-2 gap-4 sm:columns-3 lg:columns-4">
               {latest.map((p, i) => (
-                <ProductCard
-                  key={p.id}
-                  product={p}
-                  priority={i < 4}
-                  itemTypeLabels={itemTypeLabels}
-                  styleLabels={styleLabels}
-                  subtypeLabels={subtypeLabels}
-                  colorHex={colorHex}
-                />
+                <div key={p.id} className="mb-4 break-inside-avoid">
+                  <ProductCard
+                    product={p}
+                    masonry
+                    priority={i < 4}
+                    itemTypeLabels={itemTypeLabels}
+                    styleLabels={styleLabels}
+                    subtypeLabels={subtypeLabels}
+                    colorHex={colorHex}
+                  />
+                </div>
               ))}
             </div>
           </section>
