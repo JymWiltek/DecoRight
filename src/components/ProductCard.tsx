@@ -90,24 +90,22 @@ export default function ProductCard({
         {product.thumbnail_url ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
-            src={
-              masonry
-                ? `/api/card-image/${product.id}?v=${thumbVersion(product.thumbnail_url)}`
-                : product.thumbnail_url
-            }
+            // Always the compressed list thumbnail (600 px WebP via the
+            // card-image route) — never the ~2 MB stored original. The
+            // product page loads the full image separately.
+            src={`/api/card-image/${product.id}?v=${thumbVersion(product.thumbnail_url)}`}
             alt={product.name}
             loading={priority ? "eager" : "lazy"}
             fetchPriority={priority ? "high" : "auto"}
             className={
+              // GLOBAL rule: object-contain + centered → the whole product
+              // is always visible, never cropped / head-cut, whatever the
+              // aspect ratio. The neutral container bg letterboxes off-ratio
+              // images. Masonry still caps runaway-tall covers at 2:3
+              // (max-h-[150cqw]) but now letterboxes instead of cropping.
               masonry
-                ? // Natural aspect ratio, but capped at 2:3 (height ≤ 1.5×
-                  // width = 150cqw) so runaway-tall images (e.g. a 1:4
-                  // faucet) don't hog a column. Wide/square/normal-tall
-                  // images stay under the cap → h-auto wins, object-cover
-                  // is a no-op. Only over-tall images hit max-h and get
-                  // center-cropped.
-                  "block h-auto max-h-[150cqw] w-full object-cover object-center transition duration-300 group-hover:opacity-95"
-                : "h-full w-full object-cover transition duration-300 group-hover:scale-[1.03]"
+                ? "block h-auto max-h-[150cqw] w-full object-contain object-center transition duration-300 group-hover:opacity-95"
+                : "h-full w-full object-contain object-center transition duration-300 group-hover:scale-[1.03]"
             }
           />
         ) : (

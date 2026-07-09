@@ -63,7 +63,7 @@ export async function GET(
   // Transparent cutouts (alpha/PNG) skip pass 2 — a white pass could
   // nibble a white-silhouette product; pass 1 is alpha-aware and enough.
   let out: Buffer;
-  let contentType = "image/jpeg";
+  const contentType = "image/webp";
   try {
     const meta = await sharp(bytes).metadata();
     const isAlpha = Boolean(meta.hasAlpha) || meta.format === "png";
@@ -79,13 +79,16 @@ export async function GET(
         // sharp.trim throws if the image is uniformly white — keep pass 1.
       }
     }
-    if (isAlpha) {
-      out = await sharp(work).png({ compressionLevel: 9 }).toBuffer();
-      contentType = "image/png";
-    } else {
-      out = await sharp(work).jpeg({ quality: 82 }).toBuffer();
-      contentType = "image/jpeg";
-    }
+    // LIST thumbnail: resize to the card's display width and emit WebP.
+    // The stored covers are ~2 MB PNGs (AI scenes); serving those in the
+    // masonry grid was the load-time killer. 600 px is retina-crisp for a
+    // ~300 px card, and WebP q78 lands ~20 KB (~100× smaller) while still
+    // carrying alpha for transparent cutouts. The full-size original is
+    // untouched in storage and still loaded on the product page.
+    out = await sharp(work)
+      .resize({ width: 600, withoutEnlargement: true })
+      .webp({ quality: 78 })
+      .toBuffer();
   } catch {
     // sharp couldn't process it — serve the original untouched.
     return NextResponse.redirect(src, 302);
