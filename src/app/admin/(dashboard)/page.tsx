@@ -21,6 +21,7 @@ import SelectAllCheckbox from "@/components/admin/SelectAllCheckbox";
 import RetryRembgInlineButton from "@/components/admin/RetryRembgInlineButton";
 import ThumbnailSwapButton from "@/components/admin/ThumbnailSwapButton";
 import PublishButton from "@/components/admin/PublishButton";
+import CategoryProgress from "@/components/admin/CategoryProgress";
 
 // Wave 6 · Commit 2 — "AI completeness" column on the admin list.
 //
@@ -443,6 +444,10 @@ export default async function AdminProductsPage({
         </div>
       </div>
 
+      {/* Task 1 — category upload-progress overview. Clickable cards filter
+          the table below by ?type=<slug>. */}
+      <CategoryProgress />
+
       {/* Toasts for bulk action results */}
       {(sp.bulk || sp.bulk_deleted || sp.deleted || sp.err) && (() => {
         // Wave 2B · Commit 9: split logic so partial-success bulks
@@ -586,6 +591,7 @@ export default async function AdminProductsPage({
                   />
                 </th>
                 <th className="px-4 py-3">3D</th>
+                <th className="px-4 py-3">场景</th>
                 <th className="px-4 py-3">AI</th>
                 <th className="px-4 py-3">Missing</th>
                 <th className="px-4 py-3">3D / Imgs</th>
@@ -639,12 +645,16 @@ export default async function AdminProductsPage({
                       </div>
                     </td>
                     <td className="px-4 py-3 align-middle text-xs">
-                      {p.sku_id ? (
+                      {p.sku_id && p.sku_id.trim() ? (
                         <span className="font-mono text-neutral-700">
                           {p.sku_id}
                         </span>
                       ) : (
-                        <span className="text-neutral-400">—</span>
+                        // Task 3 — highlight missing SKU so the operator can
+                        // scan a long list for rows to back-fill.
+                        <span className="inline-flex items-center rounded bg-amber-100 px-1.5 py-0.5 font-medium text-amber-800">
+                          缺 SKU
+                        </span>
                       )}
                     </td>
                     <td className="px-4 py-3 align-middle text-xs">
@@ -693,6 +703,17 @@ export default async function AdminProductsPage({
                         </span>
                       ) : (
                         <span title="No GLB" aria-label="No 3D model">
+                          ❌
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 align-middle text-center text-sm">
+                      {(p.thumbnail_url ?? "").includes("/scene-") ? (
+                        <span title="Has scene cover" aria-label="Scene image present">
+                          ✅
+                        </span>
+                      ) : (
+                        <span title="No scene cover" aria-label="No scene image">
                           ❌
                         </span>
                       )}
@@ -839,7 +860,7 @@ export default async function AdminProductsPage({
               {products.length === 0 && (
                 <tr>
                   <td
-                    colSpan={15}
+                    colSpan={16}
                     className="px-4 py-12 text-center text-sm text-neutral-500"
                   >
                     {sp.q || statusFilter ? (

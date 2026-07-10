@@ -238,3 +238,47 @@ export async function getProductRembgUsage(
 
   return { productSpentUsd, productAttempts, perImage };
 }
+
+export type CategoryProgressRow = {
+  /** item_type slug, or ITEM_TYPE_NONE for rows with no item_type. */
+  slug: string;
+  published: number;
+  draft: number;
+  total: number;
+  with3d: number;
+  withScene: number;
+};
+
+/**
+ * Per-item_type upload-progress rollup for the admin home overview:
+ * published vs draft counts + 3D / scene-cover coverage, across the WHOLE
+ * catalog (independent of the filtered list below it). One lightweight
+ * select. Sorted by total desc so the biggest categories lead. Scene = the
+ * thumbnail is an AI /scene- cover (the cheap queryable proxy).
+ */
+export async function getCategoryProgress(): Promise<CategoryProgressRow[]> {
+  const supabase = createServiceRoleClient();
+  const { data } = await supabase
+    .from("products")
+    .select("item_type,status,glb_url,glb_compressed_url,thumbnail_url");
+  const map = new Map<string, CategoryProgressRow>();
+  for (const p of data ?? []) {
+    const slug = p.item_type ?? ITEM_TYPE_NONE;
+    const row =
+      map.get(slug) ??
+      map
+        .set(slug, { slug, published: 0, draft: 0, total: 0, with3d: 0, withScene: 0 })
+        .get(slug)!;
+    row.total++;
+    if (p.status === "published") row.published++;
+    else if (p.status === "draft") row.draft++;
+    if (p.glb_url || p.glb_compressed_url) row.with3d++;
+    if ((p.thumbnail_url ?? "").includes("/scene-")) row.withScene++;
+  }
+  return [...map.values()].sort((a, b) => {
+    // Keep the "(untyped)" bucket last — real categories lead the panel.
+    if (a.slug === ITEM_TYPE_NONE) return 1;
+    if (b.slug === ITEM_TYPE_NONE) return -1;
+    return b.total - a.total;
+  });
+}

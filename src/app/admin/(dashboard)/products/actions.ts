@@ -14,6 +14,7 @@ import {
   copyRawToCutouts,
 } from "@/lib/storage";
 import { dispatchGlbCompression } from "@/lib/glb-compression-dispatch";
+import { dispatchSceneCover } from "@/lib/scene-cover-dispatch";
 import { dispatchFbxBundle } from "@/lib/fbx-bundle-dispatch";
 import { validateFbxZipContainsFbx } from "@/lib/fbx-bundle";
 import { inferProductFields } from "@/lib/ai/infer";
@@ -450,12 +451,12 @@ async function attachStagedRawImages(
       .update({ thumbnail_url: newPrimaryThumbUrl })
       .eq("id", productId);
     if (thumbErr) return { ok: false, error: thumbErr.message };
-    // Wave 13: auto scene-cover generation is PAUSED — it shares the OpenAI
-    // budget with the product AI auto-fill (processDraftAsync/GPT-4o), and a
-    // one-off cover re-run exhausted the quota. Keep it off so restored
-    // credit goes to auto-fill first. Re-enable by restoring the
-    // `after(() => dispatchSceneCover(productId))` dispatch (see git history)
-    // — ideally after moving cover backgrounds to a cached pool (~0 OpenAI).
+    // Wave 13: a white-bg cutout just became the card image → auto-generate
+    // a scene cover (rembg → empty room → composite). Fire-and-forget; the
+    // route's guards skip non-white-bg / already-scened products, so this is
+    // safe to fire on every new primary. Never blocks the operator's save.
+    // (Shares the OpenAI budget with the GPT-4o auto-fill — watch the balance.)
+    after(() => dispatchSceneCover(productId));
   }
 
   return { ok: true, ids };
