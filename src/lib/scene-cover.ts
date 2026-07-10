@@ -67,30 +67,79 @@ function profileFor(itemType: string | null, name: string): Profile {
   return prof;
 }
 
-function toneFor(colors: string[], name: string): "luxury" | "grey" | "bright" {
-  const t = colors.join(" ") + " " + name;
-  if (/gold|rose|brass/i.test(t)) return "luxury";
-  if (/black|dark|gun ?metal/i.test(t)) return "grey";
-  return "bright";
+type Tone = "warm" | "cool" | "luxury" | "neutral";
+
+/**
+ * Tone bucket by PRIMARY colour/material (colors[0] + name). Also a fidelity
+ * guard: a warm scene around a dark/metal/colour product makes its colour
+ * read muddy by contrast, so those get cool / neutral backgrounds instead.
+ * A minor accent (e.g. a chrome tap on a white basin) must not flip the tone,
+ * hence primary-colour-only.
+ */
+function classify(colors: string[], name: string): Tone {
+  const primary = (colors[0] ?? "").toLowerCase();
+  const t = (primary + " " + name).toLowerCase();
+  if (/blue|green|purple|violet|teal|pink|magenta|\bred\b|amber|turquoise|aqua|lilac|coral/.test(t))
+    return "neutral";
+  if (/gold|rose gold|\brose\b|brass|champagne|bronze/.test(t)) return "luxury";
+  if (/black|dark|grey|gray|gunmetal|gun metal|graphite|charcoal|chrome|stainless|steel|nickel|silver/.test(t))
+    return "cool";
+  return "warm";
 }
 
-function scenePrompt(prof: Profile, tone: string): string {
-  const pal =
-    tone === "luxury"
-      ? "warm luxury, dark marble and subtle brass accents, moody soft lighting"
-      : tone === "grey"
-        ? "grey-toned modern, matte grey stone and concrete, soft diffused daylight"
-        : "bright Scandinavian, warm white and light wood, large soft window light";
+// 3 palette variants per tone so same-tone products don't look identical.
+const PALETTES: Record<Tone, string[]> = {
+  warm: [
+    "bright Scandinavian, warm white walls and light oak wood, large soft window light",
+    "warm Japandi, cream limewash walls and pale timber, gentle morning sunlight",
+    "soft minimalist, beige plaster walls and light travertine, diffused warm daylight",
+  ],
+  cool: [
+    "cool modern, matte grey stone and concrete walls, crisp cool-white daylight",
+    "contemporary greyscale, charcoal microcement walls, soft cool north light",
+    "minimalist cool, pale grey tile and brushed concrete, clean neutral cool lighting",
+  ],
+  luxury: [
+    "dark luxury, deep charcoal marble walls with warm brass accents, moody low light",
+    "opulent dark, near-black stone and walnut with soft gold uplight, dramatic warm glow",
+    "boutique-hotel luxe, dark green-black marble with brushed gold trim, warm pooled light",
+  ],
+  neutral: [
+    "clean neutral gallery-like interior, soft light-grey walls, even shadowless daylight, uncluttered",
+    "minimal studio-like space, off-white walls and pale grey floor, bright even neutral light",
+    "airy neutral, white plaster walls and light grey stone, soft cool-neutral daylight",
+  ],
+};
+const SURFACE: Record<Tone, string> = {
+  warm: "light stone",
+  cool: "grey stone",
+  luxury: "dark marble",
+  neutral: "pale grey stone",
+};
+
+/** Stable per-product variant pick so a tone bucket isn't visually uniform. */
+function pickVariant(seed: string, arr: string[]): string {
+  let h = 0;
+  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0;
+  return arr[h % arr.length];
+}
+
+function scenePrompt(prof: Profile, tone: Tone, seed: string): string {
+  const pal = pickVariant(seed, PALETTES[tone]);
   const base = `An empty ${pal} ${prof.room} interior, photorealistic, minimal decor, realistic soft shadows, clean composition.`;
+  const vanity =
+    tone === "neutral"
+      ? "a simple light-grey vanity and a plant"
+      : prof.room === "living room"
+        ? "a console and plant"
+        : "a light-wood vanity with a white basin and a plant";
   if (prof.surf === "wall") {
-    return `${base} A large clean tiled wall fills the left and center — completely BARE, NO shower NO taps NO fixtures NO pipes on it. On the right a ${prof.room === "living room" ? "console and plant" : "light-wood vanity with a white basin and a plant"}, and a soft-curtained window.`;
+    return `${base} A large clean tiled wall fills the left and center — completely BARE, NO shower NO taps NO fixtures NO pipes on it. On the right ${vanity}, and a soft-curtained window.`;
   }
   if (prof.surf === "counter") {
-    const surface =
-      tone === "luxury" ? "dark marble" : tone === "grey" ? "grey stone" : "light stone";
-    return `${base} A clean ${surface} counter-top fills the ENTIRE LOWER HALF of the frame as a broad flat surface seen slightly from above, completely BARE — absolutely NO basin, NO sink, NO tap, NO objects on it. A tiled wall rises behind with soft daylight, a potted plant and folded towels off to one side.`;
+    return `${base} A clean ${SURFACE[tone]} counter-top fills the ENTIRE LOWER HALF of the frame as a broad flat surface seen slightly from above, completely BARE — absolutely NO basin, NO sink, NO tap, NO objects on it. A wall rises behind with soft daylight, a potted plant and folded towels off to one side.`;
   }
-  return `${base} A tiled wall and ${prof.room === "living room" ? "wood floor" : "tiled floor"} meet in the lower quarter, the floor is BARE and open — NO ${prof.room === "living room" ? "sofa NO furniture" : "toilet NO bathtub NO fixtures"} anywhere. A window with soft daylight, a plant to one side.`;
+  return `${base} A wall and ${prof.room === "living room" ? "wood floor" : "tiled floor"} meet in the lower quarter, the floor is BARE and open — NO ${prof.room === "living room" ? "sofa NO furniture" : "toilet NO bathtub NO fixtures"} anywhere. A window with soft daylight, a plant to one side.`;
 }
 
 /** Ask gpt-image-1 for an empty room (text-to-image; product never shown). */
@@ -156,9 +205,10 @@ export async function buildSceneCoverPng(
   itemType: string | null,
   colors: string[],
   name: string,
+  seed: string,
 ): Promise<Buffer> {
   const prof = profileFor(itemType, name);
-  const tone = toneFor(colors, name);
+  const tone = classify(colors, name);
   const prod = await sharp(Buffer.from(cutoutBytes))
     .trim({ threshold: 6 })
     .resize(Math.round(CW * prof.wBox), Math.round(CH * prof.hBox), { fit: "inside" })
@@ -182,7 +232,7 @@ export async function buildSceneCoverPng(
     .png()
     .toBuffer();
 
-  const scene = await genEmptyScene(scenePrompt(prof, tone));
+  const scene = await genEmptyScene(scenePrompt(prof, tone, seed));
   let base = sharp(scene);
   if (prof.surf !== "wall") {
     // tight contact shadow hugging the base → grounds it, kills "floating".
@@ -277,6 +327,7 @@ export async function maybeGenerateSceneCover(
     product.item_type,
     product.colors ?? [],
     product.name,
+    productId,
   );
 
   // Upload to the public cutouts bucket under the scene path convention.
