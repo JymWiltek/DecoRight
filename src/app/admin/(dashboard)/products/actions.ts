@@ -2678,7 +2678,7 @@ async function loadTaxonomyHints(): Promise<TaxonomyHints> {
  *  missing_fields is populated.
  *
  *  Errors log + return — they don't propagate. */
-async function processDraftAsync(d: BulkCreateDraft): Promise<void> {
+export async function processDraftAsync(d: BulkCreateDraft): Promise<void> {
   const supabase = createServiceRoleClient();
 
   // ── V2 input URL resolution (raw signed URLs, no cutout wait) ──
