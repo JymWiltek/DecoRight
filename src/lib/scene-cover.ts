@@ -2,80 +2,33 @@ import "server-only";
 
 import sharp from "sharp";
 import { createServiceRoleClient } from "@/lib/supabase/service";
-import { getDefaultProvider } from "@/lib/rembg";
 
 /**
- * Scene-cover engine (Wave 13) — "empty scene + composite original".
+ * Scene-cover engine (Wave 13, Mode A) — WHOLE-IMAGE generation.
  *
- * The fidelity contract: the product is NEVER redrawn by AI. We
- *   1. get a transparent product cutout (rembg the white-bg upload),
- *   2. ask gpt-image-1 for an EMPTY room only (it never sees the product,
- *      so it cannot ghost/duplicate/alter it),
- *   3. composite the exact cutout pixels onto that background + a soft
- *      contact shadow.
- * Fidelity is structural, not reviewed after the fact.
+ * HARD RULE (Jym, permanent): the product is drawn INTO the scene by
+ * gpt-image-1 (images.edit, no mask), so it genuinely sits on the
+ * counter/floor with integrated perspective, shadow and lighting. The old
+ * "empty scene + composite the cutout on top" method is DELETED — it made
+ * floating ghost images (hovering product + fake ellipse shadow), worse than
+ * a plain white background. Never reintroduce compositing here.
  *
- * Used by the auto-trigger (/api/admin/scene-cover, fired from
- * attachStagedRawImages via after()) and could back a manual button.
+ * Fidelity is enforced by a hard prompt constraint ("keep the product 100%
+ * identical"). A cover that drifts is re-run individually — that is
+ * acceptable; ghost images are not.
  *
- * Stateless idempotency: "already has a scene cover" == the thumbnail is a
- * /scene- URL OR a real_photo scene row exists. No status column needed;
- * a failure just leaves the white-bg thumbnail untouched and is retried on
- * the next upload.
+ * Tone routing by primary colour/material stays (warm / cool / luxury /
+ * neutral) — a fidelity aid too: a warm scene around a dark/colour product
+ * skews how its colour reads.
+ *
+ * Stateless idempotency: "already scened" == thumbnail is a /scene- URL.
  */
 
 const CW = 1024;
 const CH = 1536;
 
-type Profile = {
-  surf: "wall" | "counter" | "floor";
-  room: string;
-  wBox: number;
-  hBox: number;
-  baseY?: number;
-  leftFrac?: number;
-};
-
-// Placement + scene profile per item_type. baseY = fraction of CH where the
-// product BOTTOM rests; wall items float (no floor shadow). Tuned against the
-// Wave-13 backfill batch (round/most basins seat cleanly on the counter).
-const PROFILE: Record<string, Profile> = {
-  shower: { surf: "wall", room: "bathroom", wBox: 0.42, hBox: 0.82, leftFrac: 0.2 },
-  showerhead: { surf: "wall", room: "bathroom", wBox: 0.4, hBox: 0.55, leftFrac: 0.24 },
-  faucet: { surf: "counter", room: "bathroom", wBox: 0.3, hBox: 0.52, baseY: 0.72 },
-  basin: { surf: "counter", room: "bathroom", wBox: 0.5, hBox: 0.4, baseY: 0.63 },
-  sink: { surf: "counter", room: "bathroom", wBox: 0.5, hBox: 0.4, baseY: 0.63 },
-  toilet: { surf: "floor", room: "bathroom", wBox: 0.52, hBox: 0.62, baseY: 0.88 },
-  bathtub: { surf: "floor", room: "bathroom", wBox: 0.82, hBox: 0.55, baseY: 0.86 },
-  sofa: { surf: "floor", room: "living room", wBox: 0.82, hBox: 0.55, baseY: 0.86 },
-};
-const DEFAULT_PROFILE: Profile = {
-  surf: "floor",
-  room: "bathroom",
-  wBox: 0.6,
-  hBox: 0.6,
-  baseY: 0.86,
-};
-
-function profileFor(itemType: string | null, name: string): Profile {
-  let prof = (itemType && PROFILE[itemType]) || DEFAULT_PROFILE;
-  // wall-hung / wall-mounted fixtures cantilever off the wall — mount them on
-  // the wall instead of floating over the floor.
-  if (/wall.?hung|wall.?mount|壁挂/i.test(name)) {
-    prof = { ...prof, surf: "wall", leftFrac: 0.26, wBox: 0.5, hBox: 0.5 };
-  }
-  return prof;
-}
-
 type Tone = "warm" | "cool" | "luxury" | "neutral";
 
-/**
- * Tone bucket by PRIMARY colour/material (colors[0] + name). Also a fidelity
- * guard: a warm scene around a dark/metal/colour product makes its colour
- * read muddy by contrast, so those get cool / neutral backgrounds instead.
- * A minor accent (e.g. a chrome tap on a white basin) must not flip the tone,
- * hence primary-colour-only.
- */
 function classify(colors: string[], name: string): Tone {
   const primary = (colors[0] ?? "").toLowerCase();
   const t = (primary + " " + name).toLowerCase();
@@ -87,84 +40,128 @@ function classify(colors: string[], name: string): Tone {
   return "warm";
 }
 
-// 3 palette variants per tone so same-tone products don't look identical.
 const PALETTES: Record<Tone, string[]> = {
   warm: [
-    "bright Scandinavian, warm white walls and light oak wood, large soft window light",
-    "warm Japandi, cream limewash walls and pale timber, gentle morning sunlight",
-    "soft minimalist, beige plaster walls and light travertine, diffused warm daylight",
+    "a bright Scandinavian bathroom with warm white walls, light oak wood and a large soft window",
+    "a warm Japandi bathroom with cream limewash walls, pale timber and gentle morning sunlight",
+    "a soft minimalist bathroom with beige plaster walls, light travertine and diffused warm daylight",
   ],
   cool: [
-    "cool modern, matte grey stone and concrete walls, crisp cool-white daylight",
-    "contemporary greyscale, charcoal microcement walls, soft cool north light",
-    "minimalist cool, pale grey tile and brushed concrete, clean neutral cool lighting",
+    "a cool modern bathroom with matte grey stone and concrete, crisp cool-white daylight",
+    "a contemporary greyscale bathroom with charcoal microcement walls and soft cool north light",
+    "a minimalist cool bathroom with pale grey tile, brushed concrete and clean neutral lighting",
   ],
   luxury: [
-    "dark luxury, deep charcoal marble walls with warm brass accents, moody low light",
-    "opulent dark, near-black stone and walnut with soft gold uplight, dramatic warm glow",
-    "boutique-hotel luxe, dark green-black marble with brushed gold trim, warm pooled light",
+    "a dark luxury bathroom with deep charcoal marble walls, warm brass accents and moody low light",
+    "an opulent dark bathroom in near-black stone and walnut with soft gold uplight",
+    "a boutique-hotel bathroom in dark green-black marble with brushed gold trim and warm pooled light",
   ],
   neutral: [
-    "clean neutral gallery-like interior, soft light-grey walls, even shadowless daylight, uncluttered",
-    "minimal studio-like space, off-white walls and pale grey floor, bright even neutral light",
-    "airy neutral, white plaster walls and light grey stone, soft cool-neutral daylight",
+    "a clean neutral gallery-like bathroom with soft light-grey walls and even shadowless daylight",
+    "a minimal studio-like bathroom with off-white walls, pale grey floor and bright even light",
+    "an airy neutral bathroom with white plaster walls, light grey stone and soft cool-neutral daylight",
   ],
 };
-const SURFACE: Record<Tone, string> = {
-  warm: "light stone",
-  cool: "grey stone",
-  luxury: "dark marble",
-  neutral: "pale grey stone",
+// Living-room palettes for sofas etc. (index-matched to Tone by reuse of hue).
+const LIVING: Record<Tone, string> = {
+  warm: "a bright Scandinavian living room with warm white walls, light oak floor and a large window",
+  cool: "a cool modern living room with grey concrete walls, matte flooring and soft cool daylight",
+  luxury: "a dark luxury living room with charcoal walls, walnut and warm gold accent lighting",
+  neutral: "a clean neutral living room with soft light-grey walls and even daylight",
 };
 
-/** Stable per-product variant pick so a tone bucket isn't visually uniform. */
 function pickVariant(seed: string, arr: string[]): string {
   let h = 0;
   for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0;
   return arr[h % arr.length];
 }
 
-function scenePrompt(prof: Profile, tone: Tone, seed: string): string {
-  const pal = pickVariant(seed, PALETTES[tone]);
-  const base = `An empty ${pal} ${prof.room} interior, photorealistic, minimal decor, realistic soft shadows, clean composition.`;
-  const vanity =
-    tone === "neutral"
-      ? "a simple light-grey vanity and a plant"
-      : prof.room === "living room"
-        ? "a console and plant"
-        : "a light-wood vanity with a white basin and a plant";
-  if (prof.surf === "wall") {
-    return `${base} A large clean tiled wall fills the left and center — completely BARE, NO shower NO taps NO fixtures NO pipes on it. On the right ${vanity}, and a soft-curtained window.`;
-  }
-  if (prof.surf === "counter") {
-    return `${base} A clean ${SURFACE[tone]} counter-top fills the ENTIRE LOWER HALF of the frame as a broad flat surface seen slightly from above, completely BARE — absolutely NO basin, NO sink, NO tap, NO objects on it. A wall rises behind with soft daylight, a potted plant and folded towels off to one side.`;
-  }
-  return `${base} A wall and ${prof.room === "living room" ? "wood floor" : "tiled floor"} meet in the lower quarter, the floor is BARE and open — NO ${prof.room === "living room" ? "sofa NO furniture" : "toilet NO bathtub NO fixtures"} anywhere. A window with soft daylight, a plant to one side.`;
+function isLivingItem(itemType: string | null): boolean {
+  return !!itemType && /sofa|dining_table|dining_chair|bed_frame|cabinet|console/.test(itemType);
 }
 
-/** Ask gpt-image-1 for an empty room (text-to-image; product never shown). */
-async function genEmptyScene(prompt: string): Promise<Buffer> {
+/** Where the product physically belongs — so Mode A grounds it correctly. */
+function surfaceHint(itemType: string | null, name: string): string {
+  if (/wall.?hung|wall.?mount|壁挂/i.test(name)) return "The product is mounted ON the wall.";
+  const it = itemType ?? "";
+  if (/faucet|basin|sink|showerhead/.test(it))
+    return "The product rests fully ON a countertop, sitting on the surface.";
+  if (/shower/.test(it)) return "The product is mounted ON the wall.";
+  if (/toilet|bidet|bathtub/.test(it)) return "The product stands fully ON the floor, grounded.";
+  if (/sofa|bed_frame|cabinet/.test(it)) return "The product rests fully ON the floor.";
+  if (/dining_table|dining_chair/.test(it)) return "The product stands fully ON the floor.";
+  return "The product rests naturally ON the surface, fully grounded — not floating.";
+}
+
+function scenePrompt(itemType: string | null, name: string, tone: Tone, seed: string): string {
+  const scene = isLivingItem(itemType) ? LIVING[tone] : pickVariant(seed, PALETTES[tone]);
+  return (
+    `Place this exact product into ${scene}. ${surfaceHint(itemType, name)} ` +
+    `The product must be genuinely INSTALLED in the scene — sitting/standing/mounted on the surface ` +
+    `with correct perspective, natural contact shadows, and fully integrated lighting and reflections. ` +
+    `It must NOT look pasted-on, floating, hovering, or tilted off the surface. ` +
+    `CRITICAL: keep the product 100% identical — same shape, colour, material, proportions and details; ` +
+    `do NOT redesign, recolour or restyle it. You may add tasteful ambient props (a plant, folded towels, ` +
+    `soap) and clearly-separate companion items, but never attach anything to the product or add anything ` +
+    `that could be mistaken as part of it. Photorealistic, the product is the hero, clean minimal composition.`
+  );
+}
+
+/**
+ * Mode A: put the product on a portrait white canvas, then let gpt-image-1
+ * redraw the WHOLE frame with the product placed into a scene. No mask, no
+ * compositing.
+ */
+export async function buildSceneCoverPng(
+  sourceBytes: Uint8Array,
+  itemType: string | null,
+  colors: string[],
+  name: string,
+  seed: string,
+): Promise<Buffer> {
+  const tone = classify(colors, name);
+  const prod = await sharp(Buffer.from(sourceBytes), { failOn: "none" })
+    .flatten({ background: "#ffffff" })
+    .trim({ threshold: 12 })
+    .resize(Math.round(CW * 0.72), Math.round(CH * 0.62), {
+      fit: "inside",
+      withoutEnlargement: true,
+    })
+    .toBuffer();
+  const pm = await sharp(prod).metadata();
+  const left = Math.round((CW - (pm.width ?? 0)) / 2);
+  const top = Math.round(CH * 0.5 - (pm.height ?? 0) / 2);
+  const base = await sharp({
+    create: { width: CW, height: CH, channels: 3, background: "#ffffff" },
+  })
+    .composite([{ input: prod, left, top }])
+    .png()
+    .toBuffer();
+
+  return gptEditWholeImage(base, scenePrompt(itemType, name, tone, seed));
+}
+
+/** gpt-image-1 images.edit with NO mask — whole-frame regeneration. */
+async function gptEditWholeImage(baseBuf: Buffer, prompt: string): Promise<Buffer> {
   const key = process.env.OPENAI_API_KEY;
   if (!key) throw new Error("OPENAI_API_KEY not configured");
+  const form = new FormData();
+  form.set("model", "gpt-image-1");
+  form.set("image", new Blob([baseBuf as BlobPart], { type: "image/png" }), "b.png");
+  form.set("prompt", prompt);
+  form.set("size", "1024x1536");
+  form.set("quality", "medium");
+  form.set("n", "1");
   const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), 90_000);
+  const t = setTimeout(() => ctrl.abort(), 180_000);
   try {
-    const r = await fetch("https://api.openai.com/v1/images/generations", {
+    const r = await fetch("https://api.openai.com/v1/images/edits", {
       method: "POST",
-      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: "gpt-image-1",
-        prompt,
-        size: "1024x1536",
-        quality: "medium",
-        n: 1,
-      }),
+      headers: { Authorization: `Bearer ${key}` },
+      body: form,
       signal: ctrl.signal,
     });
-    const j = (await r.json()) as {
-      data?: { b64_json?: string }[];
-      error?: unknown;
-    };
+    const j = (await r.json()) as { data?: { b64_json?: string }[]; error?: unknown };
     if (!r.ok) throw new Error(JSON.stringify(j.error ?? j).slice(0, 200));
     const b64 = j.data?.[0]?.b64_json;
     if (!b64) throw new Error("no image returned");
@@ -174,8 +171,8 @@ async function genEmptyScene(prompt: string): Promise<Buffer> {
   }
 }
 
-/** True iff the 4 corners are all light + low-saturation + consistent — a
- *  white/studio product shot, as opposed to an already-styled render. */
+/** True iff the 4 corners are light + low-saturation + consistent — a
+ *  white/studio product shot, not an already-styled render. */
 export async function isWhiteBg(buf: Buffer): Promise<boolean> {
   const { data, info } = await sharp(buf)
     .flatten({ background: "#ffffff" })
@@ -196,85 +193,14 @@ export async function isWhiteBg(buf: Buffer): Promise<boolean> {
   return light && lowSat && consistent;
 }
 
-/**
- * Build the final cover PNG from a TRANSPARENT product cutout. The product
- * pixels are composited verbatim — only the background is AI.
- */
-export async function buildSceneCoverPng(
-  cutoutBytes: Uint8Array,
-  itemType: string | null,
-  colors: string[],
-  name: string,
-  seed: string,
-): Promise<Buffer> {
-  const prof = profileFor(itemType, name);
-  const tone = classify(colors, name);
-  const prod = await sharp(Buffer.from(cutoutBytes))
-    .trim({ threshold: 6 })
-    .resize(Math.round(CW * prof.wBox), Math.round(CH * prof.hBox), { fit: "inside" })
-    .png()
-    .toBuffer();
-  const pm = await sharp(prod).metadata();
-  const pw = pm.width ?? 1;
-  const ph = pm.height ?? 1;
-  const left =
-    prof.surf === "wall"
-      ? Math.round(CW * (prof.leftFrac ?? 0.2))
-      : Math.round((CW - pw) / 2);
-  const top =
-    prof.surf === "wall"
-      ? Math.round((CH - ph) / 2)
-      : Math.round(CH * (prof.baseY ?? 0.86) - ph);
-  const placed = await sharp({
-    create: { width: CW, height: CH, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } },
-  })
-    .composite([{ input: prod, left, top }])
-    .png()
-    .toBuffer();
-
-  const scene = await genEmptyScene(scenePrompt(prof, tone, seed));
-  let base = sharp(scene);
-  if (prof.surf !== "wall") {
-    // tight contact shadow hugging the base → grounds it, kills "floating".
-    const sw = Math.round(pw * 0.86);
-    const sh = Math.round(pw * 0.13);
-    const ell = await sharp({
-      create: { width: sw, height: sh, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } },
-    })
-      .composite([
-        {
-          input: Buffer.from(
-            `<svg width="${sw}" height="${sh}"><ellipse cx="${sw / 2}" cy="${sh / 2}" rx="${sw / 2.2}" ry="${sh / 2.2}" fill="rgba(0,0,0,0.28)"/><ellipse cx="${sw / 2}" cy="${sh / 2}" rx="${sw / 3.4}" ry="${sh / 2.8}" fill="rgba(0,0,0,0.42)"/></svg>`,
-          ),
-        },
-      ])
-      .blur(11)
-      .png()
-      .toBuffer();
-    base = base.composite([
-      {
-        input: ell,
-        left: Math.round(left + pw / 2 - sw / 2),
-        top: Math.round(top + ph - sh * 0.5),
-      },
-      { input: placed, top: 0, left: 0 },
-    ]);
-  } else {
-    base = base.composite([{ input: placed, top: 0, left: 0 }]);
-  }
-  return base.png().toBuffer();
-}
-
 export type SceneCoverResult =
   | { status: "done"; url: string }
   | { status: "skipped"; reason: string };
 
 /**
- * Orchestrator: generate + set a scene cover for one product IF it is a
- * white-bg product with no scene cover yet. Idempotent + safe to re-fire.
- * Throws on generation/upload/db failure (the caller logs; the thumbnail is
- * left untouched, so the product just keeps its white-bg cover and retries
- * on the next upload).
+ * Generate + set a Mode-A scene cover for one product IF it is a white-bg
+ * product shot with no scene cover yet. Idempotent + safe to re-fire; throws
+ * on failure (caller logs; the white-bg thumbnail is left untouched).
  */
 export async function maybeGenerateSceneCover(
   productId: string,
@@ -291,7 +217,6 @@ export async function maybeGenerateSceneCover(
   if (product.thumbnail_url.includes("/scene-"))
     return { status: "skipped", reason: "already a scene cover" };
 
-  // Skip if a scene / operator lifestyle photo already exists.
   const { data: imgs } = await supabase
     .from("product_images")
     .select("id,cutout_image_url,image_kind,is_primary")
@@ -300,7 +225,6 @@ export async function maybeGenerateSceneCover(
   if (rows.some((r) => r.image_kind === "real_photo" && (r.cutout_image_url ?? "").includes("/scene-")))
     return { status: "skipped", reason: "scene row exists" };
 
-  // Source = the primary cutout, else the thumbnail.
   const srcUrl =
     rows.find((r) => r.is_primary && r.cutout_image_url)?.cutout_image_url ??
     rows.find((r) => r.image_kind === "cutout" && r.cutout_image_url)?.cutout_image_url ??
@@ -310,27 +234,14 @@ export async function maybeGenerateSceneCover(
   if (!(await isWhiteBg(srcBytes)))
     return { status: "skipped", reason: "not a white-bg product shot" };
 
-  // Get a transparent cutout: reuse existing alpha, else run rembg.
-  const meta = await sharp(srcBytes).metadata();
-  let cutoutBytes: Uint8Array;
-  if (meta.hasAlpha && (await hasTransparentPixels(srcBytes))) {
-    cutoutBytes = srcBytes;
-  } else {
-    const provider = getDefaultProvider();
-    if (!provider) throw new Error("no rembg provider configured");
-    const result = await provider.run({ sourceUrl: srcUrl, productId });
-    cutoutBytes = result.bytes;
-  }
-
   const cover = await buildSceneCoverPng(
-    cutoutBytes,
+    srcBytes,
     product.item_type,
     product.colors ?? [],
     product.name,
     productId,
   );
 
-  // Upload to the public cutouts bucket under the scene path convention.
   const path = `${productId}/scene-${Date.now()}.png`;
   const { error: upErr } = await supabase.storage
     .from("cutouts")
@@ -348,8 +259,6 @@ export async function maybeGenerateSceneCover(
     .eq("id", productId);
   if (tErr) throw new Error(`thumbnail update: ${tErr.message}`);
 
-  // Add the scene as a storefront gallery row (image_kind='real_photo',
-  // is_primary_thumbnail=false so the unify trigger never touches it).
   await supabase.from("product_images").insert({
     product_id: productId,
     state: "cutout_approved",
@@ -362,16 +271,4 @@ export async function maybeGenerateSceneCover(
   });
 
   return { status: "done", url };
-}
-
-async function hasTransparentPixels(buf: Buffer): Promise<boolean> {
-  const { data, info } = await sharp(buf)
-    .ensureAlpha()
-    .resize(64, 64, { fit: "inside" })
-    .raw()
-    .toBuffer({ resolveWithObject: true });
-  let transp = 0;
-  const n = info.width * info.height;
-  for (let i = 0; i < n; i++) if (data[i * info.channels + 3] < 30) transp++;
-  return transp / n > 0.05;
 }
