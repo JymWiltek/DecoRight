@@ -158,9 +158,17 @@ export async function publishedCountsByItemType(): Promise<
 }
 
 /** Invalidate after publish/unpublish/insert so the home + room
- *  pages reflect the new count on next request. */
+ *  pages reflect the new count on next request. `updateTag` is
+ *  server-action-only and throws inside a Route Handler context
+ *  (e.g. the refill-draft worker re-running processDraftAsync). Cache
+ *  invalidation must never crash a successful mutation — swallow it;
+ *  the tag is revalidated on its 300 s window regardless. */
 export function invalidatePublishedCountsCache(): void {
-  updateTag(PRODUCT_COUNTS_TAG);
+  try {
+    updateTag(PRODUCT_COUNTS_TAG);
+  } catch {
+    // Route-handler context: the counts tag will refresh on its own TTL.
+  }
 }
 
 /**
