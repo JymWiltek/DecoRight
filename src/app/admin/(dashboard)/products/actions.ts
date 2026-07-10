@@ -14,6 +14,7 @@ import {
   copyRawToCutouts,
 } from "@/lib/storage";
 import { dispatchGlbCompression } from "@/lib/glb-compression-dispatch";
+import { dispatchSceneCover } from "@/lib/scene-cover-dispatch";
 import { dispatchFbxBundle } from "@/lib/fbx-bundle-dispatch";
 import { validateFbxZipContainsFbx } from "@/lib/fbx-bundle";
 import { inferProductFields } from "@/lib/ai/infer";
@@ -450,6 +451,11 @@ async function attachStagedRawImages(
       .update({ thumbnail_url: newPrimaryThumbUrl })
       .eq("id", productId);
     if (thumbErr) return { ok: false, error: thumbErr.message };
+    // Wave 13: a white-bg cutout just became the card image → auto-generate
+    // a scene cover (rembg → empty room → composite). Fire-and-forget; the
+    // route's guards skip non-white-bg / already-scened products, so this is
+    // safe to fire on every new primary. Never blocks the operator's save.
+    after(() => dispatchSceneCover(productId));
   }
 
   return { ok: true, ids };
