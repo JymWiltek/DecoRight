@@ -8,9 +8,12 @@ import SiteHeader from "@/components/SiteHeader";
 import TopFilters from "@/components/TopFilters";
 import ProductCard from "@/components/ProductCard";
 import Breadcrumb from "@/components/Breadcrumb";
-import { listPublishedProducts, type ProductFilters } from "@/lib/products";
+import {
+  listPublishedProducts,
+  getCategoryFacets,
+  type ProductFilters,
+} from "@/lib/products";
 import { loadTaxonomy, labelFor, labelMap, colorHexMap } from "@/lib/taxonomy";
-import { PRICE_TIERS, type PriceTier } from "@/lib/constants/enums";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 type PageProps = {
@@ -83,18 +86,26 @@ export default async function CategoryPage({ params, searchParams }: PageProps) 
     subtypesForItemType.map((s) => s.slug),
   );
 
-  const styleSlugs = new Set(taxonomy.styles.map((r) => r.slug));
-  const colorSlugs = new Set(taxonomy.colors.map((r) => r.slug));
-  const materialSlugs = new Set(taxonomy.materials.map((r) => r.slug));
+  // Per-category, in-stock filter options — the iron rule: a Style/Color
+  // option shows ONLY if this category (+ subtype, if picked) actually has a
+  // product with it. Computed live from the DB, recomputed per category.
+  const facets = await getCategoryFacets(itemType.slug, subtypeSlug);
+  const styleSet = new Set(facets.styles);
+  const colorSet = new Set(facets.colors);
+  const styleOptions = taxonomy.styles
+    .filter((r) => styleSet.has(r.slug))
+    .map((r) => ({ slug: r.slug, label: labelFor(r, locale) }));
+  const colorOptions = taxonomy.colors
+    .filter((r) => colorSet.has(r.slug))
+    .map((r) => ({ slug: r.slug, label: labelFor(r, locale), hex: r.hex }));
 
   const filters: ProductFilters = {
     q: typeof sp.q === "string" ? sp.q : undefined,
     itemTypes: [itemType.slug],
     subtypes: subtypeSlug ? [subtypeSlug] : undefined,
-    styles: pickMany(sp.styles, styleSlugs),
-    colors: pickMany(sp.colors, colorSlugs),
-    materials: pickMany(sp.materials, materialSlugs),
-    priceTier: pickOne(sp.tier, PRICE_TIERS) as PriceTier | undefined,
+    // Only accept a style/color URL value that is actually in this category.
+    styles: pickMany(sp.styles, styleSet),
+    colors: pickMany(sp.colors, colorSet),
     sort: pickOne(sp.sort, ["latest", "price_asc", "price_desc"]) as
       | "latest"
       | "price_asc"
@@ -166,7 +177,7 @@ export default async function CategoryPage({ params, searchParams }: PageProps) 
         {/* Top pill filters (replaced the left sidebar) — list area now
             spans full width below them. */}
         <Suspense>
-          <TopFilters taxonomy={taxonomy} />
+          <TopFilters styleOptions={styleOptions} colorOptions={colorOptions} />
         </Suspense>
 
         <section>

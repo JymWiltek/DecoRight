@@ -89,6 +89,33 @@ export async function listPublishedProducts(
   return data ?? [];
 }
 
+/**
+ * Distinct style + color slugs actually present in a category's published
+ * stock (optionally narrowed to a subtype). Powers the "only show filter
+ * options that have products in THIS category" rule. Deliberately ignores
+ * the style/color filters so picking one option doesn't collapse the list.
+ */
+export async function getCategoryFacets(
+  itemType: string,
+  subtype?: string,
+): Promise<{ styles: string[]; colors: string[] }> {
+  const supabase = await createClient();
+  let query = supabase
+    .from("products")
+    .select("styles,colors")
+    .eq("status", "published")
+    .eq("item_type", itemType);
+  if (subtype) query = query.eq("subtype_slug", subtype);
+  const { data } = await query;
+  const styles = new Set<string>();
+  const colors = new Set<string>();
+  for (const p of data ?? []) {
+    for (const st of p.styles ?? []) styles.add(st);
+    for (const c of p.colors ?? []) colors.add(c);
+  }
+  return { styles: [...styles], colors: [...colors] };
+}
+
 export async function getPublishedProductById(id: string): Promise<ProductRow | null> {
   const supabase = await createClient();
   const { data, error } = await supabase

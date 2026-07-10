@@ -1,31 +1,33 @@
 "use client";
 
 /**
- * Top pill filter bar for the /c listing page (replaces the left
- * FilterPanel sidebar). A clean single row of pills (Style / Color /
- * Material / Price / Sort) that open a panel BELOW the bar on click —
- * panel-below (not an absolute popover) so it never gets clipped by the
- * mobile horizontal-scroll container. Search + Reset on the right.
- *
- * Reuses the exact URL-key contract the old sidebar used (styles /
- * colors / materials / sort / q, CSV multi-select) + a new single-value
- * `tier` for the Price pill, so server-side filtering is unchanged.
+ * Top pill filter bar for the /c listing page. FINAL set: Style | Color |
+ * Sort (Material + Price removed). Style + Color are multi-select; Sort is
+ * single. Options are computed per-category-in-stock on the server and passed
+ * in via `styleOptions` / `colorOptions` — NOT the full taxonomy — so a pill
+ * only ever shows values that actually have products in the current category
+ * (and the whole pill hides when that category has none). Color options render
+ * a swatch AND its name. URL contract unchanged (styles/colors CSV, sort, q).
  */
 
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useMemo, useState, useTransition } from "react";
-import { useLocale, useTranslations } from "next-intl";
-import type { Locale } from "@/i18n/config";
-import { labelFor, type Taxonomy } from "@/lib/taxonomy";
-import { PRICE_TIERS } from "@/lib/constants/enums";
-import { PRICE_TIER_LABELS } from "@/lib/constants/enum-labels";
+import { useTranslations } from "next-intl";
 
 type SortKey = "latest" | "price_asc" | "price_desc";
-type PillKey = "styles" | "colors" | "materials" | "tier" | "sort";
+type PillKey = "styles" | "colors" | "sort";
 
-export default function TopFilters({ taxonomy }: { taxonomy: Taxonomy }) {
+export type StyleOption = { slug: string; label: string };
+export type ColorOption = { slug: string; label: string; hex: string };
+
+export default function TopFilters({
+  styleOptions,
+  colorOptions,
+}: {
+  styleOptions: StyleOption[];
+  colorOptions: ColorOption[];
+}) {
   const t = useTranslations("filters");
-  const locale = useLocale() as Locale;
   const router = useRouter();
   const pathname = usePathname();
   const params = useSearchParams();
@@ -37,8 +39,6 @@ export default function TopFilters({ taxonomy }: { taxonomy: Taxonomy }) {
       q: params.get("q") ?? "",
       styles: splitCsv(params.get("styles")),
       colors: splitCsv(params.get("colors")),
-      materials: splitCsv(params.get("materials")),
-      tier: params.get("tier") ?? "",
       sort: (params.get("sort") || "latest") as SortKey,
     }),
     [params],
@@ -59,7 +59,7 @@ export default function TopFilters({ taxonomy }: { taxonomy: Taxonomy }) {
     [params, pathname, router],
   );
 
-  const toggleCsv = (key: "styles" | "colors" | "materials", value: string) => {
+  const toggleCsv = (key: "styles" | "colors", value: string) => {
     const list = current[key];
     const next = list.includes(value)
       ? list.filter((v) => v !== value)
@@ -71,9 +71,13 @@ export default function TopFilters({ taxonomy }: { taxonomy: Taxonomy }) {
     current.q ||
     current.styles.length ||
     current.colors.length ||
-    current.materials.length ||
-    current.tier ||
     current.sort !== "latest";
+
+  const sortLabels: Record<SortKey, string> = {
+    latest: t("sortLatest"),
+    price_asc: t("sortPriceAsc"),
+    price_desc: t("sortPriceDesc"),
+  };
 
   const pill = (key: PillKey, label: string, count: number, activeText?: string) => (
     <button
@@ -104,25 +108,13 @@ export default function TopFilters({ taxonomy }: { taxonomy: Taxonomy }) {
     </button>
   );
 
-  const sortLabels: Record<SortKey, string> = {
-    latest: t("sortLatest"),
-    price_asc: t("sortPriceAsc"),
-    price_desc: t("sortPriceDesc"),
-  };
-
   return (
     <div className={`mb-6 ${pending ? "opacity-70" : ""}`} aria-busy={pending}>
       <div className="flex items-center gap-2">
         <div className="flex grow gap-2 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-          {pill("styles", t("style"), current.styles.length)}
-          {pill("colors", t("color"), current.colors.length)}
-          {pill("materials", t("material"), current.materials.length)}
-          {pill(
-            "tier",
-            t("price"),
-            0,
-            current.tier ? PRICE_TIER_LABELS[current.tier as keyof typeof PRICE_TIER_LABELS] : undefined,
-          )}
+          {/* Hide the pill entirely when the category has 0 of that facet. */}
+          {styleOptions.length > 0 && pill("styles", t("style"), current.styles.length)}
+          {colorOptions.length > 0 && pill("colors", t("color"), current.colors.length)}
           {pill(
             "sort",
             t("sort"),
@@ -131,7 +123,6 @@ export default function TopFilters({ taxonomy }: { taxonomy: Taxonomy }) {
           )}
         </div>
 
-        {/* Search (inline on sm+) */}
         <form
           className="hidden sm:block"
           onSubmit={(e) => {
@@ -153,7 +144,7 @@ export default function TopFilters({ taxonomy }: { taxonomy: Taxonomy }) {
             type="button"
             onClick={() => {
               setOpen(null);
-              push({ q: null, styles: null, colors: null, materials: null, tier: null, sort: null });
+              push({ q: null, styles: null, colors: null, sort: null });
             }}
             className="shrink-0 rounded-full border border-neutral-300 px-3 py-1.5 text-xs text-neutral-700 hover:border-black"
           >
@@ -162,7 +153,6 @@ export default function TopFilters({ taxonomy }: { taxonomy: Taxonomy }) {
         )}
       </div>
 
-      {/* Search (full-width row on mobile) */}
       <form
         className="mt-2 sm:hidden"
         onSubmit={(e) => {
@@ -179,61 +169,44 @@ export default function TopFilters({ taxonomy }: { taxonomy: Taxonomy }) {
         />
       </form>
 
-      {/* Panel below the bar — never clipped by the scroll row. */}
       {open && (
         <div className="mt-3 rounded-lg border border-neutral-200 bg-white p-3 shadow-sm">
           {open === "styles" && (
-            <ChipPanel
-              options={taxonomy.styles.map((r) => ({ slug: r.slug, label: labelFor(r, locale) }))}
-              selected={current.styles}
-              onToggle={(s) => toggleCsv("styles", s)}
-            />
-          )}
-          {open === "materials" && (
-            <ChipPanel
-              options={taxonomy.materials.map((r) => ({ slug: r.slug, label: labelFor(r, locale) }))}
-              selected={current.materials}
-              onToggle={(s) => toggleCsv("materials", s)}
-            />
+            <div className="flex flex-wrap gap-2">
+              {styleOptions.map((o) => (
+                <button
+                  key={o.slug}
+                  type="button"
+                  onClick={() => toggleCsv("styles", o.slug)}
+                  aria-pressed={current.styles.includes(o.slug)}
+                  className={pillBtn(current.styles.includes(o.slug))}
+                >
+                  {o.label}
+                </button>
+              ))}
+            </div>
           )}
           {open === "colors" && (
             <div className="flex flex-wrap gap-2">
-              {taxonomy.colors.map((c) => {
+              {colorOptions.map((c) => {
                 const active = current.colors.includes(c.slug);
-                const lbl = labelFor(c, locale);
                 return (
                   <button
                     key={c.slug}
                     type="button"
                     onClick={() => toggleCsv("colors", c.slug)}
                     aria-pressed={active}
-                    title={lbl}
-                    aria-label={lbl}
-                    className={`h-8 w-8 rounded-full border transition ${
-                      active ? "border-black ring-2 ring-black ring-offset-1" : "border-neutral-300"
+                    className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs transition ${
+                      active
+                        ? "border-black bg-black text-white"
+                        : "border-neutral-300 bg-white text-neutral-700 hover:border-neutral-500"
                     }`}
-                    style={{ backgroundColor: c.hex }}
-                  />
-                );
-              })}
-            </div>
-          )}
-          {open === "tier" && (
-            <div className="flex flex-wrap gap-2">
-              {PRICE_TIERS.map((tier) => {
-                const active = current.tier === tier;
-                return (
-                  <button
-                    key={tier}
-                    type="button"
-                    onClick={() => {
-                      push({ tier: active ? null : tier });
-                      setOpen(null);
-                    }}
-                    aria-pressed={active}
-                    className={pillBtn(active)}
                   >
-                    {PRICE_TIER_LABELS[tier]}
+                    <span
+                      className="h-4 w-4 shrink-0 rounded-full border border-neutral-300"
+                      style={{ backgroundColor: c.hex }}
+                    />
+                    {c.label}
                   </button>
                 );
               })}
@@ -272,32 +245,6 @@ function pillBtn(active: boolean): string {
       ? "border-black bg-black text-white"
       : "border-neutral-300 bg-white text-neutral-700 hover:border-neutral-500"
   }`;
-}
-
-function ChipPanel({
-  options,
-  selected,
-  onToggle,
-}: {
-  options: { slug: string; label: string }[];
-  selected: string[];
-  onToggle: (slug: string) => void;
-}) {
-  return (
-    <div className="flex flex-wrap gap-2">
-      {options.map((o) => (
-        <button
-          key={o.slug}
-          type="button"
-          onClick={() => onToggle(o.slug)}
-          aria-pressed={selected.includes(o.slug)}
-          className={pillBtn(selected.includes(o.slug))}
-        >
-          {o.label}
-        </button>
-      ))}
-    </div>
-  );
 }
 
 function splitCsv(v: string | null): string[] {

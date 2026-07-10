@@ -105,7 +105,7 @@ export async function loadTaxonomy(): Promise<Taxonomy> {
     // v8 — switched the fetch from 8 parallel queries to the single
     // get_taxonomy() RPC (mig 0049). Same payload shape; bumped to force
     // a clean first fetch through the new path post-deploy.
-    ["taxonomy-v8"],
+    ["taxonomy-v9"],
     { tags: [TAG], revalidate: 300 },
   )();
 }
