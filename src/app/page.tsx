@@ -16,6 +16,11 @@ import {
 } from "@/lib/products";
 import { loadTaxonomy, labelFor, labelMap, colorHexMap } from "@/lib/taxonomy";
 import { buildActiveCategories } from "@/lib/categories";
+import {
+  HERO_AR_IMAGE,
+  HERO_BUY_IMAGE,
+  ITEM_TYPE_COVERS,
+} from "@/lib/home-config";
 
 /**
  * Sprint 1 — full-catalog, designer-focused home.
@@ -58,8 +63,10 @@ export default async function Home() {
   const arTarget = latest.find((p) => p.glb_url) ?? latest[0] ?? null;
   const arHref = arTarget ? `/product/${arTarget.id}` : "/search";
   const catalogHref = active[0] ? `/c/${active[0].slug}` : "/search";
-  const bannerArBg = arTarget?.thumbnail_url ?? latest[0]?.thumbnail_url ?? null;
-  const bannerBuyBg = latest[1]?.thumbnail_url ?? latest[0]?.thumbnail_url ?? null;
+  // FIXED hero backgrounds (see src/lib/home-config.ts) — no longer follow
+  // the latest upload. The AR button still deep-links to a real product.
+  const bannerArBg = HERO_AR_IMAGE ?? arTarget?.thumbnail_url ?? null;
+  const bannerBuyBg = HERO_BUY_IMAGE ?? latest[1]?.thumbnail_url ?? null;
 
   return (
     <>
@@ -136,7 +143,9 @@ export default async function Home() {
                   label={itemTypeLabels[c.slug] ?? c.slug}
                   count={c.count}
                   countLabel={tHome("itemCount", { count: c.count })}
-                  coverUrl={c.coverUrl}
+                  // FIXED per-type cover (home-config); unlisted types fall
+                  // back to the dynamic newest-product cover.
+                  coverUrl={ITEM_TYPE_COVERS[c.slug] ?? c.coverUrl}
                   priority={i < 3}
                 />
               ))}
