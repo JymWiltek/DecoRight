@@ -106,6 +106,8 @@ export type ProductRow = {
   //   'failed'      — see compression_error; Retry button available
   compression_status: "pending" | "processing" | "done" | "failed" | null;
   compression_error: string | null;
+  scene_cover_status: "pending" | "done" | "skipped" | "failed" | null;
+  scene_cover_error: string | null;
   thumbnail_url: string | null;
   /** Mig 0046 (Wave 12) — markdown blurb rendered in the "Designer's
    *  Guide" section on /product/[id]. NULL → no section. */
@@ -202,6 +204,8 @@ export type ProductInsert = {
   fbx_bundle_size_kb?: number | null;
   compression_status?: "pending" | "processing" | "done" | "failed" | null;
   compression_error?: string | null;
+  scene_cover_status?: "pending" | "done" | "skipped" | "failed" | null;
+  scene_cover_error?: string | null;
   thumbnail_url?: string | null;
   designer_guide?: string | null;
   /** Mig 0046 — DB-defaulted to 5, so optional on insert. */

@@ -206,6 +206,23 @@ export async function maybeGenerateSceneCover(
   productId: string,
 ): Promise<SceneCoverResult> {
   const supabase = createServiceRoleClient();
+  // Record the outcome so scene-gen failures are VISIBLE (no more silent
+  // swallow). Ignores its own write error → no-ops safely if the
+  // scene_cover_status column hasn't been migrated in yet (mig 0050).
+  const setStatus = async (
+    status: "pending" | "done" | "skipped" | "failed",
+    error?: string,
+  ): Promise<void> => {
+    await supabase
+      .from("products")
+      .update({ scene_cover_status: status, scene_cover_error: error ?? null })
+      .eq("id", productId);
+  };
+  const skip = async (reason: string): Promise<SceneCoverResult> => {
+    await setStatus("skipped", reason);
+    return { status: "skipped", reason };
+  };
+
   const { data: product, error: pErr } = await supabase
     .from("products")
     .select("id,name,item_type,colors,thumbnail_url")
@@ -213,9 +230,8 @@ export async function maybeGenerateSceneCover(
     .maybeSingle();
   if (pErr) throw new Error(`db read: ${pErr.message}`);
   if (!product) return { status: "skipped", reason: "product not found" };
-  if (!product.thumbnail_url) return { status: "skipped", reason: "no thumbnail" };
-  if (product.thumbnail_url.includes("/scene-"))
-    return { status: "skipped", reason: "already a scene cover" };
+  if (!product.thumbnail_url) return skip("no thumbnail");
+  if (product.thumbnail_url.includes("/scene-")) return skip("already a scene cover");
 
   const { data: imgs } = await supabase
     .from("product_images")
@@ -223,7 +239,7 @@ export async function maybeGenerateSceneCover(
     .eq("product_id", productId);
   const rows = imgs ?? [];
   if (rows.some((r) => r.image_kind === "real_photo" && (r.cutout_image_url ?? "").includes("/scene-")))
-    return { status: "skipped", reason: "scene row exists" };
+    return skip("scene row exists");
 
   const srcUrl =
     rows.find((r) => r.is_primary && r.cutout_image_url)?.cutout_image_url ??
@@ -231,44 +247,52 @@ export async function maybeGenerateSceneCover(
     product.thumbnail_url;
 
   const srcBytes = Buffer.from(await (await fetch(srcUrl)).arrayBuffer());
-  if (!(await isWhiteBg(srcBytes)))
-    return { status: "skipped", reason: "not a white-bg product shot" };
+  if (!(await isWhiteBg(srcBytes))) return skip("not a white-bg product shot");
 
-  const cover = await buildSceneCoverPng(
-    srcBytes,
-    product.item_type,
-    product.colors ?? [],
-    product.name,
-    productId,
-  );
+  await setStatus("pending");
+  try {
+    const cover = await buildSceneCoverPng(
+      srcBytes,
+      product.item_type,
+      product.colors ?? [],
+      product.name,
+      productId,
+    );
 
-  const path = `${productId}/scene-${Date.now()}.png`;
-  const { error: upErr } = await supabase.storage
-    .from("cutouts")
-    .upload(path, new Blob([cover as BlobPart], { type: "image/png" }), {
-      upsert: true,
-      contentType: "image/png",
-      cacheControl: "31536000",
+    const path = `${productId}/scene-${Date.now()}.png`;
+    const { error: upErr } = await supabase.storage
+      .from("cutouts")
+      .upload(path, new Blob([cover as BlobPart], { type: "image/png" }), {
+        upsert: true,
+        contentType: "image/png",
+        cacheControl: "31536000",
+      });
+    if (upErr) throw new Error(`upload: ${upErr.message}`);
+    const url = `${supabase.storage.from("cutouts").getPublicUrl(path).data.publicUrl}?v=${Date.now()}`;
+
+    const { error: tErr } = await supabase
+      .from("products")
+      .update({ thumbnail_url: url })
+      .eq("id", productId);
+    if (tErr) throw new Error(`thumbnail update: ${tErr.message}`);
+
+    await supabase.from("product_images").insert({
+      product_id: productId,
+      state: "cutout_approved",
+      cutout_image_url: url,
+      image_kind: "real_photo",
+      skip_cutout: true,
+      feed_to_ai: false,
+      show_on_storefront: true,
+      is_primary_thumbnail: false,
     });
-  if (upErr) throw new Error(`upload: ${upErr.message}`);
-  const url = `${supabase.storage.from("cutouts").getPublicUrl(path).data.publicUrl}?v=${Date.now()}`;
 
-  const { error: tErr } = await supabase
-    .from("products")
-    .update({ thumbnail_url: url })
-    .eq("id", productId);
-  if (tErr) throw new Error(`thumbnail update: ${tErr.message}`);
-
-  await supabase.from("product_images").insert({
-    product_id: productId,
-    state: "cutout_approved",
-    cutout_image_url: url,
-    image_kind: "real_photo",
-    skip_cutout: true,
-    feed_to_ai: false,
-    show_on_storefront: true,
-    is_primary_thumbnail: false,
-  });
-
-  return { status: "done", url };
+    await setStatus("done");
+    return { status: "done", url };
+  } catch (e) {
+    // Make the failure visible + keep it from being swallowed upstream.
+    const msg = e instanceof Error ? e.message : String(e);
+    await setStatus("failed", msg.slice(0, 1000));
+    throw e;
+  }
 }

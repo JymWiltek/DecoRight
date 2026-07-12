@@ -43,8 +43,13 @@ export async function dispatchSceneCover(productId: string): Promise<void> {
       method: "POST",
       headers: { "content-type": "application/json", "x-cron-secret": secret },
       body: JSON.stringify({ product_id: productId }),
-    }).catch(() => {});
-  } catch {
-    // Never throw inside after(); the next upload re-fires.
+    }).catch((e) => {
+      // Don't silently swallow — log so a stuck dispatch is visible. The
+      // route itself records success/failure in products.scene_cover_status.
+      console.error(`[scene-cover-dispatch] ${productId} POST failed:`, e);
+    });
+  } catch (e) {
+    // Never throw inside after(); log for visibility, next upload re-fires.
+    console.error(`[scene-cover-dispatch] ${productId} dispatch error:`, e);
   }
 }
