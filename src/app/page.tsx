@@ -162,7 +162,10 @@ export default async function Home() {
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
             {[...taxonomy.rooms]
               .sort((a, b) => a.sort_order - b.sort_order)
-              .filter((r) => (roomCounts[r.slug] ?? 0) > 0)
+              // Show a room tile only if it has products AND a cover image —
+              // a coverless room (e.g. Outdoor/Balcony) rendered as an empty
+              // grey block. No cover ⇒ hidden rather than shown broken.
+              .filter((r) => (roomCounts[r.slug] ?? 0) > 0 && r.cover_url)
               .map((r) => {
                 const count = roomCounts[r.slug] ?? 0;
                 return (

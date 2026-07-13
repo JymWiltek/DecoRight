@@ -81,7 +81,12 @@ export default function ProductCard({
     >
       <div
         className={`relative w-full overflow-hidden bg-neutral-100 ${
-          masonry ? "" : "aspect-[3/4]"
+          // Masonry images flow at natural height (h-auto). Reserve a
+          // min-height so a not-yet-loaded / slow card-image (e.g. a
+          // freshly-uploaded cover still warming) shows a neutral placeholder
+          // box instead of collapsing to zero height — a collapsed card made
+          // whole categories look empty/dead.
+          masonry ? "min-h-[200px]" : "aspect-[3/4]"
         }`}
         // Masonry: make this the container-query container so the image's
         // max-height can be expressed relative to the card WIDTH (cqw).
