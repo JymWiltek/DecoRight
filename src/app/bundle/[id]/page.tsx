@@ -7,6 +7,8 @@ import ProductCard from "@/components/ProductCard";
 import Breadcrumb from "@/components/Breadcrumb";
 import { getPublishedBundle } from "@/lib/products";
 import { loadTaxonomy, labelMap, colorHexMap } from "@/lib/taxonomy";
+import { formatMYR } from "@/lib/format";
+import { BRAND } from "@config/brand";
 
 export const dynamic = "force-dynamic";
 
@@ -28,14 +30,15 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
 }
 
 /**
- * Wave 12 — bundle detail page. Reuses the Wave 10 bundles /
- * bundle_products tables (getPublishedBundle). Shows the hero cover,
- * the "save %" vs the sum of member products' credit cost, a Download
- * Bundle FBX CTA, and the included products as 3:4 cards.
+ * Bundle detail page — a designer sales package (Feature 5). Reuses the
+ * Wave 10 bundles / bundle_products tables (getPublishedBundle). Shows the
+ * hero cover, the "套餐总价" (RM, summed from member products' prices), and
+ * the included products as cards.
  *
- * The bundle FBX zip itself isn't generated yet (no paywall / no
- * bundle-zip endpoint this wave), so the download CTA is rendered
- * disabled ("coming soon") rather than linking to a missing artifact.
+ * DISPLAY ONLY — no payment gateway. The CTA is a WhatsApp (or email-
+ * fallback) enquiry link, with online checkout marked "coming soon". A
+ * dedicated discounted bundle price would be a one-line migration
+ * (bundles.price_myr); until then the total is derived from members.
  */
 export default async function BundlePage({ params }: PageProps) {
   const { id } = await params;
@@ -54,15 +57,25 @@ export default async function BundlePage({ params }: PageProps) {
   const subtypeLabels = labelMap(taxonomy.itemSubtypes, locale);
   const colorHex = colorHexMap(taxonomy.colors);
 
-  // "Save X%" — bundle credit_cost vs the sum of member credit costs.
-  const originalCredit = products.reduce(
-    (sum, p) => sum + (p.download_credit_cost ?? 0),
+  // Feature 5 — designer sales package. "套餐总价" = the sum of member
+  // products' RM prices. There's no dedicated bundles.price_myr column yet
+  // (adding one is a one-line migration when a custom/discounted package
+  // price is wanted — see report), so we compute the total from members.
+  // Display-only: NO checkout / payment gateway. The CTA is a WhatsApp (or
+  // email-fallback) enquiry — a placeholder while online ordering is built.
+  const bundleTotalMyr = products.reduce(
+    (sum, p) => sum + (p.price_myr ?? 0),
     0,
   );
-  const savePct =
-    originalCredit > bundle.credit_cost && originalCredit > 0
-      ? Math.round(((originalCredit - bundle.credit_cost) / originalCredit) * 100)
-      : 0;
+  const enquiryText = tBundle("waText", { name: bundle.name });
+  const enquiryHref = BRAND.whatsapp
+    ? `https://wa.me/${BRAND.whatsapp}?text=${encodeURIComponent(enquiryText)}`
+    : `mailto:${BRAND.email}?subject=${encodeURIComponent(
+        bundle.name,
+      )}&body=${encodeURIComponent(enquiryText)}`;
+  const enquiryLabel = BRAND.whatsapp
+    ? tBundle("inquire")
+    : tBundle("inquireEmail");
 
   return (
     <>
@@ -103,29 +116,32 @@ export default async function BundlePage({ params }: PageProps) {
               )}
             </div>
             <div className="text-right">
-              <div className="flex items-baseline justify-end gap-2">
-                {savePct > 0 && (
-                  <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-800">
-                    {tBundle("save", { pct: savePct })}
-                  </span>
-                )}
-                <span className="text-2xl font-bold text-neutral-900">
-                  {tBundle("credit", { credit: bundle.credit_cost })}
+              <div className="text-[11px] uppercase tracking-wide text-neutral-400">
+                {tBundle("total")}
+              </div>
+              <div className="text-3xl font-bold text-neutral-900">
+                {formatMYR(bundleTotalMyr)}
+              </div>
+              <div className="mt-0.5 text-[11px] text-neutral-400">
+                {tBundle("packageNote")}
+              </div>
+              {/* Feature 5 — placeholder CTA. NO payment gateway: this is a
+                  WhatsApp (or email-fallback) enquiry link. Online checkout
+                  is explicitly "coming soon". */}
+              <div className="mt-3 flex flex-col items-stretch gap-1.5 sm:items-end">
+                <a
+                  href={enquiryHref}
+                  target="_blank"
+                  rel="noopener noreferrer nofollow"
+                  className="inline-flex items-center justify-center gap-1.5 rounded-md bg-emerald-600 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-emerald-700"
+                >
+                  <span aria-hidden>💬</span>
+                  {enquiryLabel}
+                </a>
+                <span className="text-[11px] text-neutral-400">
+                  {tBundle("buySoon")}
                 </span>
               </div>
-              {savePct > 0 && (
-                <div className="mt-0.5 text-xs text-neutral-400 line-through">
-                  {tBundle("was", { credit: originalCredit })}
-                </div>
-              )}
-              <button
-                type="button"
-                disabled
-                title={tBundle("downloadSoon")}
-                className="mt-3 inline-flex cursor-not-allowed items-center justify-center rounded-md bg-neutral-200 px-5 py-2.5 text-sm font-medium text-neutral-500"
-              >
-                {tBundle("download")}
-              </button>
             </div>
           </div>
         </section>

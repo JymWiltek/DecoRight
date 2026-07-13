@@ -13,6 +13,7 @@ import { getProductSupplierLinks } from "@/lib/suppliers";
 import { absoluteUrl } from "@/lib/site-url";
 import { BRAND } from "@config/brand";
 import { getDesignerSession } from "@/lib/auth/require-designer";
+import { getConsumerUser } from "@/lib/auth/consumer";
 import { createServiceRoleClient } from "@/lib/supabase/service";
 import { getSignedRawUrl } from "@/lib/storage";
 import { labelFor, labelMap, colorHexMap, loadTaxonomy } from "@/lib/taxonomy";
@@ -183,6 +184,10 @@ export default async function ProductPage({ params }: PageProps) {
   // Sprint 1 C2 — is the visitor a logged-in designer? Drives the gated
   // FBX download button (login CTA vs credit-deduct download).
   const designerLoggedIn = (await getDesignerSession()) !== null;
+  // Feature 6 — is the visitor a signed-in consumer (Supabase Auth)? Gates
+  // the AR try-on (free, but login-required to capture the email). Browsing
+  // and every other affordance stay open to logged-out visitors.
+  const consumerUser = await getConsumerUser();
 
   const itemTypeLabel = product.item_type
     ? (itemTypeLabels[product.item_type] ?? product.item_type)
@@ -258,6 +263,8 @@ export default async function ProductPage({ params }: PageProps) {
           leadEmail={BRAND.email}
           leadWhatsapp={BRAND.whatsapp}
           productUrl={absoluteUrl(`/product/${id}`)}
+          arUnlocked={consumerUser !== null}
+          consumerEmail={consumerUser?.email ?? null}
         />
 
         {/* Wave 12 — Designer's Guide. Operator-written markdown blurb

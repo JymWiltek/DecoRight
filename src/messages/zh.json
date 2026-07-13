@@ -98,7 +98,13 @@
     "styleTags": "风格",
     "signInToDownload": "登录后下载",
     "insufficientCredit": "credit 不足 — 请 WhatsApp 充值。",
-    "downloadFailed": "下载失败 — 请重试。"
+    "downloadFailed": "下载失败 — 请重试。",
+    "arViewInAR": "在 AR 中查看",
+    "arLoginToView": "登录后查看 AR",
+    "arGateHint": "登录后即可用手机摄像头 1:1 实景预览这件产品(免费)。",
+    "arUnlockedHint": "AR 已解锁",
+    "signedInAs": "已登录 {email}",
+    "signOut": "退出"
   },
   "category": {
     "bathtub": "浴缸",
@@ -126,7 +132,14 @@
     "download": "下载套餐 FBX",
     "downloadSoon": "套餐 FBX — 即将推出",
     "includes": "包含产品",
-    "empty": "该套餐暂无产品。"
+    "empty": "该套餐暂无产品。",
+    "total": "套餐总价",
+    "inquire": "WhatsApp 询价",
+    "inquireEmail": "邮件询价",
+    "buySoon": "在线下单即将上线",
+    "inquireNote": "需要这套?联系我们获取报价与库存。",
+    "packageNote": "套餐价按成员产品原价合计。",
+    "waText": "你好,我想了解套餐「{name}」的报价与库存。"
   },
   "style": {
     "notFound": "风格不存在",
@@ -148,5 +161,22 @@
     "stockIn": "现货",
     "stockOrder": "订货",
     "stockDiscontinued": "停产"
+  },
+  "authGate": {
+    "title": "登录后体验 AR",
+    "subtitle": "免费用手机把这件产品 1:1 放进你的空间。登录只为方便我们后续为你推荐。",
+    "google": "用 Google 继续",
+    "googleUnavailable": "Google 登录暂未开通,请用邮箱登录。",
+    "or": "或",
+    "email": "邮箱",
+    "password": "密码(至少 6 位)",
+    "submit": "登录 / 注册",
+    "submitting": "处理中…",
+    "cancel": "暂不登录",
+    "privacy": "我们只用你的邮箱发送产品与优惠信息,绝不泄露给第三方。",
+    "err_invalid_email": "邮箱格式不正确",
+    "err_short_password": "密码至少 6 位",
+    "err_wrong_password": "该邮箱已注册,密码不正确",
+    "err_server": "出错了,请稍后再试"
   }
 }

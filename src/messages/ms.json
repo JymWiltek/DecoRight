@@ -98,7 +98,13 @@
     "styleTags": "Gaya",
     "signInToDownload": "Log masuk untuk muat turun",
     "insufficientCredit": "Kredit tidak cukup — tambah nilai melalui WhatsApp.",
-    "downloadFailed": "Muat turun gagal — cuba lagi."
+    "downloadFailed": "Muat turun gagal — cuba lagi.",
+    "arViewInAR": "Lihat dalam AR",
+    "arLoginToView": "Log masuk untuk AR",
+    "arGateHint": "Log masuk untuk pratonton produk saiz sebenar dengan kamera telefon — percuma.",
+    "arUnlockedHint": "AR dibuka",
+    "signedInAs": "Log masuk sebagai {email}",
+    "signOut": "Log keluar"
   },
   "category": {
     "bathtub": "Tab Mandi",
@@ -126,7 +132,14 @@
     "download": "Muat Turun FBX Pakej",
     "downloadSoon": "FBX Pakej — akan datang",
     "includes": "Produk disertakan",
-    "empty": "Tiada produk dalam pakej ini lagi."
+    "empty": "Tiada produk dalam pakej ini lagi.",
+    "total": "Jumlah pakej",
+    "inquire": "Tanya di WhatsApp",
+    "inquireEmail": "Tanya melalui e-mel",
+    "buySoon": "Pembelian dalam talian akan datang",
+    "inquireNote": "Mahu set ini? Hubungi kami untuk sebut harga dan stok.",
+    "packageNote": "Harga pakej ialah jumlah harga produk ahli.",
+    "waText": "Hai, saya mahu sebut harga untuk pakej “{name}”."
   },
   "style": {
     "notFound": "Gaya tidak dijumpai",
@@ -148,5 +161,22 @@
     "stockIn": "Ada stok",
     "stockOrder": "Tempahan",
     "stockDiscontinued": "Dihentikan"
+  },
+  "authGate": {
+    "title": "Log masuk untuk cuba AR",
+    "subtitle": "Percuma — letak produk ini saiz sebenar di ruang anda dengan telefon. Log masuk supaya kami boleh susuli.",
+    "google": "Teruskan dengan Google",
+    "googleUnavailable": "Log masuk Google belum diaktifkan — sila guna e-mel.",
+    "or": "atau",
+    "email": "E-mel",
+    "password": "Kata laluan (min 6)",
+    "submit": "Log masuk / Daftar",
+    "submitting": "Sedang proses…",
+    "cancel": "Bukan sekarang",
+    "privacy": "Kami hanya guna e-mel anda untuk berita produk dan tawaran — tidak dikongsi dengan pihak ketiga.",
+    "err_invalid_email": "E-mel tidak sah",
+    "err_short_password": "Kata laluan sekurang-kurangnya 6 aksara",
+    "err_wrong_password": "E-mel ini telah didaftar — kata laluan salah",
+    "err_server": "Ralat, sila cuba lagi"
   }
 }

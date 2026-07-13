@@ -15,6 +15,9 @@ type ModelViewerElement = HTMLElement & {
    *  is meters). Used to compute the real-world scale factor against
    *  the operator-entered dimensions_mm. */
   getDimensions?: () => { x: number; y: number; z: number } | null;
+  /** model-viewer's imperative AR launcher. Requires the `ar` attribute
+   *  + a user gesture; rejects on devices without AR support. */
+  activateAR?: () => Promise<void>;
 };
 
 type Props = {
@@ -45,6 +48,21 @@ type Props = {
    *  hide colour controls for single-/merged-material models that can't be
    *  recoloured part-wise. */
   onMaterialCount?: (n: number) => void;
+  /** Feature 6 — AR login gate. When `onArLocked` is provided the viewer
+   *  renders its own AR call-to-action button (instead of relying on
+   *  model-viewer's easy-to-miss native corner icon, which is also hidden
+   *  on desktop):
+   *    • arEnabled  → the visitor is logged in; the button calls
+   *                   activateAR() (launches native AR on a phone).
+   *    • !arEnabled → logged out; the button calls onArLocked() to open the
+   *                   login modal. The native `ar` affordance is off, so AR
+   *                   truly can't start without logging in first.
+   *  Callers that omit onArLocked keep the previous behaviour (native AR
+   *  button, always enabled). */
+  arEnabled?: boolean;
+  onArLocked?: () => void;
+  arViewLabel?: string;
+  arLockedLabel?: string;
 };
 
 function hexToRgba(hex: string): [number, number, number, number] {
@@ -63,6 +81,10 @@ export default function ModelViewer({
   overrideColorHex,
   realDimensionsMm,
   onMaterialCount,
+  arEnabled = true,
+  onArLocked,
+  arViewLabel,
+  arLockedLabel,
 }: Props) {
   const ref = useRef<ModelViewerElement | null>(null);
   const loadedRef = useRef(false);
@@ -162,16 +184,43 @@ export default function ModelViewer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [overrideColorHex, src, dimsKey]);
 
+  // Feature 6 — the login gate. When gated (onArLocked provided) the native
+  // `ar` affordance is only turned on for logged-in visitors, so AR cannot
+  // start until they sign in. Ungated callers keep AR always on.
+  const gated = typeof onArLocked === "function";
+  const arActive = gated ? arEnabled : true;
+
+  const handleArClick = () => {
+    if (!arEnabled) {
+      onArLocked?.();
+      return;
+    }
+    // Logged in — launch native AR. No-op / rejects on desktop (no AR
+    // support); the visible unlocked button is still the proof the gate
+    // opened. Real phones get the camera try-on.
+    void ref.current?.activateAR?.().catch(() => {});
+  };
+
   const Tag = "model-viewer" as unknown as "div";
   const extra: Record<string, unknown> = {
     src,
     alt,
-    ar: true,
+    ar: arActive,
     "ar-modes": "scene-viewer webxr quick-look",
     "camera-controls": true,
     "touch-action": "pan-y",
     "shadow-intensity": "1",
-    "environment-image": "neutral",
+    // Neutral white photo-studio HDRI (Poly Haven `photo_studio_01`, CC0,
+    // bundled in /public/hdri). Replaces the flat built-in "neutral": the
+    // studio's bright softboxes + dark surroundings give metal (chrome,
+    // rose-gold) real specular contrast, while its neutral white balance
+    // keeps porcelain pure white. Downscaled to 0.5k (512×256, ~512KB) —
+    // model-viewer reduces the env to a small lighting cubemap anyway, so
+    // 0.5k looks identical to 1k while cutting page-load bytes ~3x (this is
+    // the mobile QR→AR preview path, so the smaller fetch matters). Note:
+    // this only lights the in-page 3D preview; native AR uses the device
+    // camera's real lighting, not this HDRI.
+    "environment-image": "/hdri/photo_studio_01_05k.hdr",
     "auto-rotate": true,
     loading: "eager",
     reveal: "auto",
@@ -179,11 +228,36 @@ export default function ModelViewer({
   if (iosSrc) extra["ios-src"] = iosSrc;
   if (poster) extra["poster"] = poster;
 
+  if (!gated) {
+    return (
+      <Tag
+        ref={ref as unknown as React.RefObject<HTMLDivElement>}
+        style={{ width: "100%", height: "100%", backgroundColor: "#f5f5f5" }}
+        {...extra}
+      />
+    );
+  }
+
   return (
-    <Tag
-      ref={ref as unknown as React.RefObject<HTMLDivElement>}
-      style={{ width: "100%", height: "100%", backgroundColor: "#f5f5f5" }}
-      {...extra}
-    />
+    <div className="relative h-full w-full">
+      {/* Hide model-viewer's native AR corner icon — our own button below is
+          the single, gate-aware entry point (visible on desktop too, so the
+          unlocked state is demonstrable, not just on AR-capable phones). */}
+      <style>{`model-viewer::part(default-ar-button){display:none !important;}`}</style>
+      <Tag
+        ref={ref as unknown as React.RefObject<HTMLDivElement>}
+        style={{ width: "100%", height: "100%", backgroundColor: "#f5f5f5" }}
+        {...extra}
+      />
+      <button
+        type="button"
+        onClick={handleArClick}
+        aria-label={arEnabled ? arViewLabel : arLockedLabel}
+        className="absolute bottom-3 left-1/2 z-10 flex -translate-x-1/2 items-center gap-1.5 rounded-full bg-neutral-900 px-4 py-2 text-xs font-medium text-white shadow-lg ring-1 ring-white/20 transition hover:bg-black"
+      >
+        <span aria-hidden>{arEnabled ? "📱" : "🔒"}</span>
+        {arEnabled ? arViewLabel : arLockedLabel}
+      </button>
+    </div>
   );
 }

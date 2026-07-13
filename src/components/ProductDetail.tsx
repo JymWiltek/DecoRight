@@ -1,11 +1,14 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { useTranslations, useLocale } from "next-intl";
 import ProductGallery from "./ProductGallery";
 import ColorSwitcher, { type ColorOption } from "./ColorSwitcher";
 import FbxDownloadButton from "./FbxDownloadButton";
 import WhereToBuy, { type WhereToBuyChannel } from "./WhereToBuy";
+import ConsumerAuthModal from "./ConsumerAuthModal";
+import { consumerSignOut } from "@/app/auth/actions";
 import { buildGlbDownload, buildFbxDownload, formatMYR } from "@/lib/format";
 import { glbUrlForGallery } from "@/lib/glb-display";
 import type { ProductRow } from "@/lib/supabase/types";
@@ -37,6 +40,11 @@ type Props = {
   leadWhatsapp: string;
   /** Absolute product-page URL (server-resolved) for the WhatsApp text. */
   productUrl: string;
+  /** Feature 6 — AR login gate. arUnlocked = a logged-in consumer (Supabase
+   *  Auth); consumerEmail powers the "signed in as …" line. Logged-out
+   *  visitors browse everything freely but must sign in to launch AR. */
+  arUnlocked: boolean;
+  consumerEmail: string | null;
 };
 
 export default function ProductDetail({
@@ -54,10 +62,27 @@ export default function ProductDetail({
   leadEmail,
   leadWhatsapp,
   productUrl,
+  arUnlocked,
+  consumerEmail,
 }: Props) {
   const t = useTranslations("product");
   const tWhere = useTranslations("whereToBuy");
   const locale = useLocale();
+  const router = useRouter();
+  // Feature 6 — AR login gate: the modal opens when a logged-out visitor
+  // taps the AR button (handled inside ProductGallery → ModelViewer).
+  const [loginOpen, setLoginOpen] = useState(false);
+  const arNextPath = (() => {
+    try {
+      return new URL(productUrl).pathname;
+    } catch {
+      return `/product/${product.id}`;
+    }
+  })();
+  const handleSignOut = async () => {
+    await consumerSignOut();
+    router.refresh();
+  };
   // Locale-correct list joiner — `、` for zh, `, ` for en/ms. Built
   // into the runtime; no extra i18n key needed. `style: "narrow"`
   // drops the "and"/"dan" conjunction before the last item to keep
@@ -126,6 +151,10 @@ export default function ProductDetail({
         realDimensionsMm={product.dimensions_mm ?? null}
         onMaterialCount={setModelMaterialCount}
         emptyLabel={t("noImages")}
+        arUnlocked={arUnlocked}
+        onArLocked={() => setLoginOpen(true)}
+        arViewLabel={t("arViewInAR")}
+        arLockedLabel={t("arLoginToView")}
       />
 
       <div className="flex flex-col gap-5">
@@ -313,12 +342,40 @@ export default function ProductDetail({
           </div>
         )}
 
+        {/* Feature 6 — AR login-gate hint. Logged out: explain the free
+            sign-in unlock. Logged in: confirm unlocked + who's signed in,
+            with a sign-out affordance. */}
         <div className="text-xs text-neutral-500">
-          {t("arHintLine1")}
-          <br />
-          {t("arHintLine2")}
+          {arUnlocked ? (
+            <span className="inline-flex flex-wrap items-center gap-x-1.5 gap-y-1">
+              <span className="font-medium text-emerald-600">
+                ✓ {t("arUnlockedHint")}
+              </span>
+              {consumerEmail && (
+                <>
+                  <span className="text-neutral-300">·</span>
+                  <span>{t("signedInAs", { email: consumerEmail })}</span>
+                  <button
+                    type="button"
+                    onClick={handleSignOut}
+                    className="underline underline-offset-2 hover:text-neutral-700"
+                  >
+                    {t("signOut")}
+                  </button>
+                </>
+              )}
+            </span>
+          ) : (
+            t("arGateHint")
+          )}
         </div>
       </div>
+
+      <ConsumerAuthModal
+        open={loginOpen}
+        onClose={() => setLoginOpen(false)}
+        next={arNextPath}
+      />
     </div>
   );
 }

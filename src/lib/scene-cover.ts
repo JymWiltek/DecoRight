@@ -30,31 +30,46 @@ const CH = 1536;
 type Tone = "warm" | "cool" | "luxury" | "neutral";
 
 function classify(colors: string[], name: string): Tone {
-  const primary = (colors[0] ?? "").toLowerCase();
+  const arr = (colors ?? []).map((c) => String(c).toLowerCase());
+  const primary = arr[0] ?? "";
   const t = (primary + " " + name).toLowerCase();
   if (/blue|green|purple|violet|teal|pink|magenta|\bred\b|amber|turquoise|aqua|lilac|coral/.test(t))
     return "neutral";
-  if (/gold|rose gold|\brose\b|brass|champagne|bronze/.test(t)) return "luxury";
+  if (/gold|rose gold|rose_gold|\brose\b|brass|champagne|bronze/.test(t)) return "luxury";
+  // White ceramic / wood furniture belongs to the light "warm" family even
+  // when it has black/grey accents (a white vanity should sit in a light
+  // room, not a dark one). Only truly dark/metal products go "cool".
+  if (arr.includes("white")) return "warm";
   if (/black|dark|grey|gray|gunmetal|gun metal|graphite|charcoal|chrome|stainless|steel|nickel|silver/.test(t))
     return "cool";
   return "warm";
 }
 
+// Diversified background pools (Wave 13, stop the warm-beige monotone). Each
+// family rotates across cool/warm/light/dark variants via pickVariant (hashed
+// on the product id → stable per product, spread across the catalogue):
+//   warm    = white ceramic / wood → beige / light-grey / cool-white / soft-green
+//   cool    = black / chrome / gunmetal / steel → cool-grey / concrete / dark / industrial
+//   luxury  = gold / rose-gold / brass → dark-luxury / warm-boutique / neutral / dark-green
+//   neutral = colourful products → clean neutral gallery
 const PALETTES: Record<Tone, string[]> = {
   warm: [
-    "a bright Scandinavian bathroom with warm white walls, light oak wood and a large soft window",
-    "a warm Japandi bathroom with cream limewash walls, pale timber and gentle morning sunlight",
-    "a soft minimalist bathroom with beige plaster walls, light travertine and diffused warm daylight",
+    "a soft minimalist bathroom with warm beige plaster walls, light travertine floor and diffused warm daylight",
+    "a clean minimalist bathroom with pale warm-grey stone walls, light concrete floor and soft even daylight",
+    "a bright airy bathroom with crisp cool-white walls, pale grey large-format tile and clean north-facing daylight",
+    "a calm spa bathroom with soft sage-green plaster walls, light oak accents and gentle diffused daylight",
   ],
   cool: [
-    "a cool modern bathroom with matte grey stone and concrete, crisp cool-white daylight",
-    "a contemporary greyscale bathroom with charcoal microcement walls and soft cool north light",
-    "a minimalist cool bathroom with pale grey tile, brushed concrete and clean neutral lighting",
+    "a cool modern bathroom with matte pale-grey stone and concrete, crisp cool-white daylight",
+    "a contemporary bathroom with raw concrete and charcoal microcement walls, soft cool north light",
+    "a moody dark bathroom with deep charcoal stone walls and low-key dramatic lighting",
+    "a minimalist industrial bathroom with brushed grey concrete, dark-grout tile and neutral cool light",
   ],
   luxury: [
-    "a dark luxury bathroom with deep charcoal marble walls, warm brass accents and moody low light",
-    "an opulent dark bathroom in near-black stone and walnut with soft gold uplight",
-    "a boutique-hotel bathroom in dark green-black marble with brushed gold trim and warm pooled light",
+    "a dark luxury bathroom with near-black marble walls and warm low-key lighting",
+    "a warm boutique bathroom with deep taupe walls, walnut cabinetry and soft warm pooled light",
+    "an elegant neutral bathroom with soft greige stone walls and even refined daylight",
+    "a boutique-hotel bathroom in dark green-black marble with warm pooled light",
   ],
   neutral: [
     "a clean neutral gallery-like bathroom with soft light-grey walls and even shadowless daylight",
@@ -69,6 +84,15 @@ const LIVING: Record<Tone, string> = {
   luxury: "a dark luxury living room with charcoal walls, walnut and warm gold accent lighting",
   neutral: "a clean neutral living room with soft light-grey walls and even daylight",
 };
+// Kitchen scenes for range hoods etc. — rotated cool/warm/dark/light so a
+// wall of extractor hoods still varies (a range hood belongs over a cooktop,
+// never in a bathroom next to towels).
+const KITCHEN: string[] = [
+  "a modern kitchen with matte pale-grey cabinetry, a cooktop directly below and soft cool daylight",
+  "a contemporary kitchen with warm wood cabinets, a stone backsplash, a cooktop directly below and gentle warm light",
+  "a sleek dark kitchen with charcoal cabinetry, a cooktop directly below and moody low-key lighting",
+  "a minimalist kitchen with white cabinets, a concrete counter, a cooktop directly below and clean cool daylight",
+];
 
 function pickVariant(seed: string, arr: string[]): string {
   let h = 0;
@@ -80,8 +104,14 @@ function isLivingItem(itemType: string | null): boolean {
   return !!itemType && /sofa|dining_table|dining_chair|bed_frame|cabinet|console/.test(itemType);
 }
 
+function isKitchenItem(itemType: string | null): boolean {
+  return !!itemType && /range_hood/.test(itemType);
+}
+
 /** Where the product physically belongs — so Mode A grounds it correctly. */
 function surfaceHint(itemType: string | null, name: string): string {
+  if (/range_hood/.test(itemType ?? ""))
+    return "The product is mounted ON the kitchen wall directly above the cooktop or hob.";
   if (/wall.?hung|wall.?mount|壁挂/i.test(name)) return "The product is mounted ON the wall.";
   const it = itemType ?? "";
   if (/faucet|basin|sink|showerhead/.test(it))
@@ -94,7 +124,11 @@ function surfaceHint(itemType: string | null, name: string): string {
 }
 
 function scenePrompt(itemType: string | null, name: string, tone: Tone, seed: string): string {
-  const scene = isLivingItem(itemType) ? LIVING[tone] : pickVariant(seed, PALETTES[tone]);
+  const scene = isKitchenItem(itemType)
+    ? pickVariant(seed, KITCHEN)
+    : isLivingItem(itemType)
+      ? LIVING[tone]
+      : pickVariant(seed, PALETTES[tone]);
   return (
     `Place this exact product into ${scene}. ${surfaceHint(itemType, name)} ` +
     `The product must be genuinely INSTALLED in the scene — sitting/standing/mounted on the surface ` +
