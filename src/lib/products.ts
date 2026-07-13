@@ -453,6 +453,58 @@ export async function getPublishedBundles(limit = 3): Promise<BundleRow[]> {
   return data ?? [];
 }
 
+export type BundleWithTotal = {
+  bundle: BundleRow;
+  totalMyr: number;
+  count: number;
+};
+
+/**
+ * Feature 5 — newest published bundles WITH the RM "套餐总价" (sum of the
+ * still-published member products' prices) + member count, for the home
+ * "Featured Bundles" rail. Keeps the rail's price consistent with the
+ * /bundle/[id] detail page (both derive the total from members — there's
+ * no dedicated bundles.price_myr column yet). Two flat queries, not N+1.
+ */
+export async function getPublishedBundlesWithTotal(
+  limit = 3,
+): Promise<BundleWithTotal[]> {
+  const bundles = await getPublishedBundles(limit);
+  if (bundles.length === 0) return [];
+  const supabase = await createClient();
+  const ids = bundles.map((b) => b.id);
+
+  const { data: links } = await supabase
+    .from("bundle_products")
+    .select("bundle_id, product_id")
+    .in("bundle_id", ids);
+  const productIds = [...new Set((links ?? []).map((l) => l.product_id))];
+  const { data: prods } = productIds.length
+    ? await supabase
+        .from("products")
+        .select("id, price_myr")
+        .in("id", productIds)
+        .eq("status", "published")
+    : { data: [] };
+  const priceById = new Map(
+    (prods ?? []).map((p) => [p.id, p.price_myr ?? 0]),
+  );
+
+  const agg = new Map<string, { total: number; count: number }>();
+  for (const l of links ?? []) {
+    if (!priceById.has(l.product_id)) continue; // drop unpublished members
+    const cur = agg.get(l.bundle_id) ?? { total: 0, count: 0 };
+    cur.total += priceById.get(l.product_id) ?? 0;
+    cur.count += 1;
+    agg.set(l.bundle_id, cur);
+  }
+  return bundles.map((bundle) => ({
+    bundle,
+    totalMyr: agg.get(bundle.id)?.total ?? 0,
+    count: agg.get(bundle.id)?.count ?? 0,
+  }));
+}
+
 const BUNDLE_UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 

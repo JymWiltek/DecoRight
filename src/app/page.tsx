@@ -12,9 +12,10 @@ import {
   publishedCountsByItemType,
   publishedCountsByRoom,
   coversByItemType,
-  getPublishedBundles,
+  getPublishedBundlesWithTotal,
 } from "@/lib/products";
 import { loadTaxonomy, labelFor, labelMap, colorHexMap } from "@/lib/taxonomy";
+import { formatMYR } from "@/lib/format";
 import { buildActiveCategories } from "@/lib/categories";
 import {
   HERO_AR_IMAGE,
@@ -41,7 +42,7 @@ export default async function Home() {
       publishedCountsByItemType(),
       publishedCountsByRoom(),
       coversByItemType(),
-      getPublishedBundles(3),
+      getPublishedBundlesWithTotal(3),
       listPublishedProducts({ sort: "latest" }, 24),
       getTranslations("home"),
       getTranslations("category"),
@@ -97,7 +98,7 @@ export default async function Home() {
               {tHome("featuredBundles")}
             </h2>
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-              {bundles.map((b) => (
+              {bundles.map(({ bundle: b, totalMyr }) => (
                 <Link
                   key={b.id}
                   href={`/bundle/${b.slug}`}
@@ -121,8 +122,10 @@ export default async function Home() {
                     <div className="line-clamp-1 text-sm font-medium text-neutral-900">
                       {b.name}
                     </div>
+                    {/* Feature 5 — RM 套餐总价 (summed from members), matching
+                        the /bundle/[id] detail page. */}
                     <div className="mt-auto pt-1 text-sm font-semibold text-neutral-900">
-                      {b.credit_cost} credit
+                      {formatMYR(totalMyr)}
                     </div>
                   </div>
                 </Link>

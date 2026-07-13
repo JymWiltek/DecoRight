@@ -98,7 +98,13 @@
     "styleTags": "Style",
     "signInToDownload": "Sign in to download",
     "insufficientCredit": "Not enough credit — top up via WhatsApp.",
-    "downloadFailed": "Download failed — try again."
+    "downloadFailed": "Download failed — try again.",
+    "arViewInAR": "View in AR",
+    "arLoginToView": "Sign in to view AR",
+    "arGateHint": "Sign in to preview this product life-size with your phone camera — it's free.",
+    "arUnlockedHint": "AR unlocked",
+    "signedInAs": "Signed in as {email}",
+    "signOut": "Sign out"
   },
   "category": {
     "bathtub": "Bathtubs",
@@ -126,7 +132,14 @@
     "download": "Download Bundle FBX",
     "downloadSoon": "Bundle FBX — coming soon",
     "includes": "Included products",
-    "empty": "No products in this bundle yet."
+    "empty": "No products in this bundle yet.",
+    "total": "Bundle total",
+    "inquire": "Enquire on WhatsApp",
+    "inquireEmail": "Enquire by email",
+    "buySoon": "Online checkout coming soon",
+    "inquireNote": "Want this set? Contact us for a quote and availability.",
+    "packageNote": "Bundle price is the sum of the member products' prices.",
+    "waText": "Hi, I'd like a quote and availability for the “{name}” bundle."
   },
   "style": {
     "notFound": "Style not found",
@@ -148,5 +161,22 @@
     "stockIn": "In stock",
     "stockOrder": "On order",
     "stockDiscontinued": "Discontinued"
+  },
+  "authGate": {
+    "title": "Sign in to try AR",
+    "subtitle": "Free — place this product life-size in your room with your phone. We just ask you to sign in so we can follow up.",
+    "google": "Continue with Google",
+    "googleUnavailable": "Google sign-in isn't enabled yet — please use email.",
+    "or": "or",
+    "email": "Email",
+    "password": "Password (min 6)",
+    "submit": "Sign in / Sign up",
+    "submitting": "Working…",
+    "cancel": "Not now",
+    "privacy": "We only use your email to send product news and offers — never shared with third parties.",
+    "err_invalid_email": "Invalid email",
+    "err_short_password": "Password must be at least 6 characters",
+    "err_wrong_password": "This email is already registered — wrong password",
+    "err_server": "Something went wrong, please try again"
   }
 }
