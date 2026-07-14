@@ -119,10 +119,7 @@ Rules:
 - name: full product name as printed (e.g. "One Piece Washdown Water Closet", "Marble Round Counter Top Basin"). Null if unclear.
 - brand: manufacturer / brand name (e.g. "Roca", "TOTO", "Docasa"). Null if not visible.
 - sku_id: model code / SKU verbatim from the sheet (e.g. "A400-PS", "WD012", "DCS-ECWC"). Preserve original spacing and dashes.
-- description: 1–3 plain sentences of factual specs. Examples:
-    "S-Trap 100–300mm or P-Trap 180mm. Dual-flush 3/6L. Soft-close PP/UF seat optional."
-    "Single bowl, deck-mounted. Ceramic. Includes pop-up waste."
-  Avoid marketing language ("luxurious", "elegant"). Prefer numbers and named features.
+- description: a richer storefront description in three parts, built from real specs: ONE hook sentence (what it is + standout quality); a blank line; 3–5 highlight lines each starting with "• " on its own line (material/finish, a key dimension, construction, notable features, what's included); a blank line; ONE closing sentence on the ideal space / use. Factual and specific (numbers, named features), light on empty adjectives.
 - dimensions_mm: ALWAYS millimeters. If the sheet uses inches/cm/etc., convert. Read from dimension diagrams AND text labels like "Size: 1800 × 1200 × 650 MM". Order: length × width × height. Fill EVERY axis you can read — return null for an individual axis you can't read, but do NOT discard the whole object just because one axis is unclear.
 - weight_kg: kilograms. Convert from lb if needed.
 - price_myr: selling price in Malaysian Ringgit as a plain number (strip "RM"/"MYR"/commas — "RM 14,999" → 14999). If a discount is shown, this is the LOWER current price. Null if no price printed. Never guess.
@@ -348,6 +345,10 @@ export type SpecSheetParseV2 = {
     brand: FieldV2<string>;
     sku_id: FieldV2<string>;
     description: FieldV2<string>;
+    /** Installation method — one controlled slug (wall_mounted /
+     *  counter_top / floor_standing …). Persisted into attributes.mounting
+     *  and shown as the "Installation" spec row. */
+    mounting: FieldV2<string>;
     dimensions_mm: FieldV2<{
       length: number | null;
       width: number | null;
@@ -422,6 +423,7 @@ const RESPONSE_SCHEMA_V2 = {
         "brand",
         "sku_id",
         "description",
+        "mounting",
         "dimensions_mm",
         "weight_kg",
         "price_myr",
@@ -438,6 +440,7 @@ const RESPONSE_SCHEMA_V2 = {
         brand: fieldSchema({ type: ["string", "null"] }),
         sku_id: fieldSchema({ type: ["string", "null"] }),
         description: fieldSchema({ type: ["string", "null"] }),
+        mounting: fieldSchema({ type: ["string", "null"] }),
         dimensions_mm: fieldSchema({
           type: ["object", "null"],
           additionalProperties: false,
@@ -538,7 +541,15 @@ Field-by-field rules:
 
 - sku_id: the product's model / SKU code. This is a prominent standalone alphanumeric code — usually a brand-prefixed run of UPPERCASE letters, digits and dashes. REAL examples from this catalog: "SWBC-A6619", "SRTWC180-BL", "SRTKS8548", "WD012", "ARS-M1306", "WC-2090", "A400-PS". It is FREQUENTLY printed as a title/header, in a corner, beside the product name, or in a spec table, and is OFTEN NOT preceded by a "Model"/"SKU" label — so you MUST also grab an unlabelled standalone code that looks like a product code (letters+digits+dashes). Take it VERBATIM (exact letters, digits, dashes, spacing; do not normalise). If several codes appear, pick the MAIN product code (the one for the whole item, not a sub-part). CRITICAL: if any such code is visible ANYWHERE on the images you MUST return it here — do NOT leave sku_id null while the same code appears in your description or name. NEVER invent one. confidence "high" if printed; null ONLY when no product code is anywhere on the images.
 
-- description: 1–3 plain factual sentences built from the REAL specifics you can read on the images — incorporate the model code, the actual dimensions, the material/finish, and any printed features (e.g. jets, soft-close, overflow). Example: "DOCASA ARS-M1306 freestanding whirlpool bathtub, 1800×1200×650 mm, acrylic shell with built-in massage jets." DO NOT write a generic template that ignores the printed specs. If you mention a model/SKU code here, that SAME code MUST also be returned in sku_id. mark "high" if from a spec sheet, "medium" if inferred from photos.
+- description: a richer storefront description in THREE parts, built ONLY from the REAL specifics you can read on the images (never a generic template). Format it EXACTLY as:
+    line 1 — ONE punchy hook sentence: what the product is + its single standout quality.
+    then a blank line, then 3 to 5 highlight lines, each starting with "• " on its OWN line — concrete facts only: material/finish, a key dimension, construction/craft, notable features (jets, soft-close, overflow, water-saving tier, included accessories).
+    then a blank line, then ONE closing sentence on the ideal space / use (e.g. "Ideal for a compact powder room or guest bathroom.").
+  Incorporate the model code, the actual dimensions and the material/finish. Keep every line factual and specific (numbers, named features) and light on empty adjectives. If you mention a model/SKU code, that SAME code MUST also be returned in sku_id. Example:
+    "DOCASA ARS-M1306 freestanding whirlpool bathtub with a sculpted acrylic shell.\\n\\n• Cast acrylic shell, 1800×1200×650 mm\\n• Built-in hydro-massage jet system\\n• Freestanding install, no wall required\\n• Overflow + pop-up drain included\\n\\nIdeal as a spa centrepiece in a master ensuite."
+  mark "high" if from a spec sheet, "medium" if inferred from photos.
+
+- mounting: the installation method, as EXACTLY ONE of these slugs: wall_mounted, floor_standing, counter_top, wall_hung, under_mount, semi_recessed, free_standing, built_in, deck_mounted. Pick the best match from the spec sheet / drawings (a basin sitting on a counter = counter_top; a wall-hung WC = wall_mounted; a freestanding tub = free_standing; a tap on a basin deck = deck_mounted). null ONLY if you genuinely cannot tell. mark "high" if printed, "medium" if inferred.
 
 - dimensions_mm: ALWAYS millimeters; convert from inches/cm/feet. Read from dimension diagrams AND from text labels like "Size: 1800 × 1200 × 650 MM" or "L×W×H". The order on the sheet is typically length × width × height. Fill EVERY axis you can read — do NOT discard the whole object just because one axis is unclear; return that one axis as null and keep the others. mark "high" if printed, "medium" if you inferred from the drawing.
 
@@ -678,6 +689,15 @@ export function sanitizeV2Slugs(
     subtypesByItemType.get(itemTypeVal)?.has(f.subtype_slug.value)
       ? f.subtype_slug.value
       : null;
+  // Installation method: keep only a recognized controlled slug.
+  const MOUNT_SLUGS = new Set([
+    "wall_mounted", "floor_standing", "counter_top", "wall_hung",
+    "under_mount", "semi_recessed", "free_standing", "built_in", "deck_mounted",
+  ]);
+  const mountingVal =
+    f.mounting.value && MOUNT_SLUGS.has(f.mounting.value)
+      ? f.mounting.value
+      : null;
 
   function filterArr(
     v: string[] | null,
@@ -693,6 +713,7 @@ export function sanitizeV2Slugs(
       ...f,
       item_type_slug: { ...f.item_type_slug, value: itemTypeVal },
       subtype_slug: { ...f.subtype_slug, value: subtypeVal },
+      mounting: { ...f.mounting, value: mountingVal },
       room_slugs: {
         ...f.room_slugs,
         value: filterArr(f.room_slugs.value, roomSet),

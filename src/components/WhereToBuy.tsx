@@ -60,8 +60,12 @@ export default function WhereToBuy({
     t("waText", { name: productName, url: productUrl }) +
     (sku ? ` (SKU: ${sku})` : "");
   // Lead-capture WhatsApp (no-channel state). null when BRAND.whatsapp
-  // is unset / unnormalizable → that state shows email only.
+  // is unset / unnormalizable → the CTA falls back to email while keeping
+  // the "WhatsApp a Retailer" label (placeholder until a number is set).
   const leadWa = waLink(leadWhatsapp, waText);
+  const mailtoLead = `mailto:${leadEmail}?subject=${encodeURIComponent(
+    `Enquiry: ${productName}${sku ? ` (${sku})` : ""}`,
+  )}`;
   const stockLabel = (s: StockStatus) =>
     s === "in_stock"
       ? t("stockIn")
@@ -88,24 +92,23 @@ export default function WhereToBuy({
           </div>
           <p className="mt-1 text-xs text-neutral-500">{t("noChannelBody")}</p>
           <div className="mt-3 flex flex-wrap gap-2">
+            {/* Primary CTA is always "WhatsApp a Retailer": wa.me when a
+                number is configured, else an email fallback (placeholder)
+                keeping the WhatsApp-forward label. */}
+            <a
+              href={leadWa || mailtoLead}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={primaryBtn}
+            >
+              <span aria-hidden className="mr-1.5">💬</span>
+              {t("whatsappRetailer")}
+            </a>
             {leadWa && (
-              <a
-                href={leadWa}
-                target="_blank"
-                rel="noopener noreferrer"
-                className={primaryBtn}
-              >
-                {t("whatsapp")}
+              <a href={mailtoLead} className={secondaryBtn}>
+                {t("email")}
               </a>
             )}
-            <a
-              href={`mailto:${leadEmail}?subject=${encodeURIComponent(
-                `Enquiry: ${productName}${sku ? ` (${sku})` : ""}`,
-              )}`}
-              className={leadWa ? secondaryBtn : primaryBtn}
-            >
-              {t("email")}
-            </a>
           </div>
         </div>
       ) : (

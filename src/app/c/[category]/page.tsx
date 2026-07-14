@@ -11,6 +11,7 @@ import Breadcrumb from "@/components/Breadcrumb";
 import {
   listPublishedProducts,
   getCategoryFacets,
+  getInStockSubtypeSlugs,
   type ProductFilters,
 } from "@/lib/products";
 import { loadTaxonomy, labelFor, labelMap, colorHexMap } from "@/lib/taxonomy";
@@ -78,9 +79,14 @@ export default async function CategoryPage({ params, searchParams }: PageProps) 
   const itemType = taxonomy.itemTypes.find((r) => r.slug === category);
   if (!itemType) notFound();
 
-  const subtypesForItemType = taxonomy.itemSubtypes.filter(
-    (s) => s.item_type_slug === itemType.slug,
+  // Subtype chips are gated by in-stock: only show a subtype that actually
+  // has published products (a defined-but-empty subtype renders no chip).
+  const inStockSubtypeSlugs = new Set(
+    await getInStockSubtypeSlugs(itemType.slug),
   );
+  const subtypesForItemType = taxonomy.itemSubtypes
+    .filter((s) => s.item_type_slug === itemType.slug)
+    .filter((s) => inStockSubtypeSlugs.has(s.slug));
   const subtypeSlug = pickOne(
     sp.subtype,
     subtypesForItemType.map((s) => s.slug),

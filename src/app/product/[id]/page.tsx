@@ -220,25 +220,16 @@ export default async function ProductPage({ params }: PageProps) {
   // whose data is missing — e.g. legacy products without an
   // item_type get "Home › Product" with no mid-layer rubble.
   //
-  // A product can belong to multiple rooms (Migration 0013). The
-  // breadcrumb picks the FIRST room_slug for the mid-crumb — it's
-  // a navigation affordance, not a classification, and we carry
-  // `?room=<slug>` through to /item/* so that page knows which
-  // room to scope and crumb.
-  const primaryRoomSlug = productRoomSlugs[0] ?? null;
+  // Home › Category › Product — the category IS the item_type, linking to
+  // its live /c/<item_type> listing. (Dropped the room mid-crumb: the
+  // three-word "Home > Category > Product" is what the storefront nav uses,
+  // and /c/ is the real category route.) Legacy products with no item_type
+  // fall back to "Home › Product".
   const breadcrumb: BreadcrumbItem[] = [{ label: tSite("home"), href: "/" }];
-  if (primaryRoomSlug) {
-    breadcrumb.push({
-      label: roomLabels[primaryRoomSlug] ?? primaryRoomSlug,
-      href: `/room/${primaryRoomSlug}`,
-    });
-  }
   if (itemTypeRow && itemTypeLabel) {
     breadcrumb.push({
       label: itemTypeLabel,
-      href: primaryRoomSlug
-        ? `/item/${itemTypeRow.slug}?room=${primaryRoomSlug}`
-        : `/item/${itemTypeRow.slug}`,
+      href: `/c/${itemTypeRow.slug}`,
     });
   }
   breadcrumb.push({ label: product.name });

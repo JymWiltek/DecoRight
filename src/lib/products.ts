@@ -116,6 +116,23 @@ export async function getCategoryFacets(
   return { styles: [...styles], colors: [...colors] };
 }
 
+/**
+ * Distinct subtype slugs that actually have IN-STOCK (published) products in
+ * a category. Drives the "only show a subtype chip if it has stock" rule on
+ * the category page — a defined-but-empty subtype (e.g. bathtub Built-in
+ * with zero products) no longer renders a dead chip. One flat query.
+ */
+export async function getInStockSubtypeSlugs(itemType: string): Promise<string[]> {
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("products")
+    .select("subtype_slug")
+    .eq("status", "published")
+    .eq("item_type", itemType)
+    .not("subtype_slug", "is", null);
+  return [...new Set((data ?? []).map((r) => r.subtype_slug).filter(Boolean))] as string[];
+}
+
 export async function getPublishedProductById(id: string): Promise<ProductRow | null> {
   const supabase = await createClient();
   const { data, error } = await supabase
