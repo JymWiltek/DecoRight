@@ -2808,6 +2808,15 @@ export async function processDraftAsync(d: BulkCreateDraft): Promise<void> {
   } else {
     missing.push("description");
   }
+  // Installation method → attributes.mounting (the attributes column
+  // currently holds only this key, so writing a fresh object is safe). The
+  // sanitizer already validated it against the controlled slug set. Shown as
+  // the "Installation" spec row on the product page.
+  if (f.mounting?.value && f.mounting.value.trim()) {
+    updates.attributes = { mounting: f.mounting.value.trim() };
+    filled.push("mounting");
+    confidences.mounting = f.mounting.confidence;
+  }
 
   // Dimensions: only persist when at least one axis is > 0.
   const dims = f.dimensions_mm.value;

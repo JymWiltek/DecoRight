@@ -104,7 +104,21 @@
     "arGateHint": "Log masuk untuk pratonton produk saiz sebenar dengan kamera telefon — percuma.",
     "arUnlockedHint": "AR dibuka",
     "signedInAs": "Log masuk sebagai {email}",
-    "signOut": "Log keluar"
+    "signOut": "Log keluar",
+    "dimWidth": "Lebar (W)",
+    "dimDepth": "Kedalaman (D)",
+    "dimHeight": "Tinggi (H)",
+    "mmValue": "{n} mm",
+    "installation": "Pemasangan",
+    "install_wall_mounted": "Dipasang di Dinding",
+    "install_floor_standing": "Berdiri Lantai",
+    "install_counter_top": "Atas Kaunter",
+    "install_wall_hung": "Digantung Dinding",
+    "install_under_mount": "Bawah Kaunter",
+    "install_semi_recessed": "Separa Terbenam",
+    "install_free_standing": "Berdiri Bebas",
+    "install_built_in": "Terbina Dalam",
+    "install_deck_mounted": "Atas Dek"
   },
   "category": {
     "bathtub": "Tab Mandi",
@@ -139,7 +153,8 @@
     "buySoon": "Pembelian dalam talian akan datang",
     "inquireNote": "Mahu set ini? Hubungi kami untuk sebut harga dan stok.",
     "packageNote": "Harga pakej ialah jumlah harga produk ahli.",
-    "waText": "Hai, saya mahu sebut harga untuk pakej “{name}”."
+    "waText": "Hai, saya mahu sebut harga untuk pakej “{name}”.",
+    "whatsappRetailer": "WhatsApp Peruncit"
   },
   "style": {
     "notFound": "Gaya tidak dijumpai",
@@ -160,7 +175,8 @@
     "waText": "Hai, saya berminat dengan {name} ({url}). Boleh kongsi harga dan ketersediaan?",
     "stockIn": "Ada stok",
     "stockOrder": "Tempahan",
-    "stockDiscontinued": "Dihentikan"
+    "stockDiscontinued": "Dihentikan",
+    "whatsappRetailer": "WhatsApp Peruncit"
   },
   "authGate": {
     "title": "Log masuk untuk cuba AR",

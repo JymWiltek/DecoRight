@@ -73,9 +73,9 @@ export default async function BundlePage({ params }: PageProps) {
     : `mailto:${BRAND.email}?subject=${encodeURIComponent(
         bundle.name,
       )}&body=${encodeURIComponent(enquiryText)}`;
-  const enquiryLabel = BRAND.whatsapp
-    ? tBundle("inquire")
-    : tBundle("inquireEmail");
+  // Primary CTA is "WhatsApp a Retailer" (wa.me when configured, else an
+  // email-fallback placeholder keeping the WhatsApp label).
+  const enquiryLabel = tBundle("whatsappRetailer");
 
   return (
     <>

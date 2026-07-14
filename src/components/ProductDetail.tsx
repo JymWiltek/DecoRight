@@ -103,6 +103,30 @@ export default function ProductDetail({
   const glbDownload = buildGlbDownload(product);
   const fbxDownload = buildFbxDownload(product);
 
+  // Installation method — a controlled-vocab slug in attributes.mounting
+  // (AI-filled from the spec sheet). Map known slugs to a localized label;
+  // fall back to a de-slugified string for anything unexpected.
+  const INSTALL_SLUGS = new Set([
+    "wall_mounted",
+    "floor_standing",
+    "counter_top",
+    "wall_hung",
+    "under_mount",
+    "semi_recessed",
+    "free_standing",
+    "built_in",
+    "deck_mounted",
+  ]);
+  const mountingRaw =
+    typeof product.attributes?.mounting === "string"
+      ? product.attributes.mounting.trim()
+      : "";
+  const mountingLabel = mountingRaw
+    ? INSTALL_SLUGS.has(mountingRaw)
+      ? t(`install_${mountingRaw}`)
+      : mountingRaw.replace(/_/g, " ")
+    : null;
+
   // Wave: AR true-size. When the product has real dimensions, point the
   // viewer at /api/ar-glb/<id>, which bakes dimensions_mm into the GLB so
   // Android scene-viewer / iOS quick-look (which ignore <model-viewer>'s
@@ -240,18 +264,33 @@ export default function ProductDetail({
               <dd>{listFormatter.format(materialLabels)}</dd>
             </>
           )}
-          {product.dimensions_mm && (
+          {/* Dimensions as three separate rows — W / D / H (mm). Mapping is
+              evidence-based: a "600 mm vanity" stores length=600, so the
+              stored `length` is the physical Width, `width` is the Depth. */}
+          {product.dimensions_mm?.length != null && (
             <>
-              <dt className="text-neutral-500">{t("dimensionsMm")}</dt>
-              <dd>
-                {[
-                  product.dimensions_mm.length,
-                  product.dimensions_mm.width,
-                  product.dimensions_mm.height,
-                ]
-                  .filter((n) => n != null)
-                  .join(" × ") || "—"}
-              </dd>
+              <dt className="text-neutral-500">{t("dimWidth")}</dt>
+              <dd>{t("mmValue", { n: product.dimensions_mm.length })}</dd>
+            </>
+          )}
+          {product.dimensions_mm?.width != null && (
+            <>
+              <dt className="text-neutral-500">{t("dimDepth")}</dt>
+              <dd>{t("mmValue", { n: product.dimensions_mm.width })}</dd>
+            </>
+          )}
+          {product.dimensions_mm?.height != null && (
+            <>
+              <dt className="text-neutral-500">{t("dimHeight")}</dt>
+              <dd>{t("mmValue", { n: product.dimensions_mm.height })}</dd>
+            </>
+          )}
+          {/* Installation method (attributes.mounting). AI fills it from the
+              spec sheet; shown as a controlled-vocab label. */}
+          {mountingLabel && (
+            <>
+              <dt className="text-neutral-500">{t("installation")}</dt>
+              <dd>{mountingLabel}</dd>
             </>
           )}
           {product.weight_kg != null && (

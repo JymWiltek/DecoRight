@@ -104,7 +104,21 @@
     "arGateHint": "登录后即可用手机摄像头 1:1 实景预览这件产品(免费)。",
     "arUnlockedHint": "AR 已解锁",
     "signedInAs": "已登录 {email}",
-    "signOut": "退出"
+    "signOut": "退出",
+    "dimWidth": "宽 (W)",
+    "dimDepth": "深 (D)",
+    "dimHeight": "高 (H)",
+    "mmValue": "{n} mm",
+    "installation": "安装方式",
+    "install_wall_mounted": "壁挂式",
+    "install_floor_standing": "落地式",
+    "install_counter_top": "台面式",
+    "install_wall_hung": "壁挂式",
+    "install_under_mount": "下嵌式",
+    "install_semi_recessed": "半嵌入式",
+    "install_free_standing": "独立式",
+    "install_built_in": "嵌入式",
+    "install_deck_mounted": "台上式"
   },
   "category": {
     "bathtub": "浴缸",
@@ -139,7 +153,8 @@
     "buySoon": "在线下单即将上线",
     "inquireNote": "需要这套?联系我们获取报价与库存。",
     "packageNote": "套餐价按成员产品原价合计。",
-    "waText": "你好,我想了解套餐「{name}」的报价与库存。"
+    "waText": "你好,我想了解套餐「{name}」的报价与库存。",
+    "whatsappRetailer": "WhatsApp 联系零售商"
   },
   "style": {
     "notFound": "风格不存在",
@@ -160,7 +175,8 @@
     "waText": "你好,我对「{name}」({url})有兴趣,请问价格和现货情况?",
     "stockIn": "现货",
     "stockOrder": "订货",
-    "stockDiscontinued": "停产"
+    "stockDiscontinued": "停产",
+    "whatsappRetailer": "WhatsApp 联系零售商"
   },
   "authGate": {
     "title": "登录后体验 AR",

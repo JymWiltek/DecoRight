@@ -104,7 +104,21 @@
     "arGateHint": "Sign in to preview this product life-size with your phone camera — it's free.",
     "arUnlockedHint": "AR unlocked",
     "signedInAs": "Signed in as {email}",
-    "signOut": "Sign out"
+    "signOut": "Sign out",
+    "dimWidth": "Width (W)",
+    "dimDepth": "Depth (D)",
+    "dimHeight": "Height (H)",
+    "mmValue": "{n} mm",
+    "installation": "Installation",
+    "install_wall_mounted": "Wall-mounted",
+    "install_floor_standing": "Floor-standing",
+    "install_counter_top": "Counter-top",
+    "install_wall_hung": "Wall-hung",
+    "install_under_mount": "Under-mount",
+    "install_semi_recessed": "Semi-recessed",
+    "install_free_standing": "Free-standing",
+    "install_built_in": "Built-in",
+    "install_deck_mounted": "Deck-mounted"
   },
   "category": {
     "bathtub": "Bathtubs",
@@ -139,7 +153,8 @@
     "buySoon": "Online checkout coming soon",
     "inquireNote": "Want this set? Contact us for a quote and availability.",
     "packageNote": "Bundle price is the sum of the member products' prices.",
-    "waText": "Hi, I'd like a quote and availability for the “{name}” bundle."
+    "waText": "Hi, I'd like a quote and availability for the “{name}” bundle.",
+    "whatsappRetailer": "WhatsApp a Retailer"
   },
   "style": {
     "notFound": "Style not found",
@@ -160,7 +175,8 @@
     "waText": "Hi, I am interested in {name} ({url}). Could you share the price and availability?",
     "stockIn": "In stock",
     "stockOrder": "On order",
-    "stockDiscontinued": "Discontinued"
+    "stockDiscontinued": "Discontinued",
+    "whatsappRetailer": "WhatsApp a Retailer"
   },
   "authGate": {
     "title": "Sign in to try AR",

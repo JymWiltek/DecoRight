@@ -825,7 +825,7 @@ export default function ProductDraftCard({
       {supplierOptions.length > 0 && (
         <div className="mb-3">
           <span className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-neutral-500">
-            Suppliers ({state.supplierIds.length})
+            Retailer / Supplier ({state.supplierIds.length})
           </span>
           <div className="flex flex-wrap gap-1.5">
             {supplierOptions.map((o) => {
@@ -850,8 +850,9 @@ export default function ProductDraftCard({
             })}
           </div>
           <p className="mt-1 text-[10px] text-neutral-400">
-            Links these suppliers (in-stock, no price). Set per-channel
-            price / buy URL later in single-product edit.
+            Tap to link the retailer(s) that stock this product (in-stock, no
+            price). Set per-channel price / buy URL later in single-product
+            edit — no need to revisit each product just to attach a retailer.
           </p>
         </div>
       )}
