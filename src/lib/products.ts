@@ -117,20 +117,45 @@ export async function getCategoryFacets(
 }
 
 /**
- * Distinct subtype slugs that actually have IN-STOCK (published) products in
- * a category. Drives the "only show a subtype chip if it has stock" rule on
- * the category page — a defined-but-empty subtype (e.g. bathtub Built-in
- * with zero products) no longer renders a dead chip. One flat query.
+ * Distinct in-stock (published) subtype slugs for EVERY item_type, in one
+ * flat query. This is the single source of truth for "which subtypes have
+ * stock": both the /c category chip bar (per item_type) and the header
+ * mega-menu (all item_types at once) read it, so the two can never drift —
+ * a subtype only shows where a published product actually carries it.
  */
-export async function getInStockSubtypeSlugs(itemType: string): Promise<string[]> {
+export async function getInStockSubtypesByItemType(): Promise<
+  Record<string, string[]>
+> {
   const supabase = await createClient();
   const { data } = await supabase
     .from("products")
-    .select("subtype_slug")
+    .select("item_type, subtype_slug")
     .eq("status", "published")
-    .eq("item_type", itemType)
+    .not("item_type", "is", null)
     .not("subtype_slug", "is", null);
-  return [...new Set((data ?? []).map((r) => r.subtype_slug).filter(Boolean))] as string[];
+  const byType: Record<string, Set<string>> = {};
+  for (const r of data ?? []) {
+    const it = r.item_type as string | null;
+    const st = r.subtype_slug as string | null;
+    if (!it || !st) continue;
+    (byType[it] ??= new Set()).add(st);
+  }
+  return Object.fromEntries(
+    Object.entries(byType).map(([k, v]) => [k, [...v]]),
+  );
+}
+
+/**
+ * Distinct subtype slugs that actually have IN-STOCK (published) products in
+ * a category. Drives the "only show a subtype chip if it has stock" rule on
+ * the category page — a defined-but-empty subtype (e.g. bathtub Built-in
+ * with zero products) no longer renders a dead chip. Derives from the same
+ * source as the header mega-menu (getInStockSubtypesByItemType) so the chip
+ * bar and dropdown never disagree.
+ */
+export async function getInStockSubtypeSlugs(itemType: string): Promise<string[]> {
+  const byType = await getInStockSubtypesByItemType();
+  return byType[itemType] ?? [];
 }
 
 export async function getPublishedProductById(id: string): Promise<ProductRow | null> {

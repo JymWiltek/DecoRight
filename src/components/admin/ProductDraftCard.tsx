@@ -538,6 +538,7 @@ export default function ProductDraftCard({
         <div className="mb-1.5 flex items-center justify-between">
           <span className="text-xs font-medium uppercase tracking-wide text-neutral-500">
             Photos ({state.photos.length}/{PHOTO_MAX})
+            <span className="ml-1 text-rose-500" title="Required">*</span>
           </span>
           {!photoCapReached && (
             <button
@@ -826,6 +827,7 @@ export default function ProductDraftCard({
         <div className="mb-3">
           <span className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-neutral-500">
             Retailer / Supplier ({state.supplierIds.length})
+            <span className="ml-1 text-rose-500" title="Required">*</span>
           </span>
           <div className="flex flex-wrap gap-1.5">
             {supplierOptions.map((o) => {
@@ -871,7 +873,8 @@ export default function ProductDraftCard({
       <div>
         <div className="mb-1.5 flex items-center justify-between">
           <span className="text-xs font-medium uppercase tracking-wide text-neutral-500">
-            3D model (optional)
+            3D model (GLB)
+            <span className="ml-1 text-rose-500" title="Required">*</span>
           </span>
           {state.glbFile ? (
             <button
@@ -944,7 +947,7 @@ export default function ProductDraftCard({
             </div>
           ) : (
             <div className="px-3 py-3 text-center text-xs text-neutral-500">
-              Drop a .glb here, or click — optional, max {GLB_MAX_MB} MB.
+              Drop a .glb here, or click — max {GLB_MAX_MB} MB.
             </div>
           )}
         </div>
@@ -961,7 +964,8 @@ export default function ProductDraftCard({
       <div className="mt-3">
         <div className="mb-1.5 flex items-center justify-between">
           <span className="text-xs font-medium uppercase tracking-wide text-neutral-500">
-            FBX original (optional)
+            FBX original
+            <span className="ml-1 text-rose-500" title="Required">*</span>
           </span>
           {state.fbxFile ? (
             <button

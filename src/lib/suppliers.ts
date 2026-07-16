@@ -29,6 +29,29 @@ function createAnonClient() {
 
 const TAG = "suppliers";
 
+/**
+ * PB2 item 2 — "Others" is an internal-only retailer marker. Jym picks it
+ * when a product genuinely has NO sales channel / showroom, so it satisfies
+ * the required-retailer rule on bulk create while carrying the meaning
+ * "no real channel". It must NEVER surface on the storefront: a product
+ * whose only supplier link is "Others" renders the existing no-channel
+ * lead-capture card, and the word "Others" never appears publicly.
+ *
+ * Matched by name (case-insensitive) so there's no schema/DDL change — the
+ * row is a plain `suppliers` entry created by scripts/seed-others-supplier.mjs.
+ * Admin CAN filter by it (to find products lacking channels); the storefront
+ * strips it out.
+ */
+export const INTERNAL_SUPPLIER_NAME = "Others";
+
+export function isInternalSupplier(
+  s: { name: string } | null | undefined,
+): boolean {
+  return (
+    !!s && s.name.trim().toLowerCase() === INTERNAL_SUPPLIER_NAME.toLowerCase()
+  );
+}
+
 /** All suppliers, A→Z. Drives the product-edit picker + admin list. */
 export const loadSuppliers = unstable_cache(
   async (): Promise<SupplierRow[]> => {

@@ -9,7 +9,7 @@ import ProductCard from "@/components/ProductCard";
 import Markdown from "@/components/Markdown";
 import Breadcrumb, { type BreadcrumbItem } from "@/components/Breadcrumb";
 import { getPublishedProductById, getRelatedProducts } from "@/lib/products";
-import { getProductSupplierLinks } from "@/lib/suppliers";
+import { getProductSupplierLinks, isInternalSupplier } from "@/lib/suppliers";
 import { absoluteUrl } from "@/lib/site-url";
 import { BRAND } from "@config/brand";
 import { getDesignerSession } from "@/lib/auth/require-designer";
@@ -157,7 +157,10 @@ export default async function ProductPage({ params }: PageProps) {
   // states become a short region label.
   const supplierLinks = await getProductSupplierLinks(id);
   const whereToBuy: WhereToBuyChannel[] = supplierLinks
-    .filter((l) => l.supplier) // drop orphaned links defensively
+    // Drop orphaned links defensively, and strip the internal "Others"
+    // marker (PB2 item 2) so it never leaks — a product whose only link is
+    // "Others" falls through to the no-channel lead-capture state.
+    .filter((l) => l.supplier && !isInternalSupplier(l.supplier))
     .map((l) => {
       const sup = l.supplier!;
       return {

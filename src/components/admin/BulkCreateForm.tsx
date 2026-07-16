@@ -67,6 +67,36 @@ function newCard(): DraftCardState {
   };
 }
 
+// PB2 item 1 — bulk create is the one-shot "new product with content" flow.
+// A product on DecoRight has no meaning without all four of these, so each
+// STARTED card must carry them before the batch can save. Photos are shot,
+// the GLB + FBX are generated in Meshy/Rodin, and a retailer (real, or the
+// internal "Others" marker) is attached — all in the same session. The rule
+// is NEW-only: single-product edit (updateProduct) still edits existing /
+// incomplete drafts freely, so nothing is retroactively blocked.
+
+/** Which required assets a card is still missing (empty = complete). */
+function missingRequired(c: DraftCardState): string[] {
+  const missing: string[] = [];
+  if (c.photos.length === 0) missing.push("a photo");
+  if (!c.glbFile) missing.push("a 3D model (GLB)");
+  if (!c.fbxFile) missing.push("an FBX original");
+  if (c.supplierIds.length === 0) missing.push("a retailer");
+  return missing;
+}
+
+/** A card counts as "started" once the operator touches ANY of the four
+ *  required inputs — so a pristine trailing card never blocks the batch,
+ *  but a half-filled one does (forcing completion, not silent drop). */
+function isStarted(c: DraftCardState): boolean {
+  return (
+    c.photos.length > 0 ||
+    !!c.glbFile ||
+    !!c.fbxFile ||
+    c.supplierIds.length > 0
+  );
+}
+
 export default function BulkCreateForm({
   itemTypeOptions,
   roomOptions,
@@ -92,18 +122,30 @@ export default function BulkCreateForm({
     setCards((cs) => cs.map((c, j) => (j === i ? next : c)));
   }
 
-  // A card is submittable once it carries any real asset — a photo, a
-  // GLB, or an FBX. Empty cards are ignored so the operator can leave a
-  // half-finished card in the list and still save the others (Gmail
-  // draft semantics). Photo-less model-only cards are valid: the AI
-  // spec-parse tail simply no-ops without images.
-  const submittable = cards.filter(
-    (c) => c.photos.length > 0 || c.glbFile || c.fbxFile,
-  );
+  // PB2 item 1 gate. A pristine (untouched) card is ignored so the operator
+  // can leave a trailing blank one, but any STARTED card must be COMPLETE —
+  // photo + GLB + FBX + retailer — before the batch saves. `submittable` is
+  // the set that will actually be created; `blockers` names what's missing on
+  // any started-but-incomplete card so the operator gets a per-field message.
+  const startedCards = cards.filter(isStarted);
+  const submittable = startedCards.filter((c) => missingRequired(c).length === 0);
+  const blockers = cards
+    .map((c, i) => ({ i, missing: isStarted(c) ? missingRequired(c) : [] }))
+    .filter((b) => b.missing.length > 0);
 
   async function submit() {
+    if (blockers.length > 0) {
+      setError(
+        blockers
+          .map((b) => `Product ${b.i + 1}: add ${b.missing.join(", ")}.`)
+          .join(" "),
+      );
+      return;
+    }
     if (submittable.length === 0) {
-      setError("Add a photo, a GLB, or an FBX to a card before saving.");
+      setError(
+        "Each product needs a photo, a 3D model (GLB), an FBX original, and a retailer before saving.",
+      );
       return;
     }
     setError(null);
@@ -313,9 +355,16 @@ export default function BulkCreateForm({
         <button
           type="button"
           onClick={submit}
-          disabled={busy || submittable.length === 0}
+          disabled={busy || submittable.length === 0 || blockers.length > 0}
+          title={
+            blockers.length > 0
+              ? blockers
+                  .map((b) => `Product ${b.i + 1}: add ${b.missing.join(", ")}`)
+                  .join(" · ")
+              : undefined
+          }
           className={`rounded-md px-4 py-2 text-sm font-medium text-white transition ${
-            busy || submittable.length === 0
+            busy || submittable.length === 0 || blockers.length > 0
               ? "bg-neutral-400 cursor-not-allowed"
               : "bg-black hover:bg-neutral-800"
           }`}
