@@ -789,12 +789,14 @@ export async function getRembgProgress(
  */
 async function loadPublishGateFacts(
   productId: string,
-): Promise<PublishGateInput> {
+): Promise<PublishGateInput & { currentStatus: ProductStatus | null }> {
   const supabase = createServiceRoleClient();
-  const [rowRes, cutCountRes] = await Promise.all([
+  const [rowRes, cutCountRes, supCountRes] = await Promise.all([
     supabase
       .from("products")
-      .select("room_slugs, glb_url")
+      // PB3-A — also read fbx columns + current status. status drives the
+      // transition-only gate (already-published rows aren't re-gated).
+      .select("room_slugs, glb_url, fbx_url, fbx_bundle_url, status")
       .eq("id", productId)
       .maybeSingle(),
     supabase
@@ -808,11 +810,19 @@ async function loadPublishGateFacts(
       // 'cutout_approved' immediately and would otherwise let an
       // all-reference draft auto-publish without a storefront image.
       .eq("image_kind", "cutout"),
+    // PB3-A — retailer gate: does this product have ≥1 supplier link?
+    supabase
+      .from("product_suppliers")
+      .select("id", { count: "exact", head: true })
+      .eq("product_id", productId),
   ]);
   return {
     rooms: rowRes.data?.room_slugs ?? [],
     glbUrl: rowRes.data?.glb_url ?? null,
+    fbxUrl: rowRes.data?.fbx_url ?? rowRes.data?.fbx_bundle_url ?? null,
     cutoutApprovedCount: cutCountRes.count ?? 0,
+    supplierCount: supCountRes.count ?? 0,
+    currentStatus: rowRes.data?.status ?? null,
   };
 }
 
@@ -951,37 +961,45 @@ export async function updateProduct(id: string, fd: FormData): Promise<void> {
   }
   Object.assign(updates, built.updates);
 
-  // ── Publish gates (Wave 2B · Commit 7) ──────────────────────
+  // ── Publish gates (Wave 2B · Commit 7 · PB3-A) ──────────────
   //
-  // Three gates in spec order. ANY save landing at status='published'
-  // — whether via the Publish button (intent='publish') OR via Save
-  // with PillGrid pre-set to Published (intent='save', Bug A path) —
-  // must satisfy ALL three. Each gate failure redirects with an
-  // explicit reason so the edit page can render a targeted nudge.
-  //
+  // A save landing at status='published' — whether via the Publish
+  // button (intent='publish') OR via Save with PillGrid pre-set to
+  // Published (intent='save', Bug A path) — must satisfy ALL gates:
   //   gate 1: room_slugs non-empty
-  //   gate 2: cutout_approved count >= 1
+  //   gate 2: cutout_approved (product-photo) count >= 1
   //   gate 3: glb_url non-empty (existing OR uploaded this request)
+  //   gate 4 (PB3-A): fbx present (existing OR uploaded this request)
+  //   gate 5 (PB3-A): >= 1 retailer/supplier linked
   //
-  // Order matters for the redirect: we report the FIRST failing gate
-  // in the order rooms → cutouts → glb. Operator fixes one at a
-  // time and re-clicks Publish. Earlier gates (rooms) are usually
-  // faster fixes (one click in a picker) so they fail first; later
-  // gates (GLB) require running Generate 3D which takes minutes.
+  // PB3-A 既往不咎: enforce ONLY on the draft→published TRANSITION. An
+  // already-published product re-saved (copy/dimension edits, or Save
+  // with status still Published) is NOT re-gated — it can never be
+  // blocked or demoted for missing assets it predates the gate.
+  // checkPublishGates returns EVERY failing gate so the edit page can
+  // list all missing items at once.
   if (payload.status === "published") {
     const facts = await loadPublishGateFacts(id);
-    // Fresh values from this save override stale DB values:
-    //  - rooms came from the form payload
-    //  - glb_url may have just been set by the manual upload above
-    const gate = checkPublishGates({
-      rooms: payload.room_slugs ?? [],
-      glbUrl: updates.glb_url ?? facts.glbUrl,
-      cutoutApprovedCount: facts.cutoutApprovedCount,
-    });
-    if (!gate.ok) {
-      redirect(
-        `/admin/products/${id}/edit?err=publish_blocked&reason=${gate.reason}`,
-      );
+    if (facts.currentStatus !== "published") {
+      // Fresh values from THIS save override stale DB values:
+      //  - rooms / suppliers came from the form
+      //  - glb_url / fbx may have just been set by the manual upload above
+      const formHasSuppliers = fd.get("product_suppliers_json") != null;
+      const gate = checkPublishGates({
+        rooms: payload.room_slugs ?? [],
+        cutoutApprovedCount: facts.cutoutApprovedCount,
+        glbUrl: updates.glb_url ?? facts.glbUrl,
+        fbxUrl:
+          updates.fbx_url ?? updates.fbx_bundle_url ?? facts.fbxUrl,
+        supplierCount: formHasSuppliers
+          ? parseSupplierIdsFromForm(fd).length
+          : facts.supplierCount,
+      });
+      if (!gate.ok) {
+        redirect(
+          `/admin/products/${id}/edit?err=publish_blocked&reason=${gate.reasons.join(",")}`,
+        );
+      }
     }
   }
 
@@ -1099,11 +1117,15 @@ export async function setProductStatusAction(fd: FormData): Promise<void> {
   // GLB-less row and skip the redesigned Publish flow entirely.
   if (next === "published") {
     const facts = await loadPublishGateFacts(id);
-    const gate = checkPublishGates(facts);
-    if (!gate.ok) {
-      redirect(
-        `/admin?err=publish_blocked&reason=${gate.reason}&id=${encodeURIComponent(id)}`,
-      );
+    // PB3-A 既往不咎: only gate the draft→published transition. Flipping an
+    // already-published row to published is a no-op and never re-gated.
+    if (facts.currentStatus !== "published") {
+      const gate = checkPublishGates(facts);
+      if (!gate.ok) {
+        redirect(
+          `/admin?err=publish_blocked&reason=${gate.reasons.join(",")}&id=${encodeURIComponent(id)}`,
+        );
+      }
     }
   }
 
@@ -1198,17 +1220,23 @@ export async function bulkUpdateStatusAction(fd: FormData): Promise<void> {
   // and the failure mode obvious if a single row's query throws.
   let targetIds = ids;
   let blockedCount = 0;
-  let firstBlockedReason: PublishGateReason | null = null;
+  let firstBlockedReasons: PublishGateReason[] | null = null;
   if (next === "published") {
     const passed: string[] = [];
     for (const id of ids) {
       const facts = await loadPublishGateFacts(id);
+      // PB3-A 既往不咎: an already-published row in the selection isn't
+      // re-gated — flipping it to published is a no-op, never a demotion.
+      if (facts.currentStatus === "published") {
+        passed.push(id);
+        continue;
+      }
       const result = checkPublishGates(facts);
       if (result.ok) {
         passed.push(id);
       } else {
         blockedCount++;
-        if (!firstBlockedReason) firstBlockedReason = result.reason;
+        if (!firstBlockedReasons) firstBlockedReasons = result.reasons;
       }
     }
     if (passed.length === 0) {
@@ -1216,7 +1244,7 @@ export async function bulkUpdateStatusAction(fd: FormData): Promise<void> {
       // gate. Redirect with err so the dashboard's red toast renders.
       redirect(
         `/admin?err=publish_blocked&msg=${encodeURIComponent(
-          `All ${ids.length} selected products are missing rooms, cutouts, or a GLB. Open each one to fix.`,
+          `All ${ids.length} selected products are missing publish requirements (rooms · photo · GLB · FBX · retailer). Open each one to fix.`,
         )}`,
       );
     }
@@ -1240,7 +1268,9 @@ export async function bulkUpdateStatusAction(fd: FormData): Promise<void> {
   });
   if (blockedCount > 0) {
     qs.set("blocked", String(blockedCount));
-    if (firstBlockedReason) qs.set("reason", firstBlockedReason);
+    if (firstBlockedReasons?.length) {
+      qs.set("reason", firstBlockedReasons.join(","));
+    }
   }
   redirect(`/admin?${qs.toString()}`);
 }
@@ -2993,19 +3023,28 @@ export async function processDraftAsync(d: BulkCreateDraft): Promise<void> {
     return;
   }
 
-  // Existing 3-gate check: rooms + cutout_approved >= 1 + glb_url.
+  // Publish gates: rooms + cutout + glb + fbx + retailer (PB3-A). This
+  // AI auto-publish path is a draft→published transition too, so it goes
+  // through the SAME gate as manual/bulk Publish — no drift.
   const facts = await loadPublishGateFacts(d.productId);
   // Fresh values from this run override stale DB reads where possible.
   const gate = checkPublishGates({
     rooms: updates.room_slugs ?? facts.rooms,
     cutoutApprovedCount: facts.cutoutApprovedCount,
     glbUrl: facts.glbUrl,
+    fbxUrl: facts.fbxUrl,
+    supplierCount: facts.supplierCount,
   });
   if (!gate.ok) {
     await supabase
       .from("products")
       .update({
-        missing_fields: [...new Set([...missing, `publish_gate_${gate.reason}`])],
+        missing_fields: [
+          ...new Set([
+            ...missing,
+            ...gate.reasons.map((r) => `publish_gate_${r}`),
+          ]),
+        ],
       })
       .eq("id", d.productId);
     revalidatePath("/admin");
