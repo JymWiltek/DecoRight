@@ -65,13 +65,10 @@ type Props = {
   onMaterialCount?: (n: number) => void;
   /** Fallback caption shown when nothing can be displayed at all. */
   emptyLabel: string;
-  /** Feature 6 — AR login gate. arUnlocked = the visitor is a logged-in
-   *  consumer; onArLocked opens the login modal. Forwarded to ModelViewer,
-   *  which renders the gate-aware AR button. */
-  arUnlocked: boolean;
-  onArLocked: () => void;
-  arViewLabel: string;
-  arLockedLabel: string;
+  /** PB3-B — imperative AR launcher published by ModelViewer so
+   *  ProductDetail's device-gated primary CTA can trigger AR after its
+   *  free-quota / login check. */
+  arLaunchRef: React.MutableRefObject<(() => void) | null>;
 };
 
 export default function ProductGallery({
@@ -83,10 +80,7 @@ export default function ProductGallery({
   realDimensionsMm,
   onMaterialCount,
   emptyLabel,
-  arUnlocked,
-  onArLocked,
-  arViewLabel,
-  arLockedLabel,
+  arLaunchRef,
 }: Props) {
   const t = useTranslations("product");
   const slides: Slide[] = [];
@@ -139,10 +133,7 @@ export default function ProductGallery({
               overrideColorHex={overrideColorHex}
               realDimensionsMm={realDimensionsMm}
               onMaterialCount={onMaterialCount}
-              arEnabled={arUnlocked}
-              onArLocked={onArLocked}
-              arViewLabel={arViewLabel}
-              arLockedLabel={arLockedLabel}
+              arLaunchRef={arLaunchRef}
             />
           </ModelViewerErrorBoundary>
         )}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations, useLocale } from "next-intl";
 import ProductGallery from "./ProductGallery";
@@ -9,9 +9,47 @@ import FbxDownloadButton from "./FbxDownloadButton";
 import WhereToBuy, { type WhereToBuyChannel } from "./WhereToBuy";
 import ConsumerAuthModal from "./ConsumerAuthModal";
 import { consumerSignOut } from "@/app/auth/actions";
-import { buildGlbDownload, buildFbxDownload, formatMYR } from "@/lib/format";
+import { buildFbxDownload, formatMYR } from "@/lib/format";
+import { waLink } from "@/lib/whatsapp";
 import { glbUrlForGallery } from "@/lib/glb-display";
 import type { ProductRow } from "@/lib/supabase/types";
+
+// PB3-B item 6 — free AR quota. A logged-out visitor may open AR on up to
+// this many DISTINCT products (tracked by product id in localStorage) before
+// the sign-in modal appears. Per-product, not per-click: re-opening a product
+// already in the list is free and doesn't consume a slot. This is lead
+// capture, not DRM — incognito / cleared storage resets it, by design.
+const AR_FREE_LIMIT = 3;
+const AR_QUOTA_KEY = "dr_ar_free_products";
+
+function readArQuota(): string[] {
+  try {
+    const raw = JSON.parse(localStorage.getItem(AR_QUOTA_KEY) || "[]");
+    return Array.isArray(raw) ? raw.filter((x) => typeof x === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+// PB3-B item 3 — layout signal. Which CTA is primary is a device form-factor
+// decision, so it reads the viewport's pointer type, NOT model-viewer's
+// canActivateAR: canActivateAR is only known post-load and is false in every
+// non-AR context (desktop AND headless/emulated mobile), so it can't drive a
+// stable, SSR-safe, screenshot-verifiable layout. `(pointer: coarse)` = a
+// touch device (phone/tablet, where AR works), excluding mouse desktops (the
+// dead-end Amazon avoids). activateAR() still rejects gracefully if a specific
+// touch device lacks AR.
+function useIsTouchDevice(): boolean {
+  const [touch, setTouch] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia("(pointer: coarse)");
+    setTouch(mq.matches);
+    const on = () => setTouch(mq.matches);
+    mq.addEventListener("change", on);
+    return () => mq.removeEventListener("change", on);
+  }, []);
+  return touch;
+}
 
 type Props = {
   product: ProductRow;
@@ -100,8 +138,54 @@ export default function ProductDetail({
   const [variantIndex, setVariantIndex] = useState<number | null>(null);
   const active = variantIndex == null ? null : colors[variantIndex];
   const overrideColorHex = active?.hex ?? null;
-  const glbDownload = buildGlbDownload(product);
   const fbxDownload = buildFbxDownload(product);
+
+  // PB3-B item 3 — device form factor drives which CTA is primary.
+  const isTouchDevice = useIsTouchDevice();
+  // PB3-B — ModelViewer publishes its AR launcher here; the primary CTA
+  // calls it after the free-quota / login check.
+  const arLaunchRef = useRef<(() => void) | null>(null);
+
+  // PB3-B item 6 — AR launch decision. Logged-in consumers: unlimited.
+  // Logged-out: first AR_FREE_LIMIT distinct products are free, then the
+  // sign-in modal. A product already viewed is always free (no re-consume).
+  const handleArClick = () => {
+    if (arUnlocked) {
+      arLaunchRef.current?.();
+      return;
+    }
+    const seen = readArQuota();
+    if (!seen.includes(product.id)) {
+      if (seen.length >= AR_FREE_LIMIT) {
+        setLoginOpen(true);
+        return;
+      }
+      try {
+        localStorage.setItem(
+          AR_QUOTA_KEY,
+          JSON.stringify([...seen, product.id]),
+        );
+      } catch {
+        // localStorage unavailable → don't block (lead capture, not DRM).
+      }
+    }
+    arLaunchRef.current?.();
+  };
+
+  // PB3-B item 3 — the primary CTA's WhatsApp target. Prefer the cheapest
+  // channel that carries a number (whereToBuy is pre-sorted cheapest-first),
+  // else the global lead number; falls back to email when no number exists —
+  // exactly the priority WhereToBuy uses, so the shortcut and the detailed
+  // card agree.
+  const primaryWaText =
+    tWhere("waText", { name: product.name, url: productUrl }) +
+    (product.sku_id ? ` (SKU: ${product.sku_id})` : "");
+  const channelWhatsapp = whereToBuy.find((c) => c.whatsapp)?.whatsapp ?? null;
+  const primaryWaHref =
+    waLink(channelWhatsapp ?? leadWhatsapp, primaryWaText) ||
+    `mailto:${leadEmail}?subject=${encodeURIComponent(
+      `Enquiry: ${product.name}${product.sku_id ? ` (${product.sku_id})` : ""}`,
+    )}`;
 
   // Installation method — a controlled-vocab slug in attributes.mounting
   // (AI-filled from the spec sheet). Map known slugs to a localized label;
@@ -152,6 +236,14 @@ export default function ProductDetail({
   // so we never show a swatch that does nothing.
   const [modelMaterialCount, setModelMaterialCount] = useState<number | null>(null);
 
+  const hasModel = !!modelSrc;
+  // Primary = biggest, black; secondary = smaller, outline. The size gap is
+  // deliberate (PB3-B item 3 — the primary CTA must read as dominant).
+  const primaryBtn =
+    "inline-flex w-full items-center justify-center gap-1.5 rounded-md bg-black px-5 py-3.5 text-base font-semibold text-white transition hover:bg-neutral-800";
+  const secondaryBtn =
+    "inline-flex w-full items-center justify-center gap-1.5 rounded-md border border-neutral-300 bg-white px-5 py-2.5 text-sm font-medium text-neutral-800 transition hover:border-neutral-500";
+
   return (
     <div className="grid gap-8 md:grid-cols-[1.2fr_1fr]">
       <ProductGallery
@@ -175,10 +267,7 @@ export default function ProductDetail({
         realDimensionsMm={product.dimensions_mm ?? null}
         onMaterialCount={setModelMaterialCount}
         emptyLabel={t("noImages")}
-        arUnlocked={arUnlocked}
-        onArLocked={() => setLoginOpen(true)}
-        arViewLabel={t("arViewInAR")}
-        arLockedLabel={t("arLoginToView")}
+        arLaunchRef={arLaunchRef}
       />
 
       <div className="flex flex-col gap-5">
@@ -221,6 +310,46 @@ export default function ProductDetail({
           />
         )}
 
+        {/* PB3-B item 3 — device-gated primary CTA. Touch device: AR is the
+            biggest (black) button, WhatsApp second. Desktop: WhatsApp is the
+            primary black button and AR is hidden (no dead-end on a device that
+            can't run it), followed by the item-4 hint to open on a phone. */}
+        <div className="flex flex-col gap-2">
+          {isTouchDevice ? (
+            <>
+              {hasModel && (
+                <button type="button" onClick={handleArClick} className={primaryBtn}>
+                  <span aria-hidden>📱</span> {t("arViewInAR")}
+                </button>
+              )}
+              <a
+                href={primaryWaHref}
+                target="_blank"
+                rel="noopener noreferrer"
+                className={secondaryBtn}
+              >
+                <span aria-hidden>💬</span> {tWhere("whatsappRetailer")}
+              </a>
+            </>
+          ) : (
+            <>
+              <a
+                href={primaryWaHref}
+                target="_blank"
+                rel="noopener noreferrer"
+                className={primaryBtn}
+              >
+                <span aria-hidden>💬</span> {tWhere("whatsappRetailer")}
+              </a>
+              {hasModel && (
+                <p className="text-xs italic text-neutral-500">
+                  {t("openOnPhone")}
+                </p>
+              )}
+            </>
+          )}
+        </div>
+
         {product.description && (
           <p className="whitespace-pre-line text-sm leading-relaxed text-neutral-700">
             {product.description}
@@ -234,18 +363,15 @@ export default function ProductDetail({
               <dd>{itemTypeLabel}</dd>
             </>
           )}
-          {/* SKU row — Wave 1 (mig 0033). Always rendered; em-dash
-              placeholder when null/blank so the column alignment
-              doesn't shift across products and the visitor can still
-              scan the spec table consistently. */}
-          <>
-            <dt className="text-neutral-500">{t("sku")}</dt>
-            <dd>
-              {product.sku_id && product.sku_id.trim()
-                ? product.sku_id
-                : "—"}
-            </dd>
-          </>
+          {/* SKU row (PB3-B item 5) — empty value → row not rendered. No
+              em-dash / N-A placeholder; every spec row hides when blank,
+              matching Kohler / IKEA / Wayfair. */}
+          {product.sku_id && product.sku_id.trim() && (
+            <>
+              <dt className="text-neutral-500">{t("sku")}</dt>
+              <dd>{product.sku_id}</dd>
+            </>
+          )}
           {roomLabels.length > 0 && (
             <>
               <dt className="text-neutral-500">{t("room")}</dt>
@@ -321,30 +447,14 @@ export default function ProductDetail({
           </a>
         )}
 
-        {/* Download .glb — surfaced only when a model exists. The
-            href carries `?download=<slug>.glb` so Supabase Storage
-            replies with `Content-Disposition: attachment; filename=…`
-            and the file lands on a designer's disk under a useful
-            name; without that, browsers ignore the cross-origin
-            `download` attr and the file is saved as plain
-            "model.glb" — collides for every product they keep. See
-            buildGlbDownload() for slug rules + UUID fallback for
-            all-CJK names. */}
-        {glbDownload && (
-          <a
-            href={glbDownload.href}
-            download={glbDownload.filename}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center justify-center rounded-md bg-neutral-100 px-5 py-3 text-sm font-medium text-neutral-800 transition hover:bg-neutral-200"
-          >
-            {t("downloadGlb")}
-          </a>
-        )}
+        {/* PB3-B item 1 — the free "Download 3D model (.glb)" button was
+            removed: giving the GLB away undercuts the paid designer-download
+            business. The GLB file, AR, and the in-page 3D viewer are
+            untouched — only the download ENTRY POINT is gone. */}
 
         {/* Sprint 1 C2 — Download .fbx is gated behind designer login +
-            credit. The button component handles login redirect / credit
-            deduction; GLB above stays free. */}
+            credit. PB3-B item 2 renders it as a low-emphasis one-line link,
+            not a button-weight block. */}
         {fbxDownload && (
           <FbxDownloadButton
             productId={product.id}

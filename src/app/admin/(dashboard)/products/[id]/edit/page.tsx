@@ -127,6 +127,8 @@ export default async function EditProductPage({
   const rawErr = sp.err ?? "";
   const isMeshyErr = rawErr.startsWith("meshy_");
   const isPublishErr = rawErr === "publish_blocked";
+  // PB3-B item 7 — SKU-duplicate save block, surfaced on the form banner.
+  const isSkuErr = rawErr === "sku_dup";
   const meshyBlockedReason =
     isMeshyErr && rawErr !== "meshy_no_cutouts"
       ? rawErr.replace(/^meshy_/, "")
@@ -154,7 +156,11 @@ export default async function EditProductPage({
     retailer:
       "Attach at least one retailer/supplier in the Sales section (use \"Others\" if the product genuinely has no channel) before publishing.",
   };
-  const productErrCode = isPublishErr ? "publish_blocked" : undefined;
+  const productErrCode = isPublishErr
+    ? "publish_blocked"
+    : isSkuErr
+      ? "sku_dup"
+      : undefined;
   // PB3-A — reason is now a comma-separated list of EVERY failing gate.
   // List all missing items so the operator fixes them in one pass.
   const productErrMsg = isPublishErr
@@ -164,9 +170,13 @@ export default async function EditProductPage({
         .filter(Boolean)
         .join(" ") ||
       "This product is missing something required for Publish.")
-    : undefined;
-  const rembgErrCode = isMeshyErr || isPublishErr ? undefined : sp.err;
-  const rembgErrMsg = isMeshyErr || isPublishErr ? undefined : sp.msg;
+    : isSkuErr
+      ? (sp.msg ?? "This SKU is already used by another product.")
+      : undefined;
+  const rembgErrCode =
+    isMeshyErr || isPublishErr || isSkuErr ? undefined : sp.err;
+  const rembgErrMsg =
+    isMeshyErr || isPublishErr || isSkuErr ? undefined : sp.msg;
 
   return (
     <ProductForm

@@ -826,6 +826,37 @@ async function loadPublishGateFacts(
   };
 }
 
+/**
+ * PB3-B item 7 — SKU uniqueness. Returns the OTHER product that already uses
+ * this SKU (trimmed, case-insensitive), or null if none. Empty / null SKU
+ * never collides (many products legitimately have no SKU — ~122 today), so
+ * callers skip the check for blank values. Shared by single-edit and any
+ * bulk path so the rule can't drift. Read-only; enforcement (block the save)
+ * lives at each call site. NOT retroactive — only consulted at save time,
+ * never batch-applied to existing rows.
+ *
+ * Small-catalog approach: fetch id/name/sku and normalize in JS. Precise
+ * (trim + case-fold both sides, no ilike wildcard/escape pitfalls) and cheap
+ * at a few hundred products.
+ */
+async function findSkuCollision(
+  sku: string | null | undefined,
+  selfId: string | null,
+): Promise<{ id: string; name: string; sku_id: string | null } | null> {
+  const norm = (sku ?? "").trim().toLowerCase();
+  if (!norm) return null;
+  const supabase = createServiceRoleClient();
+  const { data } = await supabase
+    .from("products")
+    .select("id, name, sku_id")
+    .not("sku_id", "is", null);
+  for (const p of data ?? []) {
+    if (selfId && p.id === selfId) continue;
+    if (String(p.sku_id ?? "").trim().toLowerCase() === norm) return p;
+  }
+  return null;
+}
+
 // `createProduct` removed in Phase 1 收尾 P0 #4 (commit 2). The
 // /admin/products/new flow no longer POSTs a name-only form here —
 // it's a Server Component that inserts an "Untitled product" draft
@@ -960,6 +991,21 @@ export async function updateProduct(id: string, fd: FormData): Promise<void> {
     );
   }
   Object.assign(updates, built.updates);
+
+  // PB3-B item 7 — SKU uniqueness. Block the save when this SKU (trimmed,
+  // case-insensitive) already belongs to ANOTHER product. Empty SKU never
+  // collides. Same rule as bulk (shared findSkuCollision) — no drift. Not
+  // retroactive: existing dupes are untouched; this only fires on save.
+  if (payload.sku_id && payload.sku_id.trim()) {
+    const clash = await findSkuCollision(payload.sku_id, id);
+    if (clash) {
+      redirect(
+        `/admin/products/${id}/edit?err=sku_dup&msg=${encodeURIComponent(
+          `SKU "${payload.sku_id.trim()}" is already used by "${clash.name}" (${clash.id.slice(0, 8)}). SKUs must be unique — change one of them.`,
+        )}`,
+      );
+    }
+  }
 
   // ── Publish gates (Wave 2B · Commit 7 · PB3-A) ──────────────
   //
