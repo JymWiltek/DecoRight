@@ -145,14 +145,25 @@ export default async function EditProductPage({
     // state. Surfacing both options here so the operator knows they
     // don't have to burn rembg quota on a clean white-backdrop photo.
     cutouts:
-      "Click \"Run Background Removal\" OR mark a clean image as Skipped so at least one cutout is approved before publishing.",
+      "Add a product photo — click \"Run Background Removal\" OR mark a clean image as Skipped so at least one cutout is approved before publishing.",
     glb:
       "Click \"Generate 3D model\" (or upload a .glb) so the product has a 3D model before publishing.",
+    // PB3-A — new gates.
+    fbx:
+      "Upload the FBX original (.fbx or .zip) in the 3D MODELS section so designers can download it before publishing.",
+    retailer:
+      "Attach at least one retailer/supplier in the Sales section (use \"Others\" if the product genuinely has no channel) before publishing.",
   };
   const productErrCode = isPublishErr ? "publish_blocked" : undefined;
+  // PB3-A — reason is now a comma-separated list of EVERY failing gate.
+  // List all missing items so the operator fixes them in one pass.
   const productErrMsg = isPublishErr
-    ? (PUBLISH_BLOCKED_MESSAGES[sp.reason ?? ""] ??
-        "This product is missing something required for Publish.")
+    ? ((sp.reason ?? "")
+        .split(",")
+        .map((r) => PUBLISH_BLOCKED_MESSAGES[r.trim()])
+        .filter(Boolean)
+        .join(" ") ||
+      "This product is missing something required for Publish.")
     : undefined;
   const rembgErrCode = isMeshyErr || isPublishErr ? undefined : sp.err;
   const rembgErrMsg = isMeshyErr || isPublishErr ? undefined : sp.msg;

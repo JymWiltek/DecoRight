@@ -473,14 +473,20 @@ export default async function AdminProductsPage({
         // operator gets a likely fix without opening every blocked
         // row.
         const blocked = sp.blocked ? Number(sp.blocked) : 0;
+        // PB3-A — reason is a comma-separated list of every failing gate.
+        const REASON_LABELS: Record<string, string> = {
+          rooms: "no rooms picked",
+          cutouts: "no product photo",
+          glb: "no GLB attached",
+          fbx: "no FBX original",
+          retailer: "no retailer attached",
+        };
         const reasonLabel =
-          sp.reason === "rooms"
-            ? "no rooms picked"
-            : sp.reason === "cutouts"
-              ? "no approved cutouts"
-              : sp.reason === "glb"
-                ? "no GLB attached"
-                : "missing publish requirements";
+          (sp.reason ?? "")
+            .split(",")
+            .map((r) => REASON_LABELS[r.trim()])
+            .filter(Boolean)
+            .join(", ") || "missing publish requirements";
         const tone = sp.err
           ? "bg-rose-50 text-rose-700"
           : "bg-emerald-50 text-emerald-700";
