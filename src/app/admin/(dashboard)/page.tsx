@@ -16,6 +16,8 @@ import StatusCell from "@/components/admin/StatusCell";
 import PriceCell from "@/components/admin/PriceCell";
 import ItemTypeCell from "@/components/admin/ItemTypeCell";
 import ItemTypeFilter from "@/components/admin/ItemTypeFilter";
+import SupplierFilter from "@/components/admin/SupplierFilter";
+import { loadSuppliers } from "@/lib/suppliers";
 import BulkBar from "@/components/admin/BulkBar";
 import SelectAllCheckbox from "@/components/admin/SelectAllCheckbox";
 import RetryRembgInlineButton from "@/components/admin/RetryRembgInlineButton";
@@ -241,6 +243,10 @@ type SearchParams = Promise<{
    *  is silently dropped (no 404 — the user just sees the unfiltered
    *  list, same behavior as an unknown ?status=). */
   type?: string;
+  /** PB2 item 2 — supplier id to filter by (products linked to it via the
+   *  M2M). Validated against the live suppliers list before use; picking the
+   *  internal "Others" marker surfaces products lacking a real channel. */
+  supplier?: string;
   sort?: string;
   bulk?: string;
   bulk_deleted?: string;
@@ -316,10 +322,20 @@ export default async function AdminProductsPage({
   // through). The chip below makes the bypass discoverable.
   const showEmptyDrafts = sp.show_drafts === "1";
 
+  // PB2 item 2 — supplier filter. Validate ?supplier= against the live
+  // suppliers list so a stale/garbage id never reaches the DB layer (same
+  // trust-nothing contract as ?type=).
+  const suppliers = await loadSuppliers();
+  const supplierFilterParam =
+    sp.supplier && suppliers.some((s) => s.id === sp.supplier)
+      ? sp.supplier
+      : undefined;
+
   const { products, imageCounts, stuckImageIds } = await listAllProducts({
     q: sp.q,
     status: statusFilter,
     itemType: itemTypeParam,
+    supplierId: supplierFilterParam,
     sort,
     hideEmptyDrafts: !showEmptyDrafts,
   });
@@ -525,6 +541,10 @@ export default async function AdminProductsPage({
           options={itemTypeFilterOptions}
           current={itemTypeParam}
           counts={itemTypeCounts}
+        />
+        <SupplierFilter
+          options={suppliers.map((s) => ({ id: s.id, name: s.name }))}
+          current={supplierFilterParam}
         />
         {/* Empty-draft toggle (Phase 1 收尾 P1).
             ON state = orphans hidden (default + cleaner list).

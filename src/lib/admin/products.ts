@@ -30,6 +30,11 @@ export type AdminProductListOptions = {
    *  against the taxonomy before reaching this layer — listAllProducts
    *  itself just trusts the value. */
   itemType?: string;
+  /** PB2 item 2 — restrict to products linked to one supplier id (via the
+   *  product_suppliers M2M). Lets the operator find, e.g., every product
+   *  tagged with the internal "Others" marker (i.e. lacking a real sales
+   *  channel). Validated by the page component before it reaches here. */
+  supplierId?: string;
   sort?: AdminProductSort;
   /** Phase 1 收尾 P1 fix: hide "empty draft" rows (status='draft'
    *  AND no images AND no rooms). The /admin/products/new flow
@@ -83,6 +88,22 @@ export async function listAllProducts(
     query = query.is("item_type", null);
   } else if (opts.itemType) {
     query = query.eq("item_type", opts.itemType);
+  }
+
+  // PB2 item 2 — supplier filter. Resolve the product ids linked to this
+  // supplier via the M2M table, then constrain the main query to them. An
+  // empty result set uses an impossible id so the list correctly shows zero
+  // (rather than falling through to "no filter").
+  if (opts.supplierId) {
+    const { data: links } = await supabase
+      .from("product_suppliers")
+      .select("product_id")
+      .eq("supplier_id", opts.supplierId);
+    const ids = [...new Set((links ?? []).map((l) => l.product_id))];
+    query = query.in(
+      "id",
+      ids.length ? ids : ["00000000-0000-0000-0000-000000000000"],
+    );
   }
 
   switch (opts.sort ?? "updated_desc") {

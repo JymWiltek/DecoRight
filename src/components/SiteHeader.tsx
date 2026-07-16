@@ -10,6 +10,7 @@ import {
 import {
   publishedCountsByItemType,
   coversByItemType,
+  getInStockSubtypesByItemType,
 } from "@/lib/products";
 import { buildActiveCategories } from "@/lib/categories";
 import { getDesignerSession } from "@/lib/auth/require-designer";
@@ -37,7 +38,7 @@ export default async function SiteHeader({
 }: {
   tight?: boolean;
 }) {
-  const [t, tCat, locale, sysLocale, taxonomy, counts, covers] =
+  const [t, tCat, locale, sysLocale, taxonomy, counts, covers, inStockSubtypes] =
     await Promise.all([
       getTranslations("site"),
       getTranslations("category"),
@@ -46,6 +47,7 @@ export default async function SiteHeader({
       loadTaxonomy(),
       publishedCountsByItemType(),
       coversByItemType(),
+      getInStockSubtypesByItemType(),
     ]);
 
   const active = buildActiveCategories(
@@ -53,7 +55,16 @@ export default async function SiteHeader({
     counts,
     covers,
     taxonomy.itemSubtypes,
-  );
+  )
+    // In-stock gating: the mega-menu lists ONLY subtypes that a published
+    // product actually carries — the same rule the /c chip bar applies —
+    // so clicking a dropdown entry never lands on an empty subtype page.
+    .map((c) => ({
+      ...c,
+      subtypeSlugs: c.subtypeSlugs.filter((st) =>
+        (inStockSubtypes[c.slug] ?? []).includes(st),
+      ),
+    }));
   const itemTypeLabels = labelMap(taxonomy.itemTypes, locale);
   const subtypeLabels = labelMap(taxonomy.itemSubtypes, locale);
 

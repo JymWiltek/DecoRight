@@ -509,6 +509,32 @@ async function attachStagedRealPhotos(
 }
 
 /**
+ * PB2 item 1 — shallow parse of the `product_suppliers_json` field to
+ * the set of well-formed supplier_id strings. Used by the bulk create
+ * gate to answer "did the operator attach ≥1 retailer?" without a DB
+ * round-trip; the authoritative validation still happens in
+ * attachProductSuppliers (which checks the ids against the live table).
+ */
+function parseSupplierIdsFromForm(fd: FormData): string[] {
+  const raw = fd.get("product_suppliers_json");
+  if (typeof raw !== "string") return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(parsed)) return [];
+  const ids = new Set<string>();
+  for (const item of parsed) {
+    if (!item || typeof item !== "object") continue;
+    const sid = (item as Record<string, unknown>).supplier_id;
+    if (typeof sid === "string" && UUID_RE.test(sid)) ids.add(sid);
+  }
+  return [...ids];
+}
+
+/**
  * Mig 0048 — replace a product's supplier links from the form's
  * `product_suppliers_json` hidden field (emitted by SuppliersPicker on
  * single-edit AND by the bulk card). Shape: array of {supplier_id,
@@ -2025,6 +2051,27 @@ export async function createProductFromUpload(
   await requireAdmin();
   if (!UUID_RE.test(productId)) {
     return { ok: false, error: `invalid productId: ${productId}` };
+  }
+
+  // PB2 item 1 — required-field gate. Bulk create is the one-shot "new
+  // product with content" path, so a real product must ship with all four:
+  // ≥1 photo, a GLB, an FBX original, and ≥1 retailer/supplier. This mirrors
+  // the client gate in BulkCreateForm as a server-side backstop. NEW products
+  // only — single-edit (updateProduct) never reaches here, so existing /
+  // incomplete drafts are never retroactively blocked.
+  const gatePhotos =
+    parseRawImageEntries(fd).length + parseRealPhotoEntries(fd).length;
+  if (gatePhotos === 0) {
+    return { ok: false, error: "At least one product photo is required." };
+  }
+  if (!str(fd, "glb_path")) {
+    return { ok: false, error: "A 3D model (GLB) is required." };
+  }
+  if (!str(fd, "fbx_path") && !str(fd, "fbx_bundle_path")) {
+    return { ok: false, error: "An FBX original is required." };
+  }
+  if (parseSupplierIdsFromForm(fd).length === 0) {
+    return { ok: false, error: "At least one retailer/supplier is required." };
   }
 
   const supabase = createServiceRoleClient();
