@@ -22,6 +22,7 @@ import {
   bulkDeleteAction,
   bulkUpdateStatusAction,
 } from "@/app/admin/(dashboard)/products/actions";
+import BulkAiFlow from "./BulkAiFlow";
 
 type Props = {
   /** Total row count, shown as "N of M selected" for context. */
@@ -55,6 +56,11 @@ function readCheckedIds(): string[] {
 export default function BulkBar({ totalRows }: Props) {
   const [count, setCount] = useState(0);
   const [pending, startTransition] = useTransition();
+  // PB4 item 4 — the two SEPARATE bulk-AI flows (never a merged button).
+  const [aiFlow, setAiFlow] = useState<{
+    kind: "specs" | "scenes";
+    ids: string[];
+  } | null>(null);
 
   useEffect(() => {
     const formEl = document.getElementById("bulk-form") as HTMLFormElement | null;
@@ -93,10 +99,23 @@ export default function BulkBar({ totalRows }: Props) {
     });
   }
 
+  function openAi(kind: "specs" | "scenes") {
+    const ids = readCheckedIds();
+    if (ids.length === 0) return;
+    setAiFlow({ kind, ids });
+  }
+
   if (count === 0) return null;
 
   return (
     <div className="fixed inset-x-0 bottom-0 z-40 border-t border-neutral-200 bg-white shadow-[0_-4px_12px_-4px_rgba(0,0,0,0.08)]">
+      {aiFlow && (
+        <BulkAiFlow
+          kind={aiFlow.kind}
+          ids={aiFlow.ids}
+          onClose={() => setAiFlow(null)}
+        />
+      )}
       <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3 px-6 py-3">
         <div className="text-sm">
           <span className="font-semibold">{count}</span>{" "}
@@ -106,6 +125,23 @@ export default function BulkBar({ totalRows }: Props) {
           )}
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          {/* PB4 — two SEPARATE AI buttons (cheap spec-read vs pricey
+              scene-gen), each opens the sample-first / cost-visible flow. */}
+          <button
+            type="button"
+            onClick={() => openAi("specs")}
+            className="rounded-md border border-sky-300 bg-sky-50 px-3 py-1.5 text-xs font-medium text-sky-800 transition hover:bg-sky-100"
+          >
+            ✨ Run AI · read specs
+          </button>
+          <button
+            type="button"
+            onClick={() => openAi("scenes")}
+            className="rounded-md border border-violet-300 bg-violet-50 px-3 py-1.5 text-xs font-medium text-violet-800 transition hover:bg-violet-100"
+          >
+            🖼 Generate scene images
+          </button>
+          <span className="mx-1 h-5 w-px bg-neutral-200" aria-hidden />
           {STATUS_OPTIONS.map((o) => (
             <button
               key={o.value}
