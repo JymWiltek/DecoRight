@@ -195,6 +195,7 @@ export async function runSpecParseAndApply(
  */
 export async function runSceneGenForProduct(
   productId: string,
+  regenerate = false,
 ): Promise<BulkAiOutcome> {
   await requireAdmin();
   if (!UUID_RE.test(productId)) {
@@ -202,7 +203,8 @@ export async function runSceneGenForProduct(
   }
   try {
     // Returns done | skipped; THROWS on a real generation failure.
-    const res = await maybeGenerateSceneCover(productId);
+    // regenerate=true forces overwrite of an existing scene cover.
+    const res = await maybeGenerateSceneCover(productId, { force: regenerate });
     revalidatePath("/admin");
     revalidatePath(`/product/${productId}`);
     return {
@@ -221,4 +223,62 @@ export async function runSceneGenForProduct(
       error: msg,
     };
   }
+}
+
+export type AiPanelInfo = {
+  /** Most-recent actual per-call cost for a spec parse (USD), or null if
+   *  there's no history yet. Drives the live estimate — read from real usage,
+   *  never a hardcoded rate. */
+  specUnitUsd: number | null;
+  /** Same for scene generation. Scene gen is billed per image and isn't
+   *  token-metered, so this is usually null → the UI shows a per-image note
+   *  rather than a fabricated number. */
+  sceneUnitUsd: number | null;
+  /** How many of the selected products already have a scene cover (so the
+   *  panel can show how many scene generations are SKIPPED when "regenerate"
+   *  is off). */
+  withSceneCount: number;
+};
+
+/**
+ * PB3-C A2 — data for the panel's live cost estimate + scene-skip count.
+ * Cost units come from the api_usage history (the most recent real charge),
+ * so the estimate is grounded in actuals, not a guessed rate.
+ */
+export async function getAiPanelInfo(ids: string[]): Promise<AiPanelInfo> {
+  await requireAdmin();
+  const supabase = createServiceRoleClient();
+  const validIds = (Array.isArray(ids) ? ids : []).filter((x) => UUID_RE.test(x));
+
+  const lastCost = async (services: string[]): Promise<number | null> => {
+    const { data } = await supabase
+      .from("api_usage")
+      .select("cost_usd")
+      // Some names (scene services) aren't in the service enum — they simply
+      // match no rows and yield null, which is the intended "no history" path.
+      .in("service", services as never)
+      .gt("cost_usd", 0)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    return typeof data?.cost_usd === "number" ? data.cost_usd : null;
+  };
+
+  const [specUnitUsd, sceneUnitUsd] = await Promise.all([
+    lastCost(["gpt4o_vision_spec_v2", "gpt4o_vision_spec_merged", "gpt4o_vision_spec"]),
+    lastCost(["scene_cover", "gpt_image_scene"]),
+  ]);
+
+  let withSceneCount = 0;
+  if (validIds.length) {
+    const { data } = await supabase
+      .from("products")
+      .select("thumbnail_url")
+      .in("id", validIds);
+    withSceneCount = (data ?? []).filter((p) =>
+      (p.thumbnail_url ?? "").includes("/scene-"),
+    ).length;
+  }
+
+  return { specUnitUsd, sceneUnitUsd, withSceneCount };
 }

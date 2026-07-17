@@ -110,6 +110,11 @@ export default async function ProductPage({ params }: PageProps) {
       .eq("product_id", id)
       .eq("state", "cutout_approved")
       .eq("show_on_storefront", true)
+      // PB3-C C1 — spec sheets / catalog & text screenshots are for the AI
+      // parser only, NEVER shown to customers. image_kind='spec_sheet' is the
+      // existing internal marker; the AI reads feed_to_ai images regardless of
+      // kind, so hiding them here doesn't blind the parser (C2).
+      .neq("image_kind", "spec_sheet")
       // Mig 0038 — primary thumbnail leads, then by upload time.
       .order("is_primary_thumbnail", { ascending: false })
       .order("created_at", { ascending: true }),

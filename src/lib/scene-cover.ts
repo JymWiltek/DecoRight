@@ -238,7 +238,12 @@ export type SceneCoverResult =
  */
 export async function maybeGenerateSceneCover(
   productId: string,
+  opts?: { force?: boolean },
 ): Promise<SceneCoverResult> {
+  // PB3-C A — force=true (the panel's "Regenerate existing scene images")
+  // bypasses the "already has a scene cover" short-circuits so the operator
+  // can deliberately overwrite. Same generation path either way.
+  const force = opts?.force === true;
   const supabase = createServiceRoleClient();
   // Record the outcome so scene-gen failures are VISIBLE (no more silent
   // swallow). Ignores its own write error → no-ops safely if the
@@ -265,14 +270,22 @@ export async function maybeGenerateSceneCover(
   if (pErr) throw new Error(`db read: ${pErr.message}`);
   if (!product) return { status: "skipped", reason: "product not found" };
   if (!product.thumbnail_url) return skip("no thumbnail");
-  if (product.thumbnail_url.includes("/scene-")) return skip("already a scene cover");
+  if (!force && product.thumbnail_url.includes("/scene-"))
+    return skip("already a scene cover");
 
   const { data: imgs } = await supabase
     .from("product_images")
     .select("id,cutout_image_url,image_kind,is_primary")
     .eq("product_id", productId);
   const rows = imgs ?? [];
-  if (rows.some((r) => r.image_kind === "real_photo" && (r.cutout_image_url ?? "").includes("/scene-")))
+  if (
+    !force &&
+    rows.some(
+      (r) =>
+        r.image_kind === "real_photo" &&
+        (r.cutout_image_url ?? "").includes("/scene-"),
+    )
+  )
     return skip("scene row exists");
 
   const srcUrl =

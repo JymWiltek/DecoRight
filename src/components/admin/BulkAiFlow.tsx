@@ -1,218 +1,250 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   runSpecParseAndApply,
   runSceneGenForProduct,
+  getAiPanelInfo,
   type BulkAiOutcome,
+  type AiPanelInfo,
 } from "@/app/admin/(dashboard)/products/ai-bulk-actions";
 
 /**
- * PB4 item 4 — the money-safe bulk-AI modal. ONE instance per trigger
- * (spec-read OR scene-gen). Enforces the flow Jym mandated:
- *   1. "Selected N products. Run 1 sample first?"  (never auto-batches)
- *   2. run 1 sample → show what got filled + REAL cost
- *   3. Jym confirms → batch the remaining N-1, with a live progress bar
- *   4. an Abort button stops the loop between products
- *   5. a quota / 429 error STOPS the whole batch immediately with a clear
- *      "OpenAI quota" message — never keeps burning
- *
- * The loop runs client-side (one server action per product) so Abort is
- * instant and cost accumulates from each call's real usage.
+ * PB3-C A — the single "✨ Run AI" panel. Operator feedback killed the old
+ * two-button + forced-sample flow. Now: one panel with checkboxes, a LIVE cost
+ * estimate that tracks the selection, and one Run that goes straight to the
+ * batch (selecting N = running N — the operator tests by selecting 1 himself).
+ *   ☑ Read specs & fill fields        (default on — cheap)
+ *   ☐ Generate scene images           (default off — pricey)
+ *   ☐ Regenerate existing scene images (default off — overwrite)
+ * Kept from before: progress bar, Abort, quota/429 hard-stop, and the REAL
+ * total spend (from OpenAI usage, never estimated).
  */
 
-type Kind = "specs" | "scenes";
-type Phase = "confirm" | "sample" | "batching" | "done" | "stopped";
-
-const LABEL: Record<Kind, string> = {
-  specs: "Run AI · read specs",
-  scenes: "Generate scene images",
-};
-
-function runOne(kind: Kind, id: string): Promise<BulkAiOutcome> {
-  return kind === "specs" ? runSpecParseAndApply(id) : runSceneGenForProduct(id);
-}
+type Phase = "config" | "running" | "done" | "stopped";
 
 export default function BulkAiFlow({
-  kind,
   ids,
   onClose,
 }: {
-  kind: Kind;
   ids: string[];
   onClose: () => void;
 }) {
   const router = useRouter();
-  const [phase, setPhase] = useState<Phase>("confirm");
-  const [busy, setBusy] = useState(false);
-  const [done, setDone] = useState(0); // products processed
+  const total = ids.length;
+
+  const [info, setInfo] = useState<AiPanelInfo | null>(null);
+  const [readSpecs, setReadSpecs] = useState(true);
+  const [genScenes, setGenScenes] = useState(false);
+  const [regenScenes, setRegenScenes] = useState(false);
+
+  const [phase, setPhase] = useState<Phase>("config");
+  const [done, setDone] = useState(0);
   const [costUsd, setCostUsd] = useState(0);
   const [results, setResults] = useState<BulkAiOutcome[]>([]);
   const [quotaHit, setQuotaHit] = useState(false);
   const abortRef = useRef(false);
 
-  const total = ids.length;
-  const sampleId = ids[0];
-  const rest = ids.slice(1);
+  useEffect(() => {
+    let live = true;
+    getAiPanelInfo(ids).then((i) => live && setInfo(i));
+    return () => {
+      live = false;
+    };
+  }, [ids]);
+
+  // ── Live estimate ────────────────────────────────────────────────
+  const sceneTargets = genScenes
+    ? regenScenes
+      ? total
+      : total - (info?.withSceneCount ?? 0)
+    : 0;
+  const specEst =
+    readSpecs && info?.specUnitUsd != null ? info.specUnitUsd * total : 0;
+  const sceneEst =
+    genScenes && info?.sceneUnitUsd != null
+      ? info.sceneUnitUsd * sceneTargets
+      : 0;
+  const estKnown = specEst + sceneEst;
+  const specUnknown = readSpecs && info != null && info.specUnitUsd == null;
+  const sceneUnknown = genScenes && info != null && info.sceneUnitUsd == null;
 
   const record = (o: BulkAiOutcome) => {
     setResults((prev) => [...prev, o]);
     if (o.ok) setCostUsd((c) => c + o.costUsd);
   };
 
-  async function runSample() {
-    setBusy(true);
-    const o = await runOne(kind, sampleId);
-    record(o);
-    setDone(1);
-    setBusy(false);
-    if (!o.ok && o.code === "quota") {
-      setQuotaHit(true);
-      setPhase("stopped");
-      return;
-    }
-    setPhase("sample");
-  }
-
-  async function runRest() {
-    setPhase("batching");
-    setBusy(true);
-    for (const id of rest) {
+  async function run() {
+    if (!readSpecs && !genScenes) return;
+    setPhase("running");
+    for (let i = 0; i < ids.length; i++) {
       if (abortRef.current) break;
-      const o = await runOne(kind, id);
-      record(o);
-      setDone((d) => d + 1);
-      if (!o.ok && o.code === "quota") {
-        setQuotaHit(true);
-        setBusy(false);
-        setPhase("stopped");
-        router.refresh();
-        return;
+      const id = ids[i];
+      if (readSpecs) {
+        const o = await runSpecParseAndApply(id);
+        record(o);
+        if (!o.ok && o.code === "quota") return stop();
       }
+      if (genScenes && !abortRef.current) {
+        const o = await runSceneGenForProduct(id, regenScenes);
+        record(o);
+        if (!o.ok && o.code === "quota") return stop();
+      }
+      setDone(i + 1);
     }
-    setBusy(false);
     setPhase(abortRef.current ? "stopped" : "done");
     router.refresh();
   }
 
-  function abort() {
-    abortRef.current = true;
+  function stop() {
+    setQuotaHit(true);
+    setDone((d) => d); // freeze
+    setPhase("stopped");
+    router.refresh();
   }
 
-  const filledCount = results.filter((r) => r.ok).length;
-  const allWarnings = results.flatMap((r) => (r.ok ? r.warnings : [`${r.productId.slice(0, 8)}: ${r.error}`]));
-  const sampleResult = results[0];
+  const succeeded = results.filter((r) => r.ok).length;
+  const warnings = results.flatMap((r) =>
+    r.ok ? r.warnings : [`${r.productId.slice(0, 8)}: ${r.error}`],
+  );
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
       <div className="w-full max-w-lg rounded-lg bg-white p-5 shadow-xl">
         <div className="mb-3 flex items-start justify-between">
-          <h2 className="text-lg font-semibold">{LABEL[kind]}</h2>
+          <h2 className="text-lg font-semibold">✨ Run AI · {total} product{total === 1 ? "" : "s"}</h2>
           <button
             type="button"
             onClick={onClose}
-            disabled={busy}
+            disabled={phase === "running"}
             className="text-sm text-neutral-400 hover:text-neutral-700 disabled:opacity-40"
           >
             ✕
           </button>
         </div>
 
-        {/* Cost is ALWAYS visible once anything ran. */}
-        {(phase !== "confirm" || done > 0) && (
-          <div className="mb-3 rounded-md bg-neutral-50 px-3 py-2 text-sm">
-            Processed <strong>{done}</strong>/{total}
-            {kind === "specs" ? (
-              <>
-                {" · "}real OpenAI spend so far:{" "}
-                <strong>${costUsd.toFixed(4)}</strong>
-              </>
-            ) : (
-              <span className="text-neutral-500">
-                {" "}· scene images are billed per-image by OpenAI (see the
-                OpenAI dashboard for the exact figure)
-              </span>
-            )}
-          </div>
-        )}
-
-        {phase === "confirm" && (
+        {phase === "config" && (
           <>
-            <p className="mb-4 text-sm text-neutral-700">
-              Selected <strong>{total}</strong> product{total === 1 ? "" : "s"}.
-              We&rsquo;ll run <strong>1 sample first</strong> and show you the
-              result + cost before touching the rest.
-            </p>
-            <div className="flex justify-end gap-2">
+            <div className="space-y-2">
+              <label className="flex items-start gap-2 rounded-md border border-neutral-200 p-2.5 text-sm">
+                <input
+                  type="checkbox"
+                  checked={readSpecs}
+                  onChange={(e) => setReadSpecs(e.target.checked)}
+                  className="mt-0.5"
+                />
+                <span>
+                  <span className="font-medium">Read specs &amp; fill fields</span>
+                  <span className="block text-xs text-neutral-500">
+                    Cheap. Reads photos / spec sheets → name, type, dimensions,
+                    description, etc. (empty fields only).
+                  </span>
+                </span>
+              </label>
+              <label className="flex items-start gap-2 rounded-md border border-neutral-200 p-2.5 text-sm">
+                <input
+                  type="checkbox"
+                  checked={genScenes}
+                  onChange={(e) => setGenScenes(e.target.checked)}
+                  className="mt-0.5"
+                />
+                <span>
+                  <span className="font-medium">Generate scene images</span>{" "}
+                  <span className="rounded bg-amber-100 px-1 text-[10px] text-amber-800">pricey</span>
+                  <span className="block text-xs text-neutral-500">
+                    Puts the product into a styled room scene.
+                  </span>
+                </span>
+              </label>
+              <label
+                className={`flex items-start gap-2 rounded-md border border-neutral-200 p-2.5 text-sm ${genScenes ? "" : "opacity-50"}`}
+              >
+                <input
+                  type="checkbox"
+                  checked={regenScenes}
+                  disabled={!genScenes}
+                  onChange={(e) => setRegenScenes(e.target.checked)}
+                  className="mt-0.5"
+                />
+                <span>
+                  <span className="font-medium">Regenerate existing scene images</span>
+                  <span className="block text-xs text-neutral-500">
+                    Off: products that already have a scene are skipped. On:
+                    overwrite them.
+                  </span>
+                </span>
+              </label>
+            </div>
+
+            {/* Live estimate. */}
+            <div className="mt-3 rounded-md bg-neutral-50 px-3 py-2 text-sm">
+              {info == null ? (
+                <span className="text-neutral-400">Estimating…</span>
+              ) : (
+                <>
+                  Estimated spend:{" "}
+                  <strong>${estKnown.toFixed(4)}</strong>
+                  {readSpecs && (
+                    <span className="block text-xs text-neutral-500">
+                      specs: {total} ×{" "}
+                      {info.specUnitUsd != null
+                        ? `$${info.specUnitUsd.toFixed(4)}`
+                        : "— (no history yet)"}
+                    </span>
+                  )}
+                  {genScenes && (
+                    <span className="block text-xs text-neutral-500">
+                      scenes: {sceneTargets} ×{" "}
+                      {info.sceneUnitUsd != null
+                        ? `$${info.sceneUnitUsd.toFixed(4)}`
+                        : "per image (billed by OpenAI — see dashboard)"}
+                      {!regenScenes && (info.withSceneCount ?? 0) > 0 && (
+                        <> · {info.withSceneCount} already have a scene (skipped)</>
+                      )}
+                    </span>
+                  )}
+                  {(specUnknown || sceneUnknown) && (
+                    <span className="block text-xs text-amber-600">
+                      Actual total is read from OpenAI usage after the run.
+                    </span>
+                  )}
+                </>
+              )}
+            </div>
+
+            <div className="mt-4 flex justify-end gap-2">
               <button type="button" onClick={onClose} className={btnGhost}>
                 Cancel
               </button>
               <button
                 type="button"
-                onClick={runSample}
-                disabled={busy}
+                onClick={run}
+                disabled={!readSpecs && !genScenes}
                 className={btnPrimary}
               >
-                {busy ? "Running sample…" : "Run 1 sample"}
+                Run
               </button>
             </div>
           </>
         )}
 
-        {phase === "sample" && sampleResult && (
+        {phase === "running" && (
           <>
-            <div className="mb-4 rounded-md border border-neutral-200 p-3 text-sm">
-              <div className="mb-1 font-medium">Sample result</div>
-              {sampleResult.ok ? (
-                <>
-                  <div>
-                    Filled:{" "}
-                    {sampleResult.filled.length
-                      ? sampleResult.filled.join(", ")
-                      : "(nothing new — fields already set or unreadable)"}
-                  </div>
-                  {sampleResult.warnings.length > 0 && (
-                    <ul className="mt-1 list-disc pl-4 text-xs text-amber-700">
-                      {sampleResult.warnings.map((w, i) => (
-                        <li key={i}>{w}</li>
-                      ))}
-                    </ul>
-                  )}
-                </>
-              ) : (
-                <div className="text-rose-700">Error: {sampleResult.error}</div>
+            <div className="mb-2 text-sm">
+              Processing {done}/{total}
+              {readSpecs && (
+                <> · real spend <strong>${costUsd.toFixed(4)}</strong></>
               )}
             </div>
-            <div className="flex justify-end gap-2">
-              <button type="button" onClick={onClose} className={btnGhost}>
-                Cancel
-              </button>
-              {rest.length > 0 ? (
-                <button type="button" onClick={runRest} className={btnPrimary}>
-                  Results OK — run remaining {rest.length}
-                </button>
-              ) : (
-                <button type="button" onClick={onClose} className={btnPrimary}>
-                  Done
-                </button>
-              )}
-            </div>
-          </>
-        )}
-
-        {phase === "batching" && (
-          <>
-            <div className="mb-3">
-              <div className="h-2 w-full overflow-hidden rounded-full bg-neutral-100">
-                <div
-                  className="h-full bg-black transition-all"
-                  style={{ width: `${Math.round((done / total) * 100)}%` }}
-                />
-              </div>
+            <div className="mb-3 h-2 w-full overflow-hidden rounded-full bg-neutral-100">
+              <div
+                className="h-full bg-black transition-all"
+                style={{ width: `${Math.round((done / total) * 100)}%` }}
+              />
             </div>
             <div className="flex justify-end">
-              <button type="button" onClick={abort} className={btnGhost}>
+              <button type="button" onClick={() => (abortRef.current = true)} className={btnGhost}>
                 Abort
               </button>
             </div>
@@ -233,20 +265,22 @@ export default function BulkAiFlow({
               </div>
             )}
             <div className="mb-3 text-sm">
-              ✓ {filledCount} succeeded
-              {kind === "specs" && (
-                <>
-                  {" "}· total real spend <strong>${costUsd.toFixed(4)}</strong>
-                </>
+              ✓ {succeeded} step{succeeded === 1 ? "" : "s"} succeeded · total real
+              spend <strong>${costUsd.toFixed(4)}</strong>
+              {genScenes && (
+                <span className="block text-xs text-neutral-500">
+                  (scene images are billed per image — check the OpenAI dashboard
+                  for that portion)
+                </span>
               )}
             </div>
-            {allWarnings.length > 0 && (
+            {warnings.length > 0 && (
               <div className="mb-3 max-h-40 overflow-auto rounded-md bg-neutral-50 p-2 text-xs">
                 <div className="mb-1 font-medium text-neutral-600">
-                  Warnings ({allWarnings.length})
+                  Notes ({warnings.length})
                 </div>
                 <ul className="list-disc pl-4 text-amber-700">
-                  {allWarnings.map((w, i) => (
+                  {warnings.map((w, i) => (
                     <li key={i}>{w}</li>
                   ))}
                 </ul>
