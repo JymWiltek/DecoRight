@@ -8,6 +8,7 @@ import ColorSwitcher, { type ColorOption } from "./ColorSwitcher";
 import FbxDownloadButton from "./FbxDownloadButton";
 import WhereToBuy, { type WhereToBuyChannel } from "./WhereToBuy";
 import ConsumerAuthModal from "./ConsumerAuthModal";
+import WhatsAppIcon from "./WhatsAppIcon";
 import { consumerSignOut } from "@/app/auth/actions";
 import { buildFbxDownload, formatMYR } from "@/lib/format";
 import { waLink } from "@/lib/whatsapp";
@@ -237,12 +238,16 @@ export default function ProductDetail({
   const [modelMaterialCount, setModelMaterialCount] = useState<number | null>(null);
 
   const hasModel = !!modelSrc;
-  // Primary = biggest, black; secondary = smaller, outline. The size gap is
-  // deliberate (PB3-B item 3 — the primary CTA must read as dominant).
-  const primaryBtn =
+  // PB3-C B1/B2 — one solid colour block per fold (scarcity of saturation).
+  // AR primary = black solid; WhatsApp = official green (#25D366) solid when
+  // it's the primary (desktop), green OUTLINE when it's the secondary
+  // (mobile, under the black AR block). hover deepens to #1DA851.
+  const arPrimaryBtn =
     "inline-flex w-full items-center justify-center gap-1.5 rounded-md bg-black px-5 py-3.5 text-base font-semibold text-white transition hover:bg-neutral-800";
-  const secondaryBtn =
-    "inline-flex w-full items-center justify-center gap-1.5 rounded-md border border-neutral-300 bg-white px-5 py-2.5 text-sm font-medium text-neutral-800 transition hover:border-neutral-500";
+  const whatsappSolid =
+    "inline-flex w-full items-center justify-center gap-2 rounded-md bg-[#25D366] px-5 py-3.5 text-base font-semibold text-white transition hover:bg-[#1DA851]";
+  const whatsappOutline =
+    "inline-flex w-full items-center justify-center gap-2 rounded-md border border-[#25D366] bg-transparent px-5 py-2.5 text-sm font-medium text-[#128C7E] transition hover:bg-[#25D366]/10";
 
   return (
     <div className="grid gap-8 md:grid-cols-[1.2fr_1fr]">
@@ -318,7 +323,7 @@ export default function ProductDetail({
           {isTouchDevice ? (
             <>
               {hasModel && (
-                <button type="button" onClick={handleArClick} className={primaryBtn}>
+                <button type="button" onClick={handleArClick} className={arPrimaryBtn}>
                   <span aria-hidden>📱</span> {t("arViewInAR")}
                 </button>
               )}
@@ -326,9 +331,9 @@ export default function ProductDetail({
                 href={primaryWaHref}
                 target="_blank"
                 rel="noopener noreferrer"
-                className={secondaryBtn}
+                className={whatsappOutline}
               >
-                <span aria-hidden>💬</span> {tWhere("whatsappRetailer")}
+                <WhatsAppIcon /> {tWhere("whatsappRetailer")}
               </a>
             </>
           ) : (
@@ -337,13 +342,13 @@ export default function ProductDetail({
                 href={primaryWaHref}
                 target="_blank"
                 rel="noopener noreferrer"
-                className={primaryBtn}
+                className={whatsappSolid}
               >
-                <span aria-hidden>💬</span> {tWhere("whatsappRetailer")}
+                <WhatsAppIcon className="h-5 w-5" /> {tWhere("whatsappRetailer")}
               </a>
               {hasModel && (
-                <p className="text-xs italic text-neutral-500">
-                  {t("openOnPhone")}
+                <p className="mt-0.5 flex items-center gap-1.5 text-sm text-[#444444]">
+                  <span aria-hidden>📱</span> {t("openOnPhone")}
                 </p>
               )}
             </>
@@ -356,82 +361,44 @@ export default function ProductDetail({
           </p>
         )}
 
-        <dl className="grid grid-cols-2 gap-y-2 text-sm text-neutral-700">
-          {itemTypeLabel && (
-            <>
-              <dt className="text-neutral-500">{t("itemType")}</dt>
-              <dd>{itemTypeLabel}</dd>
-            </>
-          )}
-          {/* SKU row (PB3-B item 5) — empty value → row not rendered. No
-              em-dash / N-A placeholder; every spec row hides when blank,
-              matching Kohler / IKEA / Wayfair. */}
-          {product.sku_id && product.sku_id.trim() && (
-            <>
-              <dt className="text-neutral-500">{t("sku")}</dt>
-              <dd>{product.sku_id}</dd>
-            </>
-          )}
-          {roomLabels.length > 0 && (
-            <>
-              <dt className="text-neutral-500">{t("room")}</dt>
-              <dd>{listFormatter.format(roomLabels)}</dd>
-            </>
-          )}
-          {styleLabels.length > 0 && (
-            <>
-              <dt className="text-neutral-500">{t("style")}</dt>
-              <dd>{listFormatter.format(styleLabels)}</dd>
-            </>
-          )}
-          {materialLabels.length > 0 && (
-            <>
-              <dt className="text-neutral-500">{t("material")}</dt>
-              <dd>{listFormatter.format(materialLabels)}</dd>
-            </>
-          )}
-          {/* Dimensions as three separate rows — W / D / H (mm). Mapping is
-              evidence-based: a "600 mm vanity" stores length=600, so the
-              stored `length` is the physical Width, `width` is the Depth. */}
-          {product.dimensions_mm?.length != null && (
-            <>
-              <dt className="text-neutral-500">{t("dimWidth")}</dt>
-              <dd>{t("mmValue", { n: product.dimensions_mm.length })}</dd>
-            </>
-          )}
-          {product.dimensions_mm?.width != null && (
-            <>
-              <dt className="text-neutral-500">{t("dimDepth")}</dt>
-              <dd>{t("mmValue", { n: product.dimensions_mm.width })}</dd>
-            </>
-          )}
-          {product.dimensions_mm?.height != null && (
-            <>
-              <dt className="text-neutral-500">{t("dimHeight")}</dt>
-              <dd>{t("mmValue", { n: product.dimensions_mm.height })}</dd>
-            </>
-          )}
-          {/* Installation method (attributes.mounting). AI fills it from the
-              spec sheet; shown as a controlled-vocab label. */}
-          {mountingLabel && (
-            <>
-              <dt className="text-neutral-500">{t("installation")}</dt>
-              <dd>{mountingLabel}</dd>
-            </>
-          )}
-          {product.weight_kg != null && (
-            <>
-              <dt className="text-neutral-500">{t("weight")}</dt>
-              <dd>{t("weightValue", { kg: product.weight_kg })}</dd>
-            </>
-          )}
-          {regionLabels.length > 0 && (
-            <>
-              <dt className="text-neutral-500">{t("availableIn")}</dt>
-              <dd>{listFormatter.format(regionLabels)}</dd>
-            </>
-          )}
-        </dl>
+        {/* PB3-C B6 — Duravit-style spec table: label grey left, value black
+            right (justify-between), 50px rows, 2px #dadad9 separators, no
+            zebra. Empty values are dropped (no em-dash). SKU is the LAST row.
+            Dimensions stay 3 rows (W = stored length, D = stored width, H). */}
+        {(() => {
+          const dims = product.dimensions_mm;
+          const rows: { label: string; value: string }[] = [
+            ...(itemTypeLabel ? [{ label: t("itemType"), value: itemTypeLabel }] : []),
+            ...(roomLabels.length ? [{ label: t("room"), value: listFormatter.format(roomLabels) }] : []),
+            ...(styleLabels.length ? [{ label: t("style"), value: listFormatter.format(styleLabels) }] : []),
+            ...(materialLabels.length ? [{ label: t("material"), value: listFormatter.format(materialLabels) }] : []),
+            ...(dims?.length != null ? [{ label: t("dimWidth"), value: t("mmValue", { n: dims.length }) }] : []),
+            ...(dims?.width != null ? [{ label: t("dimDepth"), value: t("mmValue", { n: dims.width }) }] : []),
+            ...(dims?.height != null ? [{ label: t("dimHeight"), value: t("mmValue", { n: dims.height }) }] : []),
+            ...(mountingLabel ? [{ label: t("installation"), value: mountingLabel }] : []),
+            ...(product.weight_kg != null ? [{ label: t("weight"), value: t("weightValue", { kg: product.weight_kg }) }] : []),
+            ...(regionLabels.length ? [{ label: t("availableIn"), value: listFormatter.format(regionLabels) }] : []),
+            // SKU last (PB3-C B6).
+            ...(product.sku_id && product.sku_id.trim() ? [{ label: t("sku"), value: product.sku_id }] : []),
+          ];
+          if (rows.length === 0) return null;
+          return (
+            <div>
+              {rows.map((r) => (
+                <div
+                  key={r.label}
+                  className="flex h-[50px] items-center justify-between gap-4 border-b text-sm"
+                  style={{ borderColor: "#dadad9" }}
+                >
+                  <span style={{ color: "#6b6b6a" }}>{r.label}</span>
+                  <span className="text-right" style={{ color: "#000000" }}>
+                    {r.value}
+                  </span>
+                </div>
+              ))}
+            </div>
+          );
+        })()}
 
         {/* Sprint 1 — only render Buy Now when there's a real purchase
             link. The old disabled "No purchase link yet" button made the
@@ -491,11 +458,12 @@ export default function ProductDetail({
           </div>
         )}
 
-        {/* Feature 6 — AR login-gate hint. Logged out: explain the free
-            sign-in unlock. Logged in: confirm unlocked + who's signed in,
-            with a sign-out affordance. */}
-        <div className="text-xs text-neutral-500">
-          {arUnlocked ? (
+        {/* Feature 6 — signed-in confirmation only. PB3-C B4 removed the
+            logged-out "AR is free for your first 3 products…" line entirely:
+            the AR limit is a silent action-gate, we don't pre-announce a quota.
+            Logged-in visitors still see the unlocked + sign-out affordance. */}
+        {arUnlocked && (
+          <div className="text-xs text-neutral-500">
             <span className="inline-flex flex-wrap items-center gap-x-1.5 gap-y-1">
               <span className="font-medium text-emerald-600">
                 ✓ {t("arUnlockedHint")}
@@ -514,10 +482,8 @@ export default function ProductDetail({
                 </>
               )}
             </span>
-          ) : (
-            t("arGateHint")
-          )}
-        </div>
+          </div>
+        )}
       </div>
 
       <ConsumerAuthModal

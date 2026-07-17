@@ -16,6 +16,7 @@
 import { useTranslations } from "next-intl";
 import { formatMYR } from "@/lib/format";
 import { waLink } from "@/lib/whatsapp";
+import WhatsAppIcon from "./WhatsAppIcon";
 import type { SupplierType, StockStatus } from "@/lib/constants/enums";
 
 export type WhereToBuyChannel = {
@@ -77,6 +78,9 @@ export default function WhereToBuy({
     "inline-flex items-center justify-center rounded-md bg-black px-4 py-2 text-sm font-medium text-white transition hover:bg-neutral-800";
   const secondaryBtn =
     "inline-flex items-center justify-center rounded-md border border-neutral-300 bg-white px-4 py-2 text-sm font-medium text-neutral-800 transition hover:border-neutral-500";
+  // PB3-C B1 — WhatsApp CTAs use the official green (#25D366 → hover #1DA851).
+  const whatsappBtn =
+    "inline-flex items-center justify-center gap-1.5 rounded-md bg-[#25D366] px-4 py-2 text-sm font-medium text-white transition hover:bg-[#1DA851]";
 
   return (
     <div className="border-t border-neutral-100 pt-5">
@@ -99,9 +103,13 @@ export default function WhereToBuy({
               href={leadWa || mailtoLead}
               target="_blank"
               rel="noopener noreferrer"
-              className={primaryBtn}
+              className={leadWa ? whatsappBtn : primaryBtn}
             >
-              <span aria-hidden className="mr-1.5">💬</span>
+              {leadWa ? (
+                <WhatsAppIcon />
+              ) : (
+                <span aria-hidden className="mr-1.5">💬</span>
+              )}
               {t("whatsappRetailer")}
             </a>
             {leadWa && (
@@ -133,8 +141,9 @@ export default function WhereToBuy({
                     href={channelWa}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className={primaryBtn}
+                    className={whatsappBtn}
                   >
+                    <WhatsAppIcon />
                     {t("whatsapp")}
                   </a>
                 );

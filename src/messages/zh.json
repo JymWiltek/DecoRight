@@ -180,8 +180,8 @@
     "whatsappRetailer": "WhatsApp 联系零售商"
   },
   "authGate": {
-    "title": "登录后体验 AR",
-    "subtitle": "免费用手机把这件产品 1:1 放进你的空间。登录只为方便我们后续为你推荐。",
+    "title": "注册 — 免费 AR",
+    "subtitle": "继续在你的空间里查看产品 — 永久免费。",
     "google": "用 Google 继续",
     "googleUnavailable": "Google 登录暂未开通,请用邮箱登录。",
     "or": "或",
