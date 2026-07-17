@@ -30,6 +30,10 @@ const nextConfig: NextConfig = {
   serverExternalPackages: [
     "draco3dgltf",
     "gltf-validator",
+    // Excel export/import (product bulk-edit). exceljs is server-only
+    // (route handler + import server actions); keep it a runtime import
+    // so the bundler doesn't choke on its Node stream/zip internals.
+    "exceljs",
   ],
   // Belt-and-braces: explicitly include the WASM bytes in the function
   // bundle. `serverExternalPackages` should be enough, but Vercel's
