@@ -29,25 +29,46 @@ export default function FbxDownloadButton({
   const [pending, start] = useTransition();
   const [msg, setMsg] = useState<string | null>(null);
 
-  const creditBadge = (
-    <span className="ml-2 rounded-full bg-neutral-900/90 px-2 py-0.5 text-xs font-medium text-white">
-      {creditCost} credit
-    </span>
+  // PB3-B item 2 — low-emphasis one-line link (small icon + small muted
+  // text), NOT a button-weight block. Content is preserved (FBX label,
+  // credit cost, sign-in requirement, size) — it's just visually de-ranked
+  // below the primary CTA. Not hidden: a paying visitor can still find it.
+  const icon = (
+    <svg
+      width="12"
+      height="12"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+      className="shrink-0"
+    >
+      <path d="M12 3v12" />
+      <path d="m7 10 5 5 5-5" />
+      <path d="M5 21h14" />
+    </svg>
+  );
+  const creditNote = (
+    <span className="text-neutral-400">· {creditCost} credit</span>
   );
   const sizeNote = fbxSizeKb != null && (
-    <span className="ml-2 text-xs text-neutral-500">
-      ({(fbxSizeKb / 1024).toFixed(1)} MB)
+    <span className="text-neutral-400">
+      · {(fbxSizeKb / 1024).toFixed(1)} MB
     </span>
   );
   const cls =
-    "inline-flex items-center justify-center rounded-md bg-neutral-100 px-5 py-3 text-sm font-medium text-neutral-800 transition hover:bg-neutral-200 disabled:cursor-wait disabled:opacity-60";
+    "inline-flex items-center gap-1.5 text-xs text-neutral-500 underline-offset-2 transition hover:text-neutral-700 hover:underline disabled:cursor-wait disabled:opacity-60";
 
   if (!designerLoggedIn) {
     return (
       <a href={loginHref} className={cls}>
-        {t("downloadFbx")}
-        {creditBadge}
-        <span className="ml-2 text-xs text-neutral-500">· {t("signInToDownload")}</span>
+        {icon}
+        <span>{t("downloadFbx")}</span>
+        {creditNote}
+        <span className="text-neutral-400">· {t("signInToDownload")}</span>
       </a>
     );
   }
@@ -74,8 +95,9 @@ export default function FbxDownloadButton({
           })
         }
       >
-        {t("downloadFbx")}
-        {creditBadge}
+        {icon}
+        <span>{t("downloadFbx")}</span>
+        {creditNote}
         {sizeNote}
       </button>
       {msg && (

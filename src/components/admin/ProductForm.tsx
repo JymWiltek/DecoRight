@@ -373,7 +373,9 @@ export default function ProductForm({
                   ? "Database rejected the save"
                   : errCode === "publish_blocked"
                     ? "Can't publish yet"
-                    : `Error (${errCode})`}
+                    : errCode === "sku_dup"
+                      ? "Duplicate SKU"
+                      : `Error (${errCode})`}
             </div>
             {errMsg && <div className="mt-1 text-xs">{errMsg}</div>}
           </div>
