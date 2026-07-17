@@ -1,0 +1,224 @@
+"use server";
+
+import { revalidatePath } from "next/cache";
+import { requireAdmin } from "@/lib/auth/require-admin";
+import { createServiceRoleClient } from "@/lib/supabase/service";
+import {
+  loadValidSlugs,
+  findSkuCollision,
+} from "@/lib/admin/product-validation";
+import { guardDimensions } from "@/lib/admin/dimension-guard";
+import { maybeGenerateSceneCover } from "@/lib/scene-cover";
+import { runSpecParseV2 } from "./actions";
+
+/**
+ * PB4 item 4 — the TWO SEPARATE bulk-AI actions the operator drives from the
+ * product list. Kept apart on purpose: spec-read is cheap, scene-gen is ~5-10×
+ * pricier, and Jym has burned quota before, so he must be able to run the cheap
+ * one without triggering the expensive one. The client (BulkAiPanel) enforces
+ * the "run 1 sample first, then confirm the batch" flow and stops the whole
+ * batch on a quota error — each action here does ONE product and reports what
+ * it did + the REAL OpenAI cost of that call.
+ *
+ * Both reuse the EXISTING AI paths (runSpecParseV2 / maybeGenerateSceneCover) —
+ * no new model-call logic.
+ */
+
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function isQuotaError(msg: string): boolean {
+  return /quota|insufficient|429|rate.?limit|exceeded your current/i.test(msg);
+}
+
+export type BulkAiOutcome =
+  | { ok: true; productId: string; filled: string[]; warnings: string[]; costUsd: number }
+  | { ok: false; productId: string; code: "quota" | "error"; error: string };
+
+const isBlankStr = (v: unknown) => v == null || String(v).trim() === "";
+const isBlankArr = (v: unknown) => !Array.isArray(v) || v.length === 0;
+
+/**
+ * Button A — "Run AI · read specs". Reuses runSpecParseV2 (the exact edit-page
+ * parser), then FILLS ONLY CURRENTLY-EMPTY fields (never overwrites existing
+ * data), validating slugs, guarding dimensions against the per-category caps
+ * (item 5 layer 2), and skipping a SKU that would collide (reuses
+ * findSkuCollision). Returns the real per-call USD cost.
+ */
+export async function runSpecParseAndApply(
+  productId: string,
+): Promise<BulkAiOutcome> {
+  await requireAdmin();
+  if (!UUID_RE.test(productId)) {
+    return { ok: false, productId, code: "error", error: "invalid id" };
+  }
+
+  const r = await runSpecParseV2(productId);
+  if (!r.ok) {
+    return {
+      ok: false,
+      productId,
+      code: isQuotaError(r.error) ? "quota" : "error",
+      error: r.error,
+    };
+  }
+
+  const supabase = createServiceRoleClient();
+  const { data: cur } = await supabase
+    .from("products")
+    .select(
+      "name,brand,sku_id,description,weight_kg,price_myr,price_original_myr,dimensions_mm,item_type,subtype_slug,room_slugs,styles,colors,materials,attributes,ai_filled_fields",
+    )
+    .eq("id", productId)
+    .maybeSingle();
+  if (!cur) {
+    return { ok: false, productId, code: "error", error: "product not found" };
+  }
+
+  const valid = await loadValidSlugs();
+  const f = r.fields;
+  const updates: Record<string, unknown> = {};
+  const filled: string[] = [];
+  const warnings: string[] = [];
+
+  if (f.name && isBlankStr(cur.name)) { updates.name = f.name; filled.push("name"); }
+  if (f.brand && isBlankStr(cur.brand)) { updates.brand = f.brand; filled.push("brand"); }
+  if (f.description && isBlankStr(cur.description)) { updates.description = f.description; filled.push("description"); }
+  if (f.weight_kg != null && cur.weight_kg == null) { updates.weight_kg = f.weight_kg; filled.push("weight"); }
+  if (f.price_myr != null && cur.price_myr == null) { updates.price_myr = f.price_myr; filled.push("price"); }
+  if (f.price_original_myr != null && cur.price_original_myr == null) { updates.price_original_myr = f.price_original_myr; filled.push("price_original"); }
+
+  // SKU — fill only if empty AND it wouldn't collide with another product.
+  if (f.sku_id && isBlankStr(cur.sku_id)) {
+    const clash = await findSkuCollision(f.sku_id, productId);
+    if (clash) {
+      warnings.push(`SKU "${f.sku_id}" skipped — already used by "${clash.name}".`);
+    } else {
+      updates.sku_id = f.sku_id;
+      filled.push("sku");
+    }
+  }
+
+  // item_type / subtype — validate against taxonomy; subtype must match the
+  // effective item_type.
+  let effItem = cur.item_type as string | null;
+  if (f.item_type && isBlankStr(cur.item_type) && valid.itemTypes.has(f.item_type)) {
+    updates.item_type = f.item_type;
+    effItem = f.item_type;
+    filled.push("item_type");
+  }
+  if (
+    f.subtype_slug &&
+    isBlankStr(cur.subtype_slug) &&
+    effItem &&
+    valid.subtypesByItemType.get(effItem)?.has(f.subtype_slug)
+  ) {
+    updates.subtype_slug = f.subtype_slug;
+    filled.push("subtype");
+  }
+
+  const arrFill = (
+    key: string,
+    dbKey: string,
+    set: Set<string>,
+    aiArr: string[],
+    curArr: unknown,
+  ) => {
+    if (!isBlankArr(curArr) || aiArr.length === 0) return;
+    const clean = aiArr.filter((x) => set.has(x));
+    if (clean.length) {
+      updates[dbKey] = clean;
+      filled.push(key);
+    }
+  };
+  arrFill("rooms", "room_slugs", valid.rooms, f.room_slugs, cur.room_slugs);
+  arrFill("styles", "styles", valid.styles, f.styles, cur.styles);
+  arrFill("colors", "colors", valid.colors, f.colors, cur.colors);
+  arrFill("materials", "materials", valid.materials, f.materials, cur.materials);
+
+  // Dimensions — item 5: cap-guard, then fill only if the product has none.
+  const anyAiDim = f.dim_length != null || f.dim_width != null || f.dim_height != null;
+  const curDims = cur.dimensions_mm as { length?: number; width?: number; height?: number } | null;
+  const curHasDims = !!curDims && (curDims.length || curDims.width || curDims.height);
+  if (anyAiDim && !curHasDims) {
+    const g = guardDimensions(
+      { length: f.dim_length, width: f.dim_width, height: f.dim_height },
+      effItem,
+    );
+    warnings.push(...g.warnings);
+    if (Object.keys(g.dims).length > 0) {
+      updates.dimensions_mm = g.dims;
+      filled.push("dimensions");
+    }
+  }
+
+  // mounting → attributes.mounting (merge, don't clobber other attributes).
+  const curMounting =
+    cur.attributes && typeof cur.attributes === "object"
+      ? (cur.attributes as Record<string, unknown>).mounting
+      : undefined;
+  if (f.mounting && isBlankStr(curMounting)) {
+    updates.attributes = {
+      ...((cur.attributes as Record<string, unknown>) ?? {}),
+      mounting: f.mounting,
+    };
+    filled.push("mounting");
+  }
+
+  if (filled.length > 0) {
+    // Track which fields AI filled (append, dedupe).
+    const prevAi = Array.isArray(cur.ai_filled_fields) ? cur.ai_filled_fields : [];
+    updates.ai_filled_fields = [...new Set([...prevAi, ...filled])];
+    const { error } = await supabase
+      .from("products")
+      // Dynamically-built partial update; keys are all real product columns.
+      .update(updates as never)
+      .eq("id", productId);
+    if (error) {
+      return { ok: false, productId, code: "error", error: error.message };
+    }
+    revalidatePath("/admin");
+    revalidatePath(`/product/${productId}`);
+  }
+
+  return { ok: true, productId, filled, warnings, costUsd: r.debug.costUsd };
+}
+
+/**
+ * Button B — "Generate scene images". Reuses maybeGenerateSceneCover (the exact
+ * existing scene pipeline). Runs ONE product synchronously so the client's
+ * sample-first / progress / abort flow works the same as button A. Scene image
+ * generation is billed by OpenAI per image (not per token), so there is no
+ * per-call token cost to read — costUsd is returned as 0 and the UI shows the
+ * image count + directs Jym to the OpenAI dashboard for the exact figure
+ * (never a fabricated/hardcoded number).
+ */
+export async function runSceneGenForProduct(
+  productId: string,
+): Promise<BulkAiOutcome> {
+  await requireAdmin();
+  if (!UUID_RE.test(productId)) {
+    return { ok: false, productId, code: "error", error: "invalid id" };
+  }
+  try {
+    // Returns done | skipped; THROWS on a real generation failure.
+    const res = await maybeGenerateSceneCover(productId);
+    revalidatePath("/admin");
+    revalidatePath(`/product/${productId}`);
+    return {
+      ok: true,
+      productId,
+      filled: res.status === "done" ? ["scene_cover"] : [],
+      warnings: res.status === "skipped" ? [`skipped: ${res.reason}`] : [],
+      costUsd: 0,
+    };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return {
+      ok: false,
+      productId,
+      code: isQuotaError(msg) ? "quota" : "error",
+      error: msg,
+    };
+  }
+}

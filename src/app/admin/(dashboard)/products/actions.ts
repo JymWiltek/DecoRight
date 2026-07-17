@@ -2246,13 +2246,21 @@ export type RunSpecV2Result =
         styles: string[];
         colors: string[];
         materials: string[];
+        mounting: string | null;
       };
       /** Per-field honest confidence from the model (high/medium/low). */
       confidence: Record<string, Confidence>;
       /** Keys that got a non-empty value (drives the chips + ai_filled_fields). */
       inferredKeys: string[];
       note: string;
-      debug: { imageCount: number; latencyMs: number; tokens: number | null };
+      debug: {
+        imageCount: number;
+        latencyMs: number;
+        tokens: number | null;
+        /** Real USD cost from the OpenAI usage of THIS call (not estimated
+         *  from a hardcoded rate). Drives the bulk-AI "actual spend" display. */
+        costUsd: number;
+      };
     }
   | { ok: false; error: string };
 
@@ -2364,6 +2372,7 @@ async function runSpecParseV2Inner(
     styles: f.style_slugs.value ?? [],
     colors: f.color_slugs.value ?? [],
     materials: f.material_slugs.value ?? [],
+    mounting: strOrNull(f.mounting.value),
   };
 
   // Confidence per field — only for fields that actually got a value, so
@@ -2398,6 +2407,7 @@ async function runSpecParseV2Inner(
   mark("styles", fields.styles.length > 0, f.style_slugs.confidence);
   mark("colors", fields.colors.length > 0, f.color_slugs.confidence);
   mark("materials", fields.materials.length > 0, f.material_slugs.confidence);
+  mark("mounting", !!fields.mounting, f.mounting.confidence);
 
   return {
     ok: true,
@@ -2409,6 +2419,7 @@ async function runSpecParseV2Inner(
       imageCount: inputs.length,
       latencyMs,
       tokens: parsed.usage.promptTokens + parsed.usage.completionTokens,
+      costUsd: parsed.usage.estCostUsd,
     },
   };
 }
