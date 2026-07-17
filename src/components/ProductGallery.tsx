@@ -83,6 +83,13 @@ export default function ProductGallery({
   arLaunchRef,
 }: Props) {
   const t = useTranslations("product");
+  // Safety net: if an image URL still fails to load in the browser (dead
+  // file, expired signature, etc.), drop that slide entirely rather than
+  // show the browser's broken-image icon to a customer.
+  const [failed, setFailed] = useState<Set<string>>(new Set());
+  const markFailed = (url: string) =>
+    setFailed((prev) => (prev.has(url) ? prev : new Set(prev).add(url)));
+
   const slides: Slide[] = [];
   if (glbUrl) {
     slides.push({
@@ -93,6 +100,7 @@ export default function ProductGallery({
     });
   }
   for (const u of galleryUrls) {
+    if (failed.has(u)) continue;
     slides.push({ kind: "image", url: u });
   }
 
@@ -155,6 +163,7 @@ export default function ProductGallery({
             <img
               src={current.url}
               alt={productName}
+              onError={() => markFailed(current.url)}
               className="h-full w-full object-contain p-3"
             />
           </div>
@@ -184,7 +193,10 @@ export default function ProductGallery({
                     : "border-neutral-200 hover:border-neutral-400"
                 }`}
               >
-                <ThumbPreview slide={s} />
+                <ThumbPreview
+                  slide={s}
+                  onError={() => s.kind === "image" && markFailed(s.url)}
+                />
               </button>
             );
           })}
@@ -205,7 +217,13 @@ function slideAriaLabel(
   return t("galleryViewScene", { n: i + 1 });
 }
 
-function ThumbPreview({ slide }: { slide: Slide }) {
+function ThumbPreview({
+  slide,
+  onError,
+}: {
+  slide: Slide;
+  onError: () => void;
+}) {
   if (slide.kind === "model") {
     // The 3D viewer is heavy — render a placeholder badge instead of
     // mounting ModelViewer N times. Tap the thumb to switch the main
@@ -218,6 +236,11 @@ function ThumbPreview({ slide }: { slide: Slide }) {
   }
   return (
     // eslint-disable-next-line @next/next/no-img-element
-    <img src={slide.url} alt="" className="h-full w-full object-cover" />
+    <img
+      src={slide.url}
+      alt=""
+      onError={onError}
+      className="h-full w-full object-cover"
+    />
   );
 }

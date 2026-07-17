@@ -133,8 +133,17 @@ export default async function ProductPage({ params }: PageProps) {
       galleryUrls.push(product.thumbnail_url);
       continue;
     }
-    if (img.cutout_image_url) {
-      galleryUrls.push(img.cutout_image_url);
+    // Only a fully-qualified cutout URL is directly renderable. Some
+    // real-photo / skip-cutout rows have cutout_image_url set to a bare
+    // STORAGE PATH (e.g. "<productId>/<imageId>.png", the raw path) rather
+    // than a public URL — pushing that as an <img src> renders a broken
+    // RELATIVE link (this was the "broken thumbnail" bug; 78 products, all
+    // with intact raw files). Treat a non-http cutout the same as "no
+    // cutout" and sign the raw upload, which resolves correctly.
+    const cutoutIsUrl =
+      !!img.cutout_image_url && /^https?:\/\//.test(img.cutout_image_url);
+    if (cutoutIsUrl) {
+      galleryUrls.push(img.cutout_image_url as string);
     } else if (img.raw_image_url) {
       try {
         const signed = await getSignedRawUrl(img.raw_image_url);
