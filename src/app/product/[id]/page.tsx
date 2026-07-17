@@ -15,7 +15,7 @@ import { BRAND } from "@config/brand";
 import { getDesignerSession } from "@/lib/auth/require-designer";
 import { getConsumerUser } from "@/lib/auth/consumer";
 import { createServiceRoleClient } from "@/lib/supabase/service";
-import { getSignedRawUrl } from "@/lib/storage";
+import { resolveImageUrl } from "@/lib/storage";
 import { labelFor, labelMap, colorHexMap, loadTaxonomy } from "@/lib/taxonomy";
 
 export const dynamic = "force-dynamic";
@@ -138,25 +138,15 @@ export default async function ProductPage({ params }: PageProps) {
       galleryUrls.push(product.thumbnail_url);
       continue;
     }
-    // Only a fully-qualified cutout URL is directly renderable. Some
-    // real-photo / skip-cutout rows have cutout_image_url set to a bare
-    // STORAGE PATH (e.g. "<productId>/<imageId>.png", the raw path) rather
-    // than a public URL — pushing that as an <img src> renders a broken
-    // RELATIVE link (this was the "broken thumbnail" bug; 78 products, all
-    // with intact raw files). Treat a non-http cutout the same as "no
-    // cutout" and sign the raw upload, which resolves correctly.
-    const cutoutIsUrl =
-      !!img.cutout_image_url && /^https?:\/\//.test(img.cutout_image_url);
-    if (cutoutIsUrl) {
-      galleryUrls.push(img.cutout_image_url as string);
-    } else if (img.raw_image_url) {
-      try {
-        const signed = await getSignedRawUrl(img.raw_image_url);
-        galleryUrls.push(signed);
-      } catch {
-        // Skip rows we can't sign — better than crashing the page.
-      }
-    }
+    // Resolve to a browser-openable URL via the shared resolver: some
+    // real-photo / skip-cutout rows store a bare STORAGE PATH in
+    // cutout_image_url rather than a public URL, which renders as a broken
+    // relative <img> (the "broken thumbnail" bug). resolveImageUrl treats a
+    // non-http cutout as "no cutout" and signs the raw upload instead, and
+    // never emits a bare path. Same function the admin thumbnails + AI feed
+    // use, so all three resolve identically.
+    const url = await resolveImageUrl(img);
+    if (url) galleryUrls.push(url);
   }
 
   const itemTypeLabels = labelMap(taxonomy.itemTypes, locale);

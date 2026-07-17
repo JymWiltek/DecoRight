@@ -10,6 +10,7 @@ import {
   fbxBundlePublicUrl,
   uploadThumbnail,
   getSignedRawUrl,
+  resolveImageUrl,
   thumbnailPublicUrl,
   copyRawToCutouts,
 } from "@/lib/storage";
@@ -2287,7 +2288,7 @@ async function runSpecParseV2Inner(
   const supabase = createServiceRoleClient();
   const { data: imgs } = await supabase
     .from("product_images")
-    .select("id, raw_image_url, feed_to_ai")
+    .select("id, raw_image_url, cutout_image_url, feed_to_ai")
     .eq("product_id", productId)
     .eq("feed_to_ai", true)
     .order("created_at", { ascending: true })
@@ -2299,14 +2300,14 @@ async function runSpecParseV2Inner(
         "No images with “Feed to AI” on. Drop a product photo / spec sheet above first (it uploads right away), then run AI.",
     };
   }
+  // Resolve each feed image to a browser-OPENABLE URL via the shared
+  // resolver (same logic as the storefront gallery + admin thumbnails).
+  // NEVER pass a bare storage path here — the AI reads image *content*,
+  // so an un-openable URL is a blind parse (the #12 residual bug).
   const inputs: { url: string }[] = [];
   for (const img of imgs) {
-    if (!img.raw_image_url) continue;
-    try {
-      inputs.push({ url: await getSignedRawUrl(img.raw_image_url) });
-    } catch {
-      // skip rows we can't sign; keep the rest
-    }
+    const url = await resolveImageUrl(img);
+    if (url) inputs.push({ url });
   }
   if (inputs.length === 0) {
     return { ok: false, error: "Could not read any of the Feed-to-AI images." };
@@ -2762,22 +2763,19 @@ export async function processDraftAsync(d: BulkCreateDraft): Promise<void> {
   // exist (state='raw' at this point).
   const { data: imgs } = await supabase
     .from("product_images")
-    .select("id, raw_image_url, feed_to_ai")
+    .select("id, raw_image_url, cutout_image_url, feed_to_ai")
     .eq("product_id", d.productId)
     .eq("feed_to_ai", true)
     .order("created_at", { ascending: true })
     .limit(MERGED_PARSE_MAX_IMAGES);
   if (!imgs || imgs.length === 0) return;
 
+  // Same shared resolver as the edit-page Run-AI path: always a
+  // browser-openable URL, never a bare storage path (blind-parse guard).
   const v2Inputs: { url: string }[] = [];
   for (const img of imgs) {
-    if (!img.raw_image_url) continue;
-    try {
-      const signed = await getSignedRawUrl(img.raw_image_url);
-      v2Inputs.push({ url: signed });
-    } catch {
-      // skip rows we can't sign; keep the rest going
-    }
+    const url = await resolveImageUrl(img);
+    if (url) v2Inputs.push({ url });
   }
 
   // ── V2 AI parse only — NO rembg (Wave 11b) ──

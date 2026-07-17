@@ -87,7 +87,11 @@ type ImageWithPreview = {
   bbox_ratio: number | null;
   cutout_warning: string | null;
   created_at: string;
-  raw_preview_url: string | null;
+  /** Shared-resolver output (@/lib/storage resolveImageUrl): a
+   *  browser-openable URL — public http cutout, else short-lived signed
+   *  raw, else null. NEVER a bare storage path (that was the #12 broken-
+   *  thumbnail residual). Same URL the storefront gallery + AI feed use. */
+  display_url: string | null;
 };
 
 type Props = {
@@ -348,8 +352,13 @@ function ImageCard({
    *  never went through the pipeline (just-uploaded raw). */
   usage?: { spentUsd: number; attempts: number };
 }) {
-  const showCutout =
-    image.cutout_image_url &&
+  // display_url is the shared resolver's output (http cutout OR signed raw
+  // OR null) — never a bare storage path, so a bare-path cutout no longer
+  // renders as a broken icon here. Approved rows show the image contained
+  // (like a cutout); raw / failed rows show it cover-cropped (and dimmed
+  // for failed) — same visual treatment as before, just a safe URL.
+  const contained =
+    !!image.display_url &&
     image.state !== "raw" &&
     image.state !== "cutout_failed";
 
@@ -362,19 +371,12 @@ function ImageCard({
       }`}
     >
       <div className="relative aspect-square overflow-hidden rounded bg-neutral-50">
-        {showCutout ? (
+        {image.display_url ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
-            src={image.cutout_image_url!}
+            src={image.display_url}
             alt=""
-            className="h-full w-full object-contain"
-          />
-        ) : image.raw_preview_url ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={image.raw_preview_url}
-            alt=""
-            className={`h-full w-full object-cover ${
+            className={`h-full w-full ${contained ? "object-contain" : "object-cover"} ${
               image.state === "cutout_failed" ? "opacity-60" : ""
             }`}
           />

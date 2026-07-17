@@ -77,6 +77,40 @@ export async function getSignedRawUrl(path: string): Promise<string> {
   return data.signedUrl;
 }
 
+/**
+ * The SINGLE source of truth for "what URL do we actually load / feed for
+ * this product image". Returns a browser-OPENABLE URL, or null when the row
+ * has nothing renderable.
+ *
+ *   cutout_image_url is a full http(s) URL  → use it (public cutouts CDN)
+ *   otherwise, raw_image_url is set          → short-lived signed raw URL
+ *   otherwise                                → null
+ *
+ * Why this exists (PR #12 residual): some real-photo / spec-sheet rows store
+ * a BARE STORAGE PATH in cutout_image_url (e.g. "<pid>/<iid>.png") instead of
+ * a public URL. Rendering that as an <img src> is a broken relative link, and
+ * handing it to the GPT-4o parser would be an un-openable link (the AI sees
+ * image *content*, never a filename — a dead URL == a blind parse). #12 fixed
+ * only the storefront gallery inline; this function is reused by the gallery,
+ * the admin edit-page thumbnails, AND the AI feed so all three resolve
+ * identically and NONE can emit a bare path. Never returns a bare path.
+ */
+export async function resolveImageUrl(img: {
+  cutout_image_url?: string | null;
+  raw_image_url?: string | null;
+}): Promise<string | null> {
+  const cutout = img.cutout_image_url;
+  if (cutout && /^https?:\/\//i.test(cutout)) return cutout;
+  if (img.raw_image_url) {
+    try {
+      return await getSignedRawUrl(img.raw_image_url);
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
 // ─── signed upload URLs — direct-to-Storage from the browser ───
 //
 // Why: Vercel Hobby caps serverless function request bodies at
