@@ -1,34 +1,38 @@
-import { BRAND } from "@config/brand";
-
 /**
- * The canonical public origin, resolved DYNAMICALLY so a domain change
- * is one env var, not a code edit. Priority:
- *   1. NEXT_PUBLIC_SITE_URL  — set this to the real domain (the knob Jym
- *      flips when the apex domain goes live).
- *   2. VERCEL_URL            — the per-deploy Vercel host (always set on
- *      Vercel); good enough for absolute links even on preview deploys.
- *   3. localhost (dev) / BRAND.siteUrl (prod last-resort) — only when
- *      neither env is set.
+ * The canonical PUBLIC origin — the domain that ends up in customer-facing
+ * absolute URLs: WhatsApp enquiry links, OpenGraph/canonical metadata, and the
+ * Excel export's product_url. Resolved from ONE env var so a domain change is
+ * config, not a code edit.
  *
- * Read at RUNTIME on the server (process.env), so changing the env +
- * restarting updates every generated URL — no rebuild, no hardcoded
- * vercel.app anywhere. Call from server components / route handlers.
+ *   • NEXT_PUBLIC_SITE_URL set  → use it.
+ *   • production, but UNSET     → THROW. We deliberately do NOT fall back to
+ *     `VERCEL_URL`: that's the per-deploy host (e.g.
+ *     `deco-right-<hash>-…vercel.app`) which is temporary AND auth-walled, so
+ *     falling back to it shipped customers dead WhatsApp links and broke OG /
+ *     the Excel export. Failing loudly forces the env to be set instead of
+ *     silently emitting a bad URL. (The build itself evaluates this for
+ *     metadata, so a missing env fails the deploy rather than going live.)
+ *   • dev, unset                → localhost so local links work.
+ *
+ * NOTE: this is NOT the same as the SELF-CALL base used by the async dispatch
+ * libs (glb-compression / fbx-bundle / scene-cover), which intentionally use
+ * VERCEL_URL to hit the CURRENT running deployment. Those are internal and
+ * must not use this canonical origin.
  */
 export function siteUrl(): string {
   const explicit = process.env.NEXT_PUBLIC_SITE_URL?.trim();
   if (explicit) return explicit.replace(/\/+$/, "");
 
-  const vercel = process.env.VERCEL_URL?.trim();
-  if (vercel) {
-    const host = vercel.replace(/^https?:\/\//, "").replace(/\/+$/, "");
-    return `https://${host}`;
+  if (process.env.NODE_ENV === "production") {
+    throw new Error(
+      "NEXT_PUBLIC_SITE_URL is not set. Set it to the canonical public domain " +
+        "(e.g. https://deco-right.vercel.app) in the Vercel project environment. " +
+        "Refusing to fall back to the per-deploy VERCEL_URL — it is temporary, " +
+        "auth-walled, and would ship dead links to customers (WhatsApp, OG, " +
+        "Excel export).",
+    );
   }
-
-  // Neither env set: dev → localhost so local links work; prod → the
-  // brand default (last resort if someone forgot to set the env var).
-  return process.env.NODE_ENV === "production"
-    ? BRAND.siteUrl.replace(/\/+$/, "")
-    : "http://localhost:3000";
+  return "http://localhost:3000"; // dev only
 }
 
 /** Build an absolute URL for a site-relative path against siteUrl(). */
