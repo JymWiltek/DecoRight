@@ -5,7 +5,7 @@ import MeshyStatusBanner from "@/components/admin/MeshyStatusBanner";
 import { getProductById, getProductRembgUsage } from "@/lib/admin/products";
 import { loadTaxonomy } from "@/lib/taxonomy";
 import { createServiceRoleClient } from "@/lib/supabase/service";
-import { getSignedRawUrl, listProductTextures } from "@/lib/storage";
+import { resolveImageUrl, listProductTextures } from "@/lib/storage";
 import { providerAvailability } from "@/lib/rembg";
 import { updateProduct } from "../../actions";
 
@@ -75,14 +75,15 @@ export default async function EditProductPage({
     ]);
   if (!product) notFound();
 
-  // Private-bucket raw paths → short-lived signed URLs so the operator
-  // can see what they uploaded before (or without) running rembg.
+  // Resolve each row to a browser-OPENABLE URL via the shared resolver
+  // (http cutout OR short-lived signed raw OR null) — the SAME function the
+  // storefront gallery + AI feed use. This is what fixes the #12 residual:
+  // a bare-path cutout_image_url no longer renders as a broken <img> here,
+  // it falls back to the signed raw.
   const imagesWithPreviews = await Promise.all(
     (imagesResp.data ?? []).map(async (img) => ({
       ...img,
-      raw_preview_url: img.raw_image_url
-        ? await getSignedRawUrl(img.raw_image_url).catch(() => null)
-        : null,
+      display_url: await resolveImageUrl(img),
     })),
   );
 
@@ -96,15 +97,14 @@ export default async function EditProductPage({
   ).length;
 
   // Wave 5 (mig 0038) — pool of images the AI parser may pick from.
-  // Filter to feed_to_ai=true AND something the operator-side
-  // already has a preview for (cutout_image_url public URL OR a
-  // raw_preview_url signed URL we resolved above). Empty list →
-  // SpecSheetAutofillBlock renders an upload-first hint.
+  // Filter to feed_to_ai=true; previewUrl is the shared-resolver output
+  // (display_url), so a bare-path cutout shows the signed raw instead of a
+  // broken thumbnail. Empty list → SpecSheetAutofillBlock renders a hint.
   const aiCandidateImages = imagesWithPreviews
     .filter((i) => i.feed_to_ai)
     .map((i) => ({
       id: i.id,
-      previewUrl: i.cutout_image_url ?? i.raw_preview_url,
+      previewUrl: i.display_url,
     }));
 
   const avail = providerAvailability();
