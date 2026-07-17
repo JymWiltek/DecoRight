@@ -445,6 +445,20 @@ export default async function AdminProductsPage({
               flipped (single on LEFT, bulk on RIGHT) so the heavier
               primary button anchors the right edge where the eye
               lands after scanning the header. */}
+          {/* Excel bulk edit (existing products only). Export streams a
+              text-only .xlsx; Import opens the preview-confirm flow. */}
+          <a
+            href="/admin/products/export"
+            className="rounded-md border border-neutral-300 bg-white px-4 py-2 text-sm font-medium text-neutral-700 hover:border-neutral-500"
+          >
+            ↧ Export to Excel
+          </a>
+          <Link
+            href="/admin/products/import"
+            className="rounded-md border border-neutral-300 bg-white px-4 py-2 text-sm font-medium text-neutral-700 hover:border-neutral-500"
+          >
+            ↥ Import from Excel
+          </Link>
           <Link
             href="/admin/products/new"
             className="rounded-md border border-neutral-300 bg-white px-4 py-2 text-sm font-medium text-neutral-700 hover:border-neutral-500"
