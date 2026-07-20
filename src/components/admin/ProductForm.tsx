@@ -50,6 +50,7 @@ import CompressionStatusBanner from "./CompressionStatusBanner";
 import ReunifyThumbnailButton from "./ReunifyThumbnailButton";
 import FitCenterButton from "./FitCenterButton";
 import AiAutofillButton from "./AiAutofillButton";
+import BrandCombobox from "./BrandCombobox";
 import { AutofillTextInput, AutofillTextarea } from "./AutofillTextInput";
 import DeleteButton from "./DeleteButton";
 import SavedToast from "./SavedToast";
@@ -61,6 +62,11 @@ import {
 } from "./product-form-staging";
 
 type Props = {
+  /** Distinct brands already in the catalog (alphabetical) for the Brand
+   *  picker. Same list the product list's inline brand cell offers — both
+   *  come from loadKnownBrands(), so neither can offer a spelling the casing
+   *  gate would rewrite. */
+  brandOptions?: string[];
   product?: ProductRow | null;
   taxonomy: Taxonomy;
   /** Server action. Bound with the product id on /edit; bare on /new.
@@ -151,9 +157,13 @@ export default function ProductForm({
   fbxTextureNames,
   suppliers = [],
   productSupplierLinks = [],
+  brandOptions = [],
 }: Props) {
   const p = product;
   const isEdit = Boolean(p);
+  // Brand is a combobox now, so the submitted value lives in state and rides
+  // to the server via a hidden input named "brand" (the action is unchanged).
+  const [brandDraft, setBrandDraft] = useState(p?.brand ?? "");
   // Item Type pills are alpha-sorted by label_en per F4 — the
   // existing sort_order was an artificial curation that made the
   // form hard to scan once we passed 30+ types.
@@ -560,18 +570,26 @@ export default function ProductForm({
               />
             </Field>
             <Field label="Brand">
+              {/* Pick from the brands the catalog already carries (type to
+                  filter), or add a new one. Same options + same control the
+                  product list's inline cell uses. Whatever is chosen still
+                  goes through the casing gate server-side on save.
+                  Keyed on the STORED brand so the field resets to the
+                  canonical spelling after a normalizing save. */}
+              <BrandCombobox
+                key={`brand-${p?.brand ?? ""}`}
+                value={brandDraft}
+                options={brandOptions}
+                onChange={setBrandDraft}
+                inputClassName={inputCls}
+                placeholder="Pick or type a brand"
+              />
               <input
                 form={FORM_ID}
-                // Keyed on the STORED brand so the field remounts when the
-                // server changes it. Brand goes through the casing gate on
-                // save (type "palazzo", store "PALAZZO"); without this key the
-                // uncontrolled input keeps the operator's typed casing after
-                // the post-save navigation and only shows the canonical
-                // spelling on a manual reload.
-                key={`brand-${p?.brand ?? ""}`}
+                type="hidden"
                 name="brand"
-                defaultValue={p?.brand ?? ""}
-                className={inputCls}
+                value={brandDraft}
+                readOnly
               />
             </Field>
             <Field label="Item SKU ID">
