@@ -31,7 +31,12 @@ import {
   InlineTextCell,
   InlineSelectCell,
   InlineMultiCell,
+  InlineBrandCell,
 } from "@/components/admin/InlineCells";
+// Brand picker options — the SAME distinct-brand list the casing gate matches
+// against, so the list can only offer spellings the gate already considers
+// canonical. No brand table; this is just DISTINCT products.brand.
+import { loadKnownBrands } from "@/lib/admin/brand-normalize";
 
 // Wave 6 · Commit 2 — "AI completeness" column on the admin list.
 //
@@ -272,6 +277,7 @@ export default async function AdminProductsPage({
   // NULL-item_type rows. Anything else is dropped — invalid params
   // never reach the DB layer.
   const taxonomy = await loadTaxonomy();
+  const brandOptions = (await loadKnownBrands()).sort((a, b) => a.localeCompare(b));
   const validItemTypeSlugs = new Set(taxonomy.itemTypes.map((r) => r.slug));
   // Note: We compare against the literal "__none__" rather than
   // importing ITEM_TYPE_NONE_PARAM from the client component. Importing
@@ -793,10 +799,10 @@ export default async function AdminProductsPage({
                       />
                     </td>
                     <td className="px-4 py-3 align-middle text-xs">
-                      <InlineTextCell
+                      <InlineBrandCell
                         productId={p.id}
-                        field="brand"
                         value={p.brand}
+                        options={brandOptions}
                       />
                     </td>
                     <td className="px-4 py-3 align-middle">

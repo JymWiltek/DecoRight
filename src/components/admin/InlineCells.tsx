@@ -24,6 +24,7 @@ import {
   saveInlineFieldAction,
   type InlineField,
 } from "@/app/admin/(dashboard)/products/inline-edit-actions";
+import BrandCombobox from "./BrandCombobox";
 
 export type Option = { slug: string; label: string };
 
@@ -169,6 +170,85 @@ export function InlineTextCell({
         ) : (
           (empty ?? <span className="text-neutral-400">—</span>)
         )}
+      </button>
+      <ErrorLine error={error} />
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// Brand — pick from what the catalog already carries, or add a new one
+// ─────────────────────────────────────────────────────────────
+export function InlineBrandCell({
+  productId,
+  value,
+  options,
+}: {
+  productId: string;
+  value: string | null;
+  /** Distinct brands, alphabetical — same list the /edit field offers. */
+  options: string[];
+}) {
+  const [editing, setEditing] = useState(false);
+  const [shown, setShown] = useState(value ?? "");
+  const [draft, setDraft] = useState(value ?? "");
+  const committed = useRef(false);
+  const { save, pending, error, flash, setError } = useInlineSave(productId, "brand");
+
+  useEffect(() => setShown(value ?? ""), [value]);
+
+  function begin() {
+    setError(null);
+    setDraft(shown);
+    committed.current = false;
+    setEditing(true);
+  }
+  function commit(next: string) {
+    if (committed.current) return;
+    committed.current = true;
+    setEditing(false);
+    const v = next.trim();
+    if (v === shown.trim()) return;
+    const prev = shown;
+    setShown(v); // optimistic
+    save(
+      v,
+      () => setShown(prev),
+      // Adopt what the gate actually stored (typed "saniware" → "SANIWARE").
+      (stored) => setShown(typeof stored === "string" ? stored : ""),
+    );
+  }
+  function cancel() {
+    committed.current = true;
+    setEditing(false);
+    setError(null);
+  }
+
+  if (editing) {
+    return (
+      <div>
+        <BrandCombobox
+          value={draft}
+          options={options}
+          autoFocus
+          onChange={setDraft}
+          onCommit={commit}
+          onCancel={cancel}
+        />
+        <ErrorLine error={error} />
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={begin}
+        title="Click to pick a brand"
+        className={`w-full rounded px-1 py-0.5 text-left transition hover:bg-neutral-100 ${cellTone(flash, pending)}`}
+      >
+        {shown ? shown : <span className="text-neutral-400">—</span>}
       </button>
       <ErrorLine error={error} />
     </div>

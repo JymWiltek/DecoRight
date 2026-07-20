@@ -6,6 +6,7 @@ import { getProductById, getProductRembgUsage } from "@/lib/admin/products";
 import { loadTaxonomy } from "@/lib/taxonomy";
 import { createServiceRoleClient } from "@/lib/supabase/service";
 import { resolveImageUrl, listProductTextures } from "@/lib/storage";
+import { loadKnownBrands } from "@/lib/admin/brand-normalize";
 import { providerAvailability } from "@/lib/rembg";
 import { updateProduct } from "../../actions";
 
@@ -107,6 +108,9 @@ export default async function EditProductPage({
       previewUrl: i.display_url,
     }));
 
+  // Brand picker options — same loadKnownBrands() source the product list uses.
+  const brandOptions = (await loadKnownBrands()).sort((a, b) => a.localeCompare(b));
+
   const avail = providerAvailability();
 
   // Wave 11b — texture filenames already in this product's textures/
@@ -182,6 +186,7 @@ export default async function EditProductPage({
     <ProductForm
       product={product}
       taxonomy={taxonomy}
+      brandOptions={brandOptions}
       action={action}
       saved={sp.saved === "1"}
       freshlyCreated={sp.fresh === "1"}
