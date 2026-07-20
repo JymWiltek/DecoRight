@@ -1,6 +1,7 @@
 import "server-only";
 
 import sharp from "sharp";
+import { resolveMountingRule } from "@config/mounting-scene-rules";
 import { createServiceRoleClient } from "@/lib/supabase/service";
 
 /**
@@ -29,7 +30,7 @@ const CH = 1536;
 
 type Tone = "warm" | "cool" | "luxury" | "neutral";
 
-function classify(colors: string[], name: string): Tone {
+export function classify(colors: string[], name: string): Tone {
   const arr = (colors ?? []).map((c) => String(c).toLowerCase());
   const primary = arr[0] ?? "";
   const t = (primary + " " + name).toLowerCase();
@@ -123,14 +124,26 @@ function surfaceHint(itemType: string | null, name: string): string {
   return "The product rests naturally ON the surface, fully grounded — not floating.";
 }
 
-function scenePrompt(itemType: string | null, name: string, tone: Tone, seed: string): string {
+/** Exported so the prompt can be inspected / asserted without spending an
+ *  image generation. Pure string building. */
+export function scenePrompt(
+  itemType: string | null,
+  name: string,
+  tone: Tone,
+  seed: string,
+  /** Hard installation requirement from config/mounting-scene-rules, resolved
+   *  from the product's mounting / subtype. When present it REPLACES the
+   *  old surfaceHint guess — that guess is what put wall-hung basins on
+   *  countertops, so keeping both would contradict itself. */
+  mountingConstraint?: string | null,
+): string {
   const scene = isKitchenItem(itemType)
     ? pickVariant(seed, KITCHEN)
     : isLivingItem(itemType)
       ? LIVING[tone]
       : pickVariant(seed, PALETTES[tone]);
   return (
-    `Place this exact product into ${scene}. ${surfaceHint(itemType, name)} ` +
+    `Place this exact product into ${scene}. ${mountingConstraint ?? surfaceHint(itemType, name)} ` +
     `The product must be genuinely INSTALLED in the scene — sitting/standing/mounted on the surface ` +
     `with correct perspective, natural contact shadows, and fully integrated lighting and reflections. ` +
     `It must NOT look pasted-on, floating, hovering, or tilted off the surface. ` +
@@ -152,6 +165,7 @@ export async function buildSceneCoverPng(
   colors: string[],
   name: string,
   seed: string,
+  mountingConstraint?: string | null,
 ): Promise<Buffer> {
   const tone = classify(colors, name);
   const prod = await sharp(Buffer.from(sourceBytes), { failOn: "none" })
@@ -172,7 +186,10 @@ export async function buildSceneCoverPng(
     .png()
     .toBuffer();
 
-  return gptEditWholeImage(base, scenePrompt(itemType, name, tone, seed));
+  return gptEditWholeImage(
+    base,
+    scenePrompt(itemType, name, tone, seed, mountingConstraint),
+  );
 }
 
 /** gpt-image-1 images.edit with NO mask — whole-frame regeneration. */
@@ -228,7 +245,10 @@ export async function isWhiteBg(buf: Buffer): Promise<boolean> {
 }
 
 export type SceneCoverResult =
-  | { status: "done"; url: string }
+  /** `note` carries a non-fatal remark for the caller to surface — currently
+   *  "this mounting has no scene rule yet", so the long tail is generated but
+   *  visible instead of silently unconstrained. */
+  | { status: "done"; url: string; note?: string }
   | { status: "skipped"; reason: string };
 
 /**
@@ -264,7 +284,7 @@ export async function maybeGenerateSceneCover(
 
   const { data: product, error: pErr } = await supabase
     .from("products")
-    .select("id,name,item_type,colors,thumbnail_url")
+    .select("id,name,item_type,colors,thumbnail_url,attributes,subtype_slug")
     .eq("id", productId)
     .maybeSingle();
   if (pErr) throw new Error(`db read: ${pErr.message}`);
@@ -288,6 +308,21 @@ export async function maybeGenerateSceneCover(
   )
     return skip("scene row exists");
 
+  // Installation pre-flight. A product whose mounting we cannot determine is
+  // NOT generated: that is precisely the case that produced wall-hung basins
+  // standing on countertops. A mounting we simply have no rule for still runs
+  // (the long tail must not be blocked) — the caller surfaces the note.
+  const mountingValue =
+    product.attributes && typeof product.attributes === "object"
+      ? ((product.attributes as Record<string, unknown>).mounting as string | null | undefined)
+      : null;
+  const mount = resolveMountingRule(mountingValue, product.subtype_slug);
+  if (mount.kind === "unknown") {
+    return skip(
+      "no mounting — fill Installation method (attributes.mounting) first, otherwise the scene will guess and get it wrong",
+    );
+  }
+
   const srcUrl =
     rows.find((r) => r.is_primary && r.cutout_image_url)?.cutout_image_url ??
     rows.find((r) => r.image_kind === "cutout" && r.cutout_image_url)?.cutout_image_url ??
@@ -298,12 +333,17 @@ export async function maybeGenerateSceneCover(
 
   await setStatus("pending");
   try {
+    const mountNote =
+      mount.kind === "no_rule"
+        ? `mounting "${mount.mounting}" has no scene rule — add one in config/mounting-scene-rules.ts (generated without an installation constraint)`
+        : undefined;
     const cover = await buildSceneCoverPng(
       srcBytes,
       product.item_type,
       product.colors ?? [],
       product.name,
       productId,
+      mount.kind === "rule" ? mount.constraint : null,
     );
 
     const path = `${productId}/scene-${Date.now()}.png`;
@@ -335,7 +375,7 @@ export async function maybeGenerateSceneCover(
     });
 
     await setStatus("done");
-    return { status: "done", url };
+    return { status: "done", url, note: mountNote };
   } catch (e) {
     // Make the failure visible + keep it from being swallowed upstream.
     const msg = e instanceof Error ? e.message : String(e);
