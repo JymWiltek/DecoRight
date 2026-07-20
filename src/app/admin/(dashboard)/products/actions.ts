@@ -15,6 +15,11 @@ import {
   copyRawToCutouts,
 } from "@/lib/storage";
 import { normalizeBrand } from "@/lib/admin/brand-normalize";
+import {
+  findNameConflict,
+  nameConflictMessage,
+  NAME_CONFLICT_KEY,
+} from "@config/name-conflict-rules";
 import { dispatchGlbCompression } from "@/lib/glb-compression-dispatch";
 import { dispatchSceneCover } from "@/lib/scene-cover-dispatch";
 import { dispatchFbxBundle } from "@/lib/fbx-bundle-dispatch";
@@ -2437,12 +2442,19 @@ async function runSpecParseV2Inner(
   mark("materials", fields.materials.length > 0, f.material_slugs.confidence);
   mark("mounting", !!fields.mounting, f.mounting.confidence);
 
+  // Report a self-contradictory transcribed name on the edit-page path too —
+  // the operator sees it before deciding to apply, and we never rename.
+  const parsedNameConflict = findNameConflict(fields.name);
+  const conflictNote = parsedNameConflict
+    ? nameConflictMessage(fields.name ?? "", parsedNameConflict)
+    : "";
+
   return {
     ok: true,
     fields,
     confidence,
     inferredKeys,
-    note: parsed.result.notes ?? "",
+    note: [parsed.result.notes ?? "", conflictNote].filter(Boolean).join(" · "),
     debug: {
       imageCount: inputs.length,
       latencyMs,
@@ -2877,6 +2889,14 @@ export async function processDraftAsync(d: BulkCreateDraft): Promise<void> {
   const missing: string[] = [];
 
   // Scalars
+  const draftNameConflict = f.name.value
+    ? findNameConflict(f.name.value)
+    : null;
+  if (draftNameConflict) {
+    // Same report-don't-decide rule as the bulk writer: the name is written,
+    // the row is marked, Jym adjudicates.
+    missing.push(NAME_CONFLICT_KEY);
+  }
   if (f.name.value && f.name.value.trim()) {
     updates.name = f.name.value.trim();
     filled.push("name");
