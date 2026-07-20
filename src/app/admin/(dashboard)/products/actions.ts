@@ -34,6 +34,7 @@ import { requireAdmin } from "@/lib/auth/require-admin";
 import {
   loadValidSlugs,
   findSkuCollision,
+  PLACEHOLDER_PRODUCT_NAME,
 } from "@/lib/admin/product-validation";
 import { invalidatePublishedCountsCache } from "@/lib/products";
 import { runRembgForImage } from "@/lib/rembg/pipeline";
@@ -2107,7 +2108,7 @@ export async function createProductFromUpload(
   }
   const insert: ProductInsert = {
     id: productId,
-    name: str(fd, "name") ?? "Untitled product",
+    name: str(fd, "name") ?? PLACEHOLDER_PRODUCT_NAME,
     status: "draft",
     item_type: itemType,
     subtype_slug: subtype,
@@ -2505,7 +2506,7 @@ export async function bulkCreateProducts(
   for (const d of drafts) {
     const { error } = await supabase.from("products").insert({
       id: d.productId,
-      name: "Untitled product",
+      name: PLACEHOLDER_PRODUCT_NAME,
       status: "draft",
       room_slugs: [],
       styles: [],

@@ -27,6 +27,11 @@ import RetryRembgInlineButton from "@/components/admin/RetryRembgInlineButton";
 import ThumbnailSwapButton from "@/components/admin/ThumbnailSwapButton";
 import PublishButton from "@/components/admin/PublishButton";
 import CategoryProgress from "@/components/admin/CategoryProgress";
+import {
+  InlineTextCell,
+  InlineSelectCell,
+  InlineMultiCell,
+} from "@/components/admin/InlineCells";
 
 // Wave 6 · Commit 2 — "AI completeness" column on the admin list.
 //
@@ -45,43 +50,9 @@ import CategoryProgress from "@/components/admin/CategoryProgress";
 // validates each against the live row. See `aiCompletenessMissing`
 // below.
 
-// Wave 7 · Commit 3 — chip list helper for Rooms / Style columns.
-// Renders the first two slug labels and a "+N more" tail when more
-// exist. Empty input renders an em-dash. Pure function; called from
-// the server-component render path, no client JS shipped.
-function SlugChips({
-  slugs,
-  labelMap,
-}: {
-  slugs: string[];
-  labelMap: Record<string, string>;
-}) {
-  if (!slugs || slugs.length === 0) {
-    return <span className="text-neutral-400 text-xs">—</span>;
-  }
-  const visible = slugs.slice(0, 2);
-  const rest = slugs.length - visible.length;
-  return (
-    <div className="flex flex-wrap items-center gap-1">
-      {visible.map((s) => (
-        <span
-          key={s}
-          className="inline-block rounded-full bg-neutral-100 px-2 py-0.5 text-[11px] text-neutral-700"
-        >
-          {labelMap[s] ?? s}
-        </span>
-      ))}
-      {rest > 0 && (
-        <span
-          className="text-[11px] text-neutral-500"
-          title={slugs.slice(2).map((s) => labelMap[s] ?? s).join(", ")}
-        >
-          +{rest} more
-        </span>
-      )}
-    </div>
-  );
-}
+// Wave 7 · Commit 3's SlugChips helper was retired here: the Rooms / Style
+// columns are now InlineMultiCell, which renders the same "first 2 + N more"
+// summary itself and makes the pills editable in place.
 
 // Wave 7 · Commit 3 — Missing column cell.
 // Two kinds of "missing" info, both stored in products.missing_fields
@@ -379,11 +350,30 @@ export default async function AdminProductsPage({
     slug: r.slug,
     label: r.label_en,
   }));
-  // Wave 7 · Commit 3 — label maps for the new Rooms / Style columns.
-  // Both render as chip lists (first 2 + "+N more") so the label needs
-  // to be available without a per-row taxonomy lookup.
-  const roomLabelMap = labelMap(taxonomy.rooms, "en");
-  const styleLabelMap = labelMap(taxonomy.styles, "en");
+  // Inline-edit option lists. Built from the SAME loadTaxonomy() result the
+  // /edit workbench renders its pickers from (edit/page.tsx passes this very
+  // object to ProductForm, which feeds taxonomy.itemSubtypes / rooms / styles
+  // to its pickers). One source → the list can never offer a slug /edit
+  // doesn't know, and the server action re-validates against the same tables.
+  const roomOptions = taxonomy.rooms.map((r) => ({
+    slug: r.slug,
+    label: r.label_en,
+  }));
+  const styleOptions = taxonomy.styles.map((r) => ({
+    slug: r.slug,
+    label: r.label_en,
+  }));
+  // Subtypes are scoped to their item_type, so each row only ever offers the
+  // subtypes of ITS type (toilet → the toilet ones, basin → the basin ones).
+  const subtypeOptionsByItemType = new Map<
+    string,
+    { slug: string; label: string }[]
+  >();
+  for (const s of taxonomy.itemSubtypes) {
+    const list = subtypeOptionsByItemType.get(s.item_type_slug) ?? [];
+    list.push({ slug: s.slug, label: s.label_en });
+    subtypeOptionsByItemType.set(s.item_type_slug, list);
+  }
 
   // The Item Type filter dropdown wants the full tri-lingual rows so
   // each chip can show EN/ZH/MS. Stable alpha order by label_en keeps
@@ -746,35 +736,43 @@ export default async function AdminProductsPage({
                           productId={p.id}
                           currentUrl={p.thumbnail_url}
                         />
-                        <div className="font-medium text-neutral-900">
-                          <Link
-                            href={`/admin/products/${p.id}/edit`}
-                            className="hover:underline"
-                          >
-                            {p.name}
-                          </Link>
+                        {/* Inline-editable name. The row still has its
+                            "Edit" link on the far right for the full
+                            workbench, so making the label an editor doesn't
+                            cost navigation. */}
+                        <div className="min-w-0 flex-1 font-medium text-neutral-900">
+                          <InlineTextCell
+                            productId={p.id}
+                            field="name"
+                            value={p.name}
+                          />
                         </div>
                       </div>
                     </td>
                     <td className="px-4 py-3 align-middle text-xs">
-                      {p.sku_id && p.sku_id.trim() ? (
-                        <span className="font-mono text-neutral-700">
-                          {p.sku_id}
-                        </span>
-                      ) : (
-                        // Task 3 — highlight missing SKU so the operator can
-                        // scan a long list for rows to back-fill.
-                        <span className="inline-flex items-center rounded bg-amber-100 px-1.5 py-0.5 font-medium text-amber-800">
-                          缺 SKU
-                        </span>
-                      )}
+                      {/* Saving runs findSkuCollision — the same uniqueness
+                          check /edit and the Excel import use — so a clash is
+                          refused here too, naming the offending product. */}
+                      <InlineTextCell
+                        productId={p.id}
+                        field="sku_id"
+                        value={p.sku_id}
+                        mono
+                        empty={
+                          // Task 3 — highlight missing SKU so the operator can
+                          // scan a long list for rows to back-fill.
+                          <span className="inline-flex items-center rounded bg-amber-100 px-1.5 py-0.5 font-medium text-amber-800">
+                            缺 SKU
+                          </span>
+                        }
+                      />
                     </td>
                     <td className="px-4 py-3 align-middle text-xs">
-                      {p.brand ? (
-                        <span className="text-neutral-700">{p.brand}</span>
-                      ) : (
-                        <span className="text-neutral-400">—</span>
-                      )}
+                      <InlineTextCell
+                        productId={p.id}
+                        field="brand"
+                        value={p.brand}
+                      />
                     </td>
                     <td className="px-4 py-3 align-middle">
                       <div className="flex flex-col gap-0.5">
@@ -783,23 +781,40 @@ export default async function AdminProductsPage({
                           current={p.item_type}
                           options={itemTypeOptions}
                         />
-                        {p.subtype_slug && (
-                          <span className="text-[11px] text-neutral-500">
-                            ↳ {p.subtype_slug}
-                          </span>
-                        )}
+                        {/* Options follow THIS row's item type. Changing the
+                            type above clears subtype server-side, so the two
+                            can't end up mismatched. */}
+                        <InlineSelectCell
+                          productId={p.id}
+                          field="subtype_slug"
+                          value={p.subtype_slug}
+                          options={
+                            p.item_type
+                              ? (subtypeOptionsByItemType.get(p.item_type) ?? [])
+                              : []
+                          }
+                          disabledHint={
+                            p.item_type
+                              ? "This item type has no subtypes."
+                              : "Pick an item type first."
+                          }
+                        />
                       </div>
                     </td>
                     <td className="px-4 py-3 align-middle">
-                      <SlugChips
-                        slugs={p.room_slugs ?? []}
-                        labelMap={roomLabelMap}
+                      <InlineMultiCell
+                        productId={p.id}
+                        field="room_slugs"
+                        value={p.room_slugs ?? []}
+                        options={roomOptions}
                       />
                     </td>
                     <td className="px-4 py-3 align-middle">
-                      <SlugChips
-                        slugs={p.styles ?? []}
-                        labelMap={styleLabelMap}
+                      <InlineMultiCell
+                        productId={p.id}
+                        field="styles"
+                        value={p.styles ?? []}
+                        options={styleOptions}
                       />
                     </td>
                     <td className="px-4 py-3 align-middle">

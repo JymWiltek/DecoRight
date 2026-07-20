@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { createServiceRoleClient } from "@/lib/supabase/service";
 import { invalidatePublishedCountsCache } from "@/lib/products";
+import { PLACEHOLDER_PRODUCT_NAME } from "@/lib/admin/product-validation";
 
 export const dynamic = "force-dynamic";
 
@@ -44,7 +45,10 @@ export default async function NewProductPage() {
   // before the operator gets to /edit.
   const { error } = await supabase.from("products").insert({
     id,
-    name: "Untitled product",
+    // One definition (product-validation.ts) so "is this still a placeholder
+    // name?" — which the bulk-AI name fill asks — can never drift from what
+    // we actually insert here.
+    name: PLACEHOLDER_PRODUCT_NAME,
     status: "draft",
     room_slugs: [],
     styles: [],
