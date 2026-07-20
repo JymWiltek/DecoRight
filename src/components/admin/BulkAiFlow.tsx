@@ -171,11 +171,24 @@ export default function BulkAiFlow({
                   <span className="font-medium">Regenerate existing scene images</span>
                   <span className="block text-xs text-neutral-500">
                     Off: products that already have a scene are skipped. On:
-                    overwrite them.
+                    replace them (the old image is overwritten, not kept).
                   </span>
                 </span>
               </label>
             </div>
+
+            {/* The trap this panel used to set: tick "Generate scene images"
+                on rows that already HAVE one, and every single one comes back
+                "skipped". The count is in the estimate line below, but as grey
+                fine print — so say it here, next to the checkbox that fixes
+                it. Only shown when it actually applies. */}
+            {genScenes && !regenScenes && (info?.withSceneCount ?? 0) > 0 && (
+              <div className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                <strong>{info?.withSceneCount} of these already have a scene
+                image</strong> and will be skipped. To redo a bad one, tick
+                “Regenerate existing scene images” above.
+              </div>
+            )}
 
             {/* Live estimate. */}
             <div className="mt-3 rounded-md bg-neutral-50 px-3 py-2 text-sm">

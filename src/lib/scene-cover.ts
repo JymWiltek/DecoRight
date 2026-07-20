@@ -258,12 +258,16 @@ export type SceneCoverResult =
  */
 export async function maybeGenerateSceneCover(
   productId: string,
-  opts?: { force?: boolean },
+  opts?: { force?: boolean; dryRun?: boolean },
 ): Promise<SceneCoverResult> {
   // PB3-C A — force=true (the panel's "Regenerate existing scene images")
   // bypasses the "already has a scene cover" short-circuits so the operator
   // can deliberately overwrite. Same generation path either way.
   const force = opts?.force === true;
+  // dryRun walks every real check — including the white-bg test that `force`
+  // deliberately does NOT bypass — and reports the branch it would take
+  // instead of spending a generation. Writes nothing.
+  const dryRun = opts?.dryRun === true;
   const supabase = createServiceRoleClient();
   // Record the outcome so scene-gen failures are VISIBLE (no more silent
   // swallow). Ignores its own write error → no-ops safely if the
@@ -272,6 +276,7 @@ export async function maybeGenerateSceneCover(
     status: "pending" | "done" | "skipped" | "failed",
     error?: string,
   ): Promise<void> => {
+    if (dryRun) return;
     await supabase
       .from("products")
       .update({ scene_cover_status: status, scene_cover_error: error ?? null })
@@ -323,13 +328,36 @@ export async function maybeGenerateSceneCover(
     );
   }
 
+  // Source must be an ORIGINAL white-bg product shot, never a scene image.
+  // Regenerating a product that already has a scene used to fall through to
+  // thumbnail_url — which by then IS the scene — so the white-bg test below
+  // rejected it and "redo this bad scene" was impossible even with force on.
+  // Scene images are always stored as .../scene-<ts>.png.
+  const notScene = (u: string | null | undefined): u is string =>
+    !!u && !u.includes("/scene-");
   const srcUrl =
-    rows.find((r) => r.is_primary && r.cutout_image_url)?.cutout_image_url ??
-    rows.find((r) => r.image_kind === "cutout" && r.cutout_image_url)?.cutout_image_url ??
-    product.thumbnail_url;
+    rows.find((r) => r.is_primary && notScene(r.cutout_image_url))
+      ?.cutout_image_url ??
+    rows.find((r) => r.image_kind === "cutout" && notScene(r.cutout_image_url))
+      ?.cutout_image_url ??
+    (notScene(product.thumbnail_url) ? product.thumbnail_url : null);
+  if (!srcUrl) {
+    return skip(
+      "no original product shot to regenerate from — every image on this product is already a scene; re-upload the white-background photo first",
+    );
+  }
 
   const srcBytes = Buffer.from(await (await fetch(srcUrl)).arrayBuffer());
   if (!(await isWhiteBg(srcBytes))) return skip("not a white-bg product shot");
+
+  if (dryRun) {
+    return {
+      status: "skipped",
+      reason: `[dry-run] WOULD GENERATE (force=${force}, mounting=${
+        mount.kind === "rule" ? mount.mounting : mount.kind
+      })`,
+    };
+  }
 
   await setStatus("pending");
   try {
