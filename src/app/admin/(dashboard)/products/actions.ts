@@ -39,6 +39,8 @@ import { invalidatePublishedCountsCache } from "@/lib/products";
 import { runRembgForImage } from "@/lib/rembg/pipeline";
 import {
   checkPublishGates,
+  PUBLISHABLE_PHOTO_STATE,
+  PUBLISHABLE_PHOTO_KIND,
   type PublishGateInput,
   type PublishGateReason,
 } from "@/lib/publish-gates";
@@ -773,13 +775,15 @@ async function loadPublishGateFacts(
       .from("product_images")
       .select("id", { count: "exact", head: true })
       .eq("product_id", productId)
-      .eq("state", "cutout_approved")
       // Wave 7 fix-2 — only product-photo cutouts satisfy gate 2.
       // image_kind='real_photo' rows (Wave 4 "skip rembg" pattern,
       // now also used for Wave-7 Reference uploads) land at
       // 'cutout_approved' immediately and would otherwise let an
       // all-reference draft auto-publish without a storefront image.
-      .eq("image_kind", "cutout"),
+      // Criteria live in publish-gates.ts so the admin list's batch
+      // loader counts EXACTLY the same rows (no ready/gate drift).
+      .eq("state", PUBLISHABLE_PHOTO_STATE)
+      .eq("image_kind", PUBLISHABLE_PHOTO_KIND),
     // PB3-A — retailer gate: does this product have ≥1 supplier link?
     supabase
       .from("product_suppliers")

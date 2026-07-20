@@ -18,6 +18,26 @@
 // operator sees every missing item at once instead of fixing-one-then-
 // rediscovering-the-next.
 
+/**
+ * Gate 2's photo criteria — the exact product_images predicate whose row
+ * count becomes `cutoutApprovedCount`.
+ *
+ * Exported because two callers have to express this as a QUERY rather than
+ * as a JS check: the per-product gate loader (loadPublishGateFacts, used by
+ * updateProduct / setProductStatusAction / bulkUpdateStatusAction) and the
+ * admin list's batch loader (listAllProducts, which drives the "Ready to
+ * publish" filter). Sharing the pure check function alone wouldn't stop
+ * those two queries from drifting apart, and a drifted count would make the
+ * list promise "ready" for a row the gate then rejects. One definition here,
+ * both queries import it.
+ *
+ * Wave 7 fix-2: image_kind must be 'cutout' — 'real_photo' / 'spec_sheet'
+ * rows also land at cutout_approved (skip-rembg pattern) and must NOT
+ * satisfy the "has a storefront product photo" gate.
+ */
+export const PUBLISHABLE_PHOTO_STATE = "cutout_approved" as const;
+export const PUBLISHABLE_PHOTO_KIND = "cutout" as const;
+
 export type PublishGateInput = {
   rooms: string[];
   cutoutApprovedCount: number;

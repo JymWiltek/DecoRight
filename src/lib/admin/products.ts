@@ -1,5 +1,10 @@
 import { createServiceRoleClient } from "@/lib/supabase/service";
 import type { ProductRow } from "@/lib/supabase/types";
+import {
+  PUBLISHABLE_PHOTO_STATE,
+  PUBLISHABLE_PHOTO_KIND,
+  type PublishGateInput,
+} from "@/lib/publish-gates";
 
 export type AdminProductSort =
   | "updated_desc"
@@ -58,6 +63,12 @@ export type AdminProductListResult = {
    *  `cutout_failed` if rembg errored. The admin list surfaces a
    *  one-click "Retry rembg" button for these. */
   stuckImageIds: Record<string, string[]>;
+  /** Per-product publish-gate input, batched. Feed straight to
+   *  checkPublishGates (@/lib/publish-gates) — the SAME function the
+   *  publish actions enforce — to decide "ready to publish". Assembled
+   *  with the same criteria as loadPublishGateFacts so the list's
+   *  "Ready to publish" filter can never disagree with the gate. */
+  publishGateFacts: Record<string, PublishGateInput>;
 };
 
 export async function listAllProducts(
@@ -140,15 +151,26 @@ export async function listAllProducts(
   const ids = products.map((p) => p.id);
   let imageCounts: Record<string, number> = {};
   const stuckImageIds: Record<string, string[]> = {};
+  // Publish-gate facts, batched. Gate 2 (product photo) and gate 5
+  // (retailer) are the only two that aren't already on the products row.
+  const gatePhotoCounts: Record<string, number> = {};
+  const gateSupplierCounts: Record<string, number> = {};
   if (ids.length > 0) {
     // We need total counts + ids of stuck rows. One query, select
     // (id, product_id, state) and bucket in JS — still an order of
     // magnitude lighter than N×count queries, and the stuck payload
     // stays tiny because most products have 0 stuck images.
-    const { data: imgRows } = await supabase
-      .from("product_images")
-      .select("id,product_id,state")
-      .in("product_id", ids);
+    // `image_kind` rides along so the same single query also yields the
+    // gate-2 photo count (no extra round-trip).
+    const [{ data: imgRows }, { data: supplierRows }] = await Promise.all([
+      supabase
+        .from("product_images")
+        .select("id,product_id,state,image_kind")
+        .in("product_id", ids),
+      // Gate 5 — ≥1 product_suppliers link. One batched query instead of
+      // the per-product count the single-product gate loader does.
+      supabase.from("product_suppliers").select("product_id").in("product_id", ids),
+    ]);
     imageCounts = (imgRows ?? []).reduce<Record<string, number>>((acc, r) => {
       acc[r.product_id] = (acc[r.product_id] ?? 0) + 1;
       return acc;
@@ -159,6 +181,18 @@ export async function listAllProducts(
         list.push(r.id);
         stuckImageIds[r.product_id] = list;
       }
+      // Same predicate the publish gate's own query uses (constants are
+      // exported from publish-gates.ts precisely so these can't drift).
+      if (
+        r.state === PUBLISHABLE_PHOTO_STATE &&
+        r.image_kind === PUBLISHABLE_PHOTO_KIND
+      ) {
+        gatePhotoCounts[r.product_id] = (gatePhotoCounts[r.product_id] ?? 0) + 1;
+      }
+    }
+    for (const r of supplierRows ?? []) {
+      gateSupplierCounts[r.product_id] =
+        (gateSupplierCounts[r.product_id] ?? 0) + 1;
     }
   }
 
@@ -183,7 +217,23 @@ export async function listAllProducts(
     });
   }
 
-  return { products, imageCounts, stuckImageIds };
+  // Assemble the publish-gate input for each row that survived the
+  // filters. rooms / glb / fbx come straight off the product row; the two
+  // counts were batched above. Built here (not in the page) so the shape
+  // matches loadPublishGateFacts exactly — the page just feeds these to
+  // the SAME checkPublishGates the publish action uses.
+  const publishGateFacts: Record<string, PublishGateInput> = {};
+  for (const p of products) {
+    publishGateFacts[p.id] = {
+      rooms: p.room_slugs ?? [],
+      cutoutApprovedCount: gatePhotoCounts[p.id] ?? 0,
+      glbUrl: p.glb_url ?? null,
+      fbxUrl: p.fbx_url ?? p.fbx_bundle_url ?? null,
+      supplierCount: gateSupplierCounts[p.id] ?? 0,
+    };
+  }
+
+  return { products, imageCounts, stuckImageIds, publishGateFacts };
 }
 
 export async function getProductById(id: string): Promise<ProductRow | null> {

@@ -1,9 +1,12 @@
+import { Fragment } from "react";
 import Link from "next/link";
 import {
   listAllProducts,
   ITEM_TYPE_NONE,
   type AdminProductSort,
 } from "@/lib/admin/products";
+// The SAME gate the publish actions enforce — see readyIds below.
+import { checkPublishGates } from "@/lib/publish-gates";
 import { loadTaxonomy, labelMap } from "@/lib/taxonomy";
 import { PRODUCT_STATUS_LABELS } from "@/lib/constants/enum-labels";
 import {
@@ -267,6 +270,10 @@ type SearchParams = Promise<{
    *  behind when the operator clicks +New and then closes without
    *  filling anything. Off by default so the list stays clean. */
   show_drafts?: string;
+  /** "1" = show only drafts that already pass every publish gate
+   *  ("Ready to publish" chip). Derived filter — NOT a status. Mutually
+   *  exclusive with ?status= in the UI: the chip hrefs drop the other. */
+  ready?: string;
 }>;
 
 export default async function AdminProductsPage({
@@ -331,14 +338,39 @@ export default async function AdminProductsPage({
       ? sp.supplier
       : undefined;
 
-  const { products, imageCounts, stuckImageIds } = await listAllProducts({
-    q: sp.q,
-    status: statusFilter,
-    itemType: itemTypeParam,
-    supplierId: supplierFilterParam,
-    sort,
-    hideEmptyDrafts: !showEmptyDrafts,
-  });
+  const { products, imageCounts, stuckImageIds, publishGateFacts } =
+    await listAllProducts({
+      q: sp.q,
+      status: statusFilter,
+      itemType: itemTypeParam,
+      supplierId: supplierFilterParam,
+      sort,
+      hideEmptyDrafts: !showEmptyDrafts,
+    });
+
+  // "Ready to publish" — a DRAFT that already passes every publish gate.
+  // Not a status and not a column: a derived view over data we already
+  // loaded. It calls the SAME checkPublishGates that updateProduct /
+  // setProductStatusAction / bulkUpdateStatusAction enforce, fed by facts
+  // assembled with the same criteria (see listAllProducts +
+  // PUBLISHABLE_PHOTO_* in publish-gates.ts). That's the whole point: a row
+  // this filter calls ready is guaranteed to survive the gate when the
+  // operator selects it and hits → Published, so the two can never drift.
+  const readyIds = new Set(
+    products
+      .filter((p) => {
+        if (p.status !== "draft") return false;
+        const facts = publishGateFacts[p.id];
+        return !!facts && checkPublishGates(facts).ok;
+      })
+      .map((p) => p.id),
+  );
+  const readyOnly = sp.ready === "1";
+  // Everything below (counts, table, BulkBar) renders the visible set, so
+  // with ?ready=1 the chips and the "N shown" line agree with the table.
+  const visibleProducts = readyOnly
+    ? products.filter((p) => readyIds.has(p.id))
+    : products;
 
   // /admin is hardcoded English; pass "en" explicitly so admin pill
   // labels stay English regardless of the operator's locale cookie.
@@ -369,17 +401,20 @@ export default async function AdminProductsPage({
   // set. The dropdown chips show "(N)" so the operator can see which
   // types have rows before clicking. Includes the "__none__" key for
   // products whose item_type IS NULL.
-  const itemTypeCounts = products.reduce<Record<string, number>>((acc, p) => {
-    const k = p.item_type ?? ITEM_TYPE_NONE;
-    acc[k] = (acc[k] ?? 0) + 1;
-    return acc;
-  }, {});
+  const itemTypeCounts = visibleProducts.reduce<Record<string, number>>(
+    (acc, p) => {
+      const k = p.item_type ?? ITEM_TYPE_NONE;
+      acc[k] = (acc[k] ?? 0) + 1;
+      return acc;
+    },
+    {},
+  );
 
   // Counts are computed across the FILTERED set so the operator sees
   // "what the chips say I'd see if I clicked them". For unfiltered
   // overview totals run a separate count query — left as a future
   // enhancement; the filter chips below show the in-view tally.
-  const byStatus = products.reduce<Record<string, number>>((acc, p) => {
+  const byStatus = visibleProducts.reduce<Record<string, number>>((acc, p) => {
     acc[p.status] = (acc[p.status] ?? 0) + 1;
     return acc;
   }, {});
@@ -390,8 +425,12 @@ export default async function AdminProductsPage({
     status: sp.status,
     type: sp.type,
     show_drafts: sp.show_drafts,
+    ready: sp.ready,
   };
 
+  // Status chips intentionally DROP ?ready — picking a status replaces the
+  // ready view rather than intersecting with it (ready is draft-only, so an
+  // intersection with e.g. Published would always be empty).
   function chipHref(forStatus: ProductStatus | "all"): string {
     const params = new URLSearchParams();
     if (sp.q) params.set("q", sp.q);
@@ -402,6 +441,20 @@ export default async function AdminProductsPage({
     return `/admin?${params.toString()}`;
   }
 
+  // "Ready to publish" chip — sets ?ready=1 and drops ?status. Clicking it
+  // again (it links back to the same params minus ready) is handled by the
+  // active-state branch below.
+  const readyHref = (() => {
+    const params = new URLSearchParams();
+    if (sp.q) params.set("q", sp.q);
+    if (sp.sort) params.set("sort", sp.sort);
+    if (sp.type) params.set("type", sp.type);
+    if (sp.show_drafts) params.set("show_drafts", sp.show_drafts);
+    if (!readyOnly) params.set("ready", "1");
+    const qs = params.toString();
+    return qs ? `/admin?${qs}` : "/admin";
+  })();
+
   // Toggle for "Show empty drafts". When the toggle is on, the URL
   // gets ?show_drafts=1; clicking again drops the param. Preserves
   // every other filter so the operator doesn't lose context.
@@ -411,6 +464,7 @@ export default async function AdminProductsPage({
     if (sp.sort) params.set("sort", sp.sort);
     if (sp.type) params.set("type", sp.type);
     if (sp.status) params.set("status", sp.status);
+    if (sp.ready) params.set("ready", sp.ready);
     if (!showEmptyDrafts) params.set("show_drafts", "1");
     const qs = params.toString();
     return qs ? `/admin?${qs}` : "/admin";
@@ -432,7 +486,7 @@ export default async function AdminProductsPage({
         <div>
           <h1 className="text-2xl font-semibold">Products</h1>
           <p className="mt-1 text-sm text-neutral-500">
-            {products.length} shown
+            {visibleProducts.length} shown
             {sp.q && ` · matching "${sp.q}"`}
             {statusFilter && ` · status=${PRODUCT_STATUS_LABELS[statusFilter]}`}
             {itemTypeFilterLabel && ` · type=${itemTypeFilterLabel}`}
@@ -542,18 +596,36 @@ export default async function AdminProductsPage({
           </Link>
           {(["published", "draft", "archived", "link_broken"] as const).map(
             (s) => (
-              <Link
-                key={s}
-                href={chipHref(s)}
-                className={`rounded-full px-3 py-1 text-xs transition ${
-                  statusFilter === s
-                    ? `${STATUS_CHIP_STYLES[s]} ring-1 ring-black`
-                    : `${STATUS_CHIP_STYLES[s]} hover:opacity-80`
-                }`}
-              >
-                {PRODUCT_STATUS_LABELS[s]}
-                {byStatus[s] ? ` (${byStatus[s]})` : ""}
-              </Link>
+              <Fragment key={s}>
+                <Link
+                  href={chipHref(s)}
+                  className={`rounded-full px-3 py-1 text-xs transition ${
+                    statusFilter === s && !readyOnly
+                      ? `${STATUS_CHIP_STYLES[s]} ring-1 ring-black`
+                      : `${STATUS_CHIP_STYLES[s]} hover:opacity-80`
+                  }`}
+                >
+                  {PRODUCT_STATUS_LABELS[s]}
+                  {byStatus[s] ? ` (${byStatus[s]})` : ""}
+                </Link>
+                {/* Sits right after Draft: it's a lens ON drafts (those that
+                    already clear every publish gate), so the operator reads
+                    "Draft (28) → of which 5 are Ready to publish". */}
+                {s === "draft" && (
+                  <Link
+                    href={readyHref}
+                    className={`rounded-full px-3 py-1 text-xs transition ${
+                      readyOnly
+                        ? "bg-emerald-100 text-emerald-800 ring-1 ring-black"
+                        : "bg-emerald-100 text-emerald-800 hover:opacity-80"
+                    }`}
+                    title="Drafts that already pass all five publish gates (rooms · product photo · GLB · FBX · retailer). Select them and hit → Published."
+                  >
+                    Ready to publish
+                    {readyIds.size ? ` (${readyIds.size})` : ""}
+                  </Link>
+                )}
+              </Fragment>
             ),
           )}
         </div>
@@ -647,7 +719,7 @@ export default async function AdminProductsPage({
               </tr>
             </thead>
             <tbody>
-              {products.map((p) => {
+              {visibleProducts.map((p) => {
                 const imgN = imageCounts[p.id] ?? 0;
                 return (
                   <tr
@@ -897,13 +969,13 @@ export default async function AdminProductsPage({
                   </tr>
                 );
               })}
-              {products.length === 0 && (
+              {visibleProducts.length === 0 && (
                 <tr>
                   <td
                     colSpan={16}
                     className="px-4 py-12 text-center text-sm text-neutral-500"
                   >
-                    {sp.q || statusFilter ? (
+                    {sp.q || statusFilter || readyOnly ? (
                       <>
                         No products match these filters.{" "}
                         <Link href="/admin" className="text-sky-600 hover:underline">
@@ -921,7 +993,7 @@ export default async function AdminProductsPage({
         </div>
       </form>
 
-      <BulkBar totalRows={products.length} />
+      <BulkBar totalRows={visibleProducts.length} />
     </div>
   );
 }
