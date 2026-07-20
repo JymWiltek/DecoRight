@@ -33,11 +33,23 @@ function useInlineSave(productId: string, field: InlineField) {
   const [error, setError] = useState<string | null>(null);
   const [flash, setFlash] = useState(false);
 
-  function save(value: string | string[], rollback: () => void) {
+  /**
+   * `adopt` receives what was ACTUALLY stored. The server may transform the
+   * input (brand casing gate, trimming), and when the stored result equals the
+   * row's previous value the props don't change — so re-syncing from props
+   * alone would leave the operator's typed casing on screen. Adopting the
+   * returned value makes the cell always show the canonical spelling.
+   */
+  function save(
+    value: string | string[],
+    rollback: () => void,
+    adopt?: (stored: string | string[] | null) => void,
+  ) {
     setError(null);
     startTransition(async () => {
       const res = await saveInlineFieldAction(productId, field, value);
       if (res.ok) {
+        adopt?.(res.value);
         setFlash(true);
         setTimeout(() => setFlash(false), 900);
         router.refresh();
@@ -104,7 +116,12 @@ export function InlineTextCell({
     if (next === shown.trim()) return; // no-op edit, don't hit the server
     const prev = shown;
     setShown(next); // optimistic
-    save(next, () => setShown(prev));
+    save(
+      next,
+      () => setShown(prev),
+      // Adopt the stored spelling (e.g. typed "saniware", stored "SANIWARE").
+      (stored) => setShown(typeof stored === "string" ? stored : ""),
+    );
   }
   function cancel() {
     committed.current = true;

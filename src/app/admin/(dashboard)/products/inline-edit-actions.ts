@@ -47,7 +47,12 @@ const TEXT_FIELDS = new Set<InlineField>(["name", "sku_id", "brand"]);
 const ARRAY_FIELDS = new Set<InlineField>(["room_slugs", "styles"]);
 
 export type InlineEditResult =
-  | { ok: true }
+  /** `value` is what was ACTUALLY stored — the cell adopts it so the display
+   *  always shows the canonical form. Matters when the server transforms the
+   *  input (brand casing gate, trimming) and especially when the result equals
+   *  the previous value: the row prop then never changes, so without this the
+   *  cell would keep showing the operator's typed casing until a reload. */
+  | { ok: true; value: string | string[] | null }
   | { ok: false; error: string };
 
 export async function saveInlineFieldAction(
@@ -146,5 +151,5 @@ export async function saveInlineFieldAction(
 
   revalidatePath("/admin");
   revalidatePath(`/product/${productId}`);
-  return { ok: true };
+  return { ok: true, value: (update as Record<string, string | string[] | null>)[field] ?? null };
 }
