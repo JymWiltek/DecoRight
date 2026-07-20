@@ -321,6 +321,11 @@ export type ProductImageRow = {
    *  pool model uses the 3 booleans below for that. image_kind
    *  remains as the rembg-pipeline classifier. */
   image_kind: ImageKind;
+  /** Mig 0052 — who decided image_kind. NULL = never explicitly decided
+   *  (legacy rows + pipeline defaults), so the spec-parse classifier may
+   *  write it. 'operator' = a human's call, never touched by AI. 'ai' = set
+   *  by the classifier. */
+  image_kind_source: "operator" | "ai" | null;
   is_primary: boolean;
   /** Mig 0038 — operator-toggled "include this image in the
    *  storefront product-page gallery". Default true. */
@@ -403,6 +408,7 @@ export type TaxonomyRow = {
   label_ms: string | null;
   sort_order: number;
   created_at: string;
+  image_kind_source?: "operator" | "ai" | null;
 };
 
 export type ColorRow = TaxonomyRow & { hex: string };

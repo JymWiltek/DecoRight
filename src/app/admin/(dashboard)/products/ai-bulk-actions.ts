@@ -194,6 +194,12 @@ export async function runSpecParseAndApply(
     filled.push("mounting");
   }
 
+  // Spec sheets the parse auto-tagged on this product — reported so a batch
+  // shows how many images stopped leaking onto the storefront.
+  if (r.specSheetTagged > 0) {
+    warnings.push(`自动标记 spec_sheet:${r.specSheetTagged} 张`);
+  }
+
   if (filled.length > 0) {
     // Track which fields AI filled (append, dedupe).
     const prevAi = Array.isArray(cur.ai_filled_fields) ? cur.ai_filled_fields : [];
