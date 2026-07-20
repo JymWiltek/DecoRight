@@ -8,6 +8,33 @@ import { createServiceRoleClient } from "@/lib/supabase/service";
  * can't drift between the two entry points.
  */
 
+/**
+ * The name every auto-created draft starts life with (+ New product, bulk
+ * create, and the V2 draft path all insert this). It is a PLACEHOLDER, not a
+ * name the operator chose.
+ *
+ * Defined once here because "is this product actually named yet?" is asked in
+ * more than one place, and a literal comparison in each is exactly how the
+ * bulk-AI name bug happened: the bulk writer guarded on `name == null || name
+ * === ""`, which "Untitled product" passes as NOT-blank, so AI-parsed names
+ * were dropped on the floor while every other field was written.
+ */
+export const PLACEHOLDER_PRODUCT_NAME = "Untitled product";
+
+/**
+ * True when a product has no operator-chosen name yet — i.e. it's null, blank,
+ * or still the auto-created placeholder. Callers use this to decide whether an
+ * AI-parsed name may be written; a real name must NEVER be overwritten.
+ */
+export function isUnnamedProduct(value: unknown): boolean {
+  if (value == null) return true;
+  const s = String(value).trim();
+  if (s === "") return true;
+  // Tolerate the bare "Untitled" variant too — older rows and the admin
+  // list's own completeness check both use it.
+  return s === PLACEHOLDER_PRODUCT_NAME || s === "Untitled";
+}
+
 /** Valid taxonomy slug sets, for validating operator-supplied values against
  *  what actually exists before writing them. */
 export async function loadValidSlugs(): Promise<{

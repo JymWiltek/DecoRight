@@ -6,6 +6,7 @@ import { createServiceRoleClient } from "@/lib/supabase/service";
 import {
   loadValidSlugs,
   findSkuCollision,
+  isUnnamedProduct,
 } from "@/lib/admin/product-validation";
 import { guardDimensions } from "@/lib/admin/dimension-guard";
 import { maybeGenerateSceneCover } from "@/lib/scene-cover";
@@ -81,7 +82,13 @@ export async function runSpecParseAndApply(
   const filled: string[] = [];
   const warnings: string[] = [];
 
-  if (f.name && isBlankStr(cur.name)) { updates.name = f.name; filled.push("name"); }
+  // name — fill when the product is still UNNAMED. "Unnamed" includes the
+  // auto-created "Untitled product" placeholder, not just null/"". Guarding on
+  // isBlankStr here was the bug: every draft starts at "Untitled product",
+  // which is non-blank, so the AI-parsed name was silently discarded while
+  // description/sku/item_type/etc. all wrote fine (19 products in that state).
+  // A real operator-chosen name is still never overwritten.
+  if (f.name && isUnnamedProduct(cur.name)) { updates.name = f.name; filled.push("name"); }
   if (f.brand && isBlankStr(cur.brand)) { updates.brand = f.brand; filled.push("brand"); }
   if (f.description && isBlankStr(cur.description)) { updates.description = f.description; filled.push("description"); }
   if (f.weight_kg != null && cur.weight_kg == null) { updates.weight_kg = f.weight_kg; filled.push("weight"); }
