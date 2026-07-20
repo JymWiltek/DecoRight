@@ -31,11 +31,18 @@ export const MOUNTING_SCENE_RULES: Record<string, string> = {
     "whole base resting on the counter surface, in full contact with it. It is " +
     "not recessed into the counter and not mounted on the wall.",
 
+  // Hardened after review: the positive-only wording let the model drift back
+  // to a counter-top bowl (it "complies" by placing the basin near the edge).
+  // Stating what must NOT be visible is what actually holds it.
   semi_recessed:
-    "INSTALLATION (mandatory): the product is set INTO the countertop, with " +
-    "roughly half of its body projecting forward past the front edge of the " +
-    "counter. The rear half is embedded in the counter cut-out; it neither " +
-    "sits fully on top of the counter nor hangs off the wall.",
+    "INSTALLATION (mandatory): the product is SEMI-RECESSED. Its lower half " +
+    "sinks DOWN INTO a cut-out in the countertop, so only the upper part and " +
+    "the rim rise above the counter surface, and the front portion protrudes " +
+    "out past the counter edge. " +
+    "FORBIDDEN: do NOT show the whole basin sitting on top of the counter; do " +
+    "NOT show the underside or the lower half of the basin; do NOT show the " +
+    "basin merely resting on the counter as a separate object stacked on it. " +
+    "The counter surface must visibly cut across the basin body.",
 
   floor_standing:
     "INSTALLATION (mandatory): the product stands DIRECTLY on the floor, its " +

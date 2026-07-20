@@ -10,6 +10,11 @@ import {
 } from "@/lib/admin/product-validation";
 import { guardDimensions } from "@/lib/admin/dimension-guard";
 import { normalizeBrand } from "@/lib/admin/brand-normalize";
+import {
+  findNameConflict,
+  nameConflictMessage,
+  NAME_CONFLICT_KEY,
+} from "@config/name-conflict-rules";
 import { maybeGenerateSceneCover } from "@/lib/scene-cover";
 import { runSpecParseV2 } from "./actions";
 
@@ -69,7 +74,7 @@ export async function runSpecParseAndApply(
   const { data: cur } = await supabase
     .from("products")
     .select(
-      "name,brand,sku_id,description,weight_kg,price_myr,price_original_myr,dimensions_mm,item_type,subtype_slug,room_slugs,styles,colors,materials,attributes,ai_filled_fields",
+      "name,brand,sku_id,description,weight_kg,price_myr,price_original_myr,dimensions_mm,item_type,subtype_slug,room_slugs,styles,colors,materials,attributes,ai_filled_fields,missing_fields",
     )
     .eq("id", productId)
     .maybeSingle();
@@ -82,6 +87,7 @@ export async function runSpecParseAndApply(
   const updates: Record<string, unknown> = {};
   const filled: string[] = [];
   const warnings: string[] = [];
+  let nameConflictFlagged = false;
 
   // name — fill when the product is still UNNAMED. "Unnamed" includes the
   // auto-created "Untitled product" placeholder, not just null/"". Guarding on
@@ -89,7 +95,19 @@ export async function runSpecParseAndApply(
   // which is non-blank, so the AI-parsed name was silently discarded while
   // description/sku/item_type/etc. all wrote fine (19 products in that state).
   // A real operator-chosen name is still never overwritten.
-  if (f.name && isUnnamedProduct(cur.name)) { updates.name = f.name; filled.push("name"); }
+  if (f.name && isUnnamedProduct(cur.name)) {
+    updates.name = f.name;
+    filled.push("name");
+    // Report, never decide. Manufacturer sheets carry names like "Wall Hung
+    // Counter Top Basin"; the AI transcribes the contradiction faithfully. We
+    // still write it (a batch must not stall on a naming argument) but name it
+    // in the result and leave a marker on the row for Jym to adjudicate.
+    const conflict = findNameConflict(f.name);
+    if (conflict) {
+      warnings.push(nameConflictMessage(f.name, conflict));
+      nameConflictFlagged = true;
+    }
+  }
   // brand goes through the casing gate too — GPT reads whatever the spec sheet
   // printed ("saniware", "Saniware"), and without this the AI itself becomes a
   // source of new case variants.
@@ -180,6 +198,12 @@ export async function runSpecParseAndApply(
     // Track which fields AI filled (append, dedupe).
     const prevAi = Array.isArray(cur.ai_filled_fields) ? cur.ai_filled_fields : [];
     updates.ai_filled_fields = [...new Set([...prevAi, ...filled])];
+    if (nameConflictFlagged) {
+      // Rides the same missing_fields pseudo-key channel as
+      // `<field>_low_confidence` / `publish_gate_*` — no new column needed.
+      const prevMissing = Array.isArray(cur.missing_fields) ? cur.missing_fields : [];
+      updates.missing_fields = [...new Set([...prevMissing, NAME_CONFLICT_KEY])];
+    }
     const { error } = await supabase
       .from("products")
       // Dynamically-built partial update; keys are all real product columns.

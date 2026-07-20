@@ -38,6 +38,7 @@ import {
 // against, so the list can only offer spellings the gate already considers
 // canonical. No brand table; this is just DISTINCT products.brand.
 import { loadKnownBrands } from "@/lib/admin/brand-normalize";
+import { NAME_CONFLICT_KEY } from "@config/name-conflict-rules";
 
 // Wave 6 · Commit 2 — "AI completeness" column on the admin list.
 //
@@ -180,7 +181,9 @@ function aiCompletenessMissing(
     return (p.missing_fields ?? [])
       .filter(
         (k) =>
-          !k.endsWith("_low_confidence") && !k.startsWith("publish_gate_"),
+          !k.endsWith("_low_confidence") &&
+          !k.startsWith("publish_gate_") &&
+          k !== NAME_CONFLICT_KEY,
       )
       .filter((k) => !isFieldFilled(p, k));
   }
@@ -941,15 +944,36 @@ export default async function AdminProductsPage({
                     </td>
                     <td className="px-4 py-3 align-middle text-xs">
                       {(() => {
+                        // AI-transcribed name mixing mutually-exclusive
+                        // mounting words (e.g. "Wall Hung Counter Top Basin").
+                        // Reported, never auto-corrected — Jym decides.
+                        const nameConflict = (p.missing_fields ?? []).includes(
+                          NAME_CONFLICT_KEY,
+                        );
                         const missing = aiCompletenessMissing(p);
+                        const conflictBadge = nameConflict ? (
+                          <span
+                            className="inline-flex items-center rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-900"
+                            title="AI 转录的名字含互斥安装词,请人工核对"
+                          >
+                            ⚠️ 命名冲突
+                          </span>
+                        ) : null;
                         if (missing.length === 0) {
                           return (
-                            <span title="All key fields filled" aria-label="AI complete">
-                              ✅
+                            <span className="flex flex-col gap-0.5">
+                              {conflictBadge}
+                              {!conflictBadge && (
+                                <span title="All key fields filled" aria-label="AI complete">
+                                  ✅
+                                </span>
+                              )}
                             </span>
                           );
                         }
                         return (
+                          <span className="flex flex-col gap-0.5">
+                          {conflictBadge}
                           <span
                             className="inline-flex items-center gap-1 text-amber-700"
                             title={`Missing: ${missing.join(", ")}`}
@@ -958,6 +982,7 @@ export default async function AdminProductsPage({
                             <span className="text-[11px] text-amber-800">
                               {missing.join(", ")}
                             </span>
+                          </span>
                           </span>
                         );
                       })()}
