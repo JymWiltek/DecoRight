@@ -222,7 +222,12 @@ export async function runSceneGenForProduct(
       ok: true,
       productId,
       filled: res.status === "done" ? ["scene_cover"] : [],
-      warnings: res.status === "skipped" ? [`skipped: ${res.reason}`] : [],
+      warnings:
+        res.status === "skipped"
+          ? [`skipped: ${res.reason}`]
+          : res.note
+            ? [res.note]
+            : [],
       costUsd: 0,
     };
   } catch (e) {

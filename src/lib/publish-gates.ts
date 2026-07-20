@@ -47,9 +47,16 @@ export type PublishGateInput = {
   /** PB3-A — number of product_suppliers links (the internal "Others"
    *  marker counts; it's a legitimate "no real channel" choice). */
   supplierCount: number;
+  /** Mig 0051 — operator flagged this product as defective after eyeballing
+   *  it (wrong scene image, broken 3D model, bad data). Blocks publishing
+   *  until cleared. Unlike the other five this is not "something missing"
+   *  but "something known-wrong", so it is checked FIRST. */
+  defect?: boolean;
+  defectReason?: string | null;
 };
 
 export type PublishGateReason =
+  | "defect"
   | "rooms"
   | "cutouts"
   | "glb"
@@ -60,6 +67,11 @@ export type PublishGateReason =
  *  publish. */
 export function missingPublishGates(input: PublishGateInput): PublishGateReason[] {
   const missing: PublishGateReason[] = [];
+  // Defect first: a known-bad product must not ship no matter how complete
+  // the rest of it is. Everything that consults this function inherits the
+  // rule for free — the list's "Ready to publish" filter stops offering the
+  // row and bulk-publish refuses it, with no logic of their own.
+  if (input.defect === true) missing.push("defect");
   if (input.rooms.length === 0) missing.push("rooms");
   if (input.cutoutApprovedCount < 1) missing.push("cutouts");
   if (!input.glbUrl) missing.push("glb");

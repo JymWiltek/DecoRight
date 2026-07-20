@@ -120,6 +120,11 @@ export type ProductRow = {
    *  badge on the product page. Operator toggle; default false. */
   is_verified_real_product: boolean;
   status: ProductStatus;
+  /** Mig 0051 — operator-raised "this product is bad". NOT a status: it is
+   *  orthogonal to draft/published and blocks publishing via the sixth
+   *  publish gate until someone clears it. */
+  defect: boolean;
+  defect_reason: string | null;
   ai_filled_fields: string[];
   /** Mig 0039 — per-field confidence the V2 parser returned for this
    *  product. Shape: { "name": "high", "sku_id": "high", … }. Empty
@@ -205,6 +210,8 @@ export type ProductInsert = {
   compression_status?: "pending" | "processing" | "done" | "failed" | null;
   compression_error?: string | null;
   scene_cover_status?: "pending" | "done" | "skipped" | "failed" | null;
+  defect?: boolean;
+  defect_reason?: string | null;
   scene_cover_error?: string | null;
   thumbnail_url?: string | null;
   designer_guide?: string | null;

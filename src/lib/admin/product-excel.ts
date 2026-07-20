@@ -16,6 +16,8 @@ export type ExcelColumnKey =
   | "name"
   | "sku"
   | "brand"
+  | "defect"
+  | "defect_reason"
   | "item_type"
   | "subtype"
   | "rooms"
@@ -48,6 +50,9 @@ export const PRODUCT_EXCEL_COLUMNS: ColumnDef[] = [
   { key: "name", header: "name", readOnly: false, width: 34 },
   { key: "sku", header: "sku", readOnly: false, width: 16 },
   { key: "brand", header: "brand", readOnly: false, width: 16 },
+  // Mig 0051 — editable so Jym can clear flags in bulk after fixing a batch.
+  { key: "defect", header: "defect", readOnly: false, width: 8 },
+  { key: "defect_reason", header: "defect_reason", readOnly: false, width: 22 },
   { key: "item_type", header: "item_type", readOnly: false, width: 18 },
   { key: "subtype", header: "subtype", readOnly: false, width: 18 },
   { key: "rooms", header: "rooms", readOnly: false, width: 22, multi: true },
@@ -93,6 +98,8 @@ export type ProductExportRow = {
   name: string | null;
   sku_id: string | null;
   brand: string | null;
+  defect: boolean | null;
+  defect_reason: string | null;
   item_type: string | null;
   subtype_slug: string | null;
   room_slugs: string[] | null;
@@ -123,6 +130,10 @@ function cellValue(
       return p.sku_id ?? "";
     case "brand":
       return p.brand ?? "";
+    case "defect":
+      return p.defect ? "yes" : "";
+    case "defect_reason":
+      return p.defect_reason ?? "";
     case "item_type":
       return p.item_type ?? "";
     case "subtype":

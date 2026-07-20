@@ -230,6 +230,8 @@ export async function listAllProducts(
       glbUrl: p.glb_url ?? null,
       fbxUrl: p.fbx_url ?? p.fbx_bundle_url ?? null,
       supplierCount: gateSupplierCounts[p.id] ?? 0,
+      defect: p.defect === true,
+      defectReason: p.defect_reason ?? null,
     };
   }
 
