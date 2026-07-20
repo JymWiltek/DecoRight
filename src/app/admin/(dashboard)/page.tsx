@@ -736,10 +736,7 @@ export default async function AdminProductsPage({
                           productId={p.id}
                           currentUrl={p.thumbnail_url}
                         />
-                        {/* Inline-editable name. The row still has its
-                            "Edit" link on the far right for the full
-                            workbench, so making the label an editor doesn't
-                            cost navigation. */}
+                        {/* Inline-editable name (click = edit, not navigate). */}
                         <div className="min-w-0 flex-1 font-medium text-neutral-900">
                           <InlineTextCell
                             productId={p.id}
@@ -747,6 +744,34 @@ export default async function AdminProductsPage({
                             value={p.name}
                           />
                         </div>
+                        {/* The way into the full /edit workbench (description,
+                            images, 3D, suppliers…). It lives HERE, in the
+                            always-visible Product column, because the row's
+                            trailing "Edit" link sits past ~14 columns inside an
+                            overflow-hidden wrapper — on a narrow screen it is
+                            clipped and simply unreachable. Always rendered (not
+                            hover-only) and a 40px tap target. */}
+                        <Link
+                          href={`/admin/products/${p.id}/edit`}
+                          title="Open the full edit page"
+                          aria-label={`Edit ${p.name}`}
+                          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md text-neutral-400 transition hover:bg-neutral-100 hover:text-black"
+                        >
+                          <svg
+                            width="16"
+                            height="16"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            aria-hidden
+                          >
+                            <path d="M12 20h9" />
+                            <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+                          </svg>
+                        </Link>
                       </div>
                     </td>
                     <td className="px-4 py-3 align-middle text-xs">
