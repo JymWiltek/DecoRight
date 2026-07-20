@@ -770,7 +770,7 @@ async function loadPublishGateFacts(
       .from("products")
       // PB3-A — also read fbx columns + current status. status drives the
       // transition-only gate (already-published rows aren't re-gated).
-      .select("room_slugs, glb_url, fbx_url, fbx_bundle_url, status")
+      .select("room_slugs, glb_url, fbx_url, fbx_bundle_url, status, defect, defect_reason")
       .eq("id", productId)
       .maybeSingle(),
     supabase
@@ -798,6 +798,8 @@ async function loadPublishGateFacts(
     fbxUrl: rowRes.data?.fbx_url ?? rowRes.data?.fbx_bundle_url ?? null,
     cutoutApprovedCount: cutCountRes.count ?? 0,
     supplierCount: supCountRes.count ?? 0,
+    defect: rowRes.data?.defect === true,
+    defectReason: rowRes.data?.defect_reason ?? null,
     currentStatus: rowRes.data?.status ?? null,
   };
 }
@@ -1218,6 +1220,9 @@ export async function bulkUpdateStatusAction(fd: FormData): Promise<void> {
   let targetIds = ids;
   let blockedCount = 0;
   let firstBlockedReasons: PublishGateReason[] | null = null;
+  // The operator-written defect_reason of the first defect-blocked row, so the
+  // toast can say WHY it's flagged instead of a generic "missing something".
+  let firstDefectReason: string | null = null;
   if (next === "published") {
     const passed: string[] = [];
     for (const id of ids) {
@@ -1234,14 +1239,24 @@ export async function bulkUpdateStatusAction(fd: FormData): Promise<void> {
       } else {
         blockedCount++;
         if (!firstBlockedReasons) firstBlockedReasons = result.reasons;
+        if (!firstDefectReason && result.reasons.includes("defect")) {
+          firstDefectReason = facts.defectReason ?? "";
+        }
       }
     }
     if (passed.length === 0) {
       // Nothing to update — every selected row failed at least one
       // gate. Redirect with err so the dashboard's red toast renders.
+      const reasonsQs = firstBlockedReasons?.length
+        ? `&reason=${encodeURIComponent(firstBlockedReasons.join(","))}`
+        : "";
+      const defectQs =
+        firstDefectReason != null
+          ? `&defect_reason=${encodeURIComponent(firstDefectReason)}`
+          : "";
       redirect(
-        `/admin?err=publish_blocked&msg=${encodeURIComponent(
-          `All ${ids.length} selected products are missing publish requirements (rooms · photo · GLB · FBX · retailer). Open each one to fix.`,
+        `/admin?err=publish_blocked${reasonsQs}${defectQs}&msg=${encodeURIComponent(
+          `All ${ids.length} selected products are blocked by a publish gate. Open each one to fix.`,
         )}`,
       );
     }

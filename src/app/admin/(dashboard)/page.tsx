@@ -27,6 +27,7 @@ import RetryRembgInlineButton from "@/components/admin/RetryRembgInlineButton";
 import ThumbnailSwapButton from "@/components/admin/ThumbnailSwapButton";
 import PublishButton from "@/components/admin/PublishButton";
 import CategoryProgress from "@/components/admin/CategoryProgress";
+import DefectFlag from "@/components/admin/DefectFlag";
 import {
   InlineTextCell,
   InlineSelectCell,
@@ -240,6 +241,9 @@ type SearchParams = Promise<{
    *  Publish (rooms · cutouts · glb). Used together with `blocked` so
    *  the toast names a likely fix. */
   reason?: string;
+  /** Set alongside reason=defect — the operator-written defect_reason of the
+   *  blocked row, so the toast names WHY rather than just "defective". */
+  defect_reason?: string;
   /** "1" = include empty drafts in the listing (overrides the default
    *  hide). Empty drafts = status='draft' AND no images AND no rooms,
    *  the orphan rows the /admin/products/new auto-create flow leaves
@@ -250,6 +254,9 @@ type SearchParams = Promise<{
    *  ("Ready to publish" chip). Derived filter — NOT a status. Mutually
    *  exclusive with ?status= in the UI: the chip hrefs drop the other. */
   ready?: string;
+  /** "1" = show only rows flagged defect=true, whatever their status. Like
+   *  ?ready, this is a derived view, not a status. */
+  defect?: string;
 }>;
 
 export default async function AdminProductsPage({
@@ -343,11 +350,18 @@ export default async function AdminProductsPage({
       .map((p) => p.id),
   );
   const readyOnly = sp.ready === "1";
+  const defectOnly = sp.defect === "1";
+  // Flagged rows, any status — a defect can be spotted after publishing.
+  const defectIds = new Set(
+    products.filter((p) => p.defect === true).map((p) => p.id),
+  );
   // Everything below (counts, table, BulkBar) renders the visible set, so
   // with ?ready=1 the chips and the "N shown" line agree with the table.
-  const visibleProducts = readyOnly
-    ? products.filter((p) => readyIds.has(p.id))
-    : products;
+  const visibleProducts = defectOnly
+    ? products.filter((p) => defectIds.has(p.id))
+    : readyOnly
+      ? products.filter((p) => readyIds.has(p.id))
+      : products;
 
   // /admin is hardcoded English; pass "en" explicitly so admin pill
   // labels stay English regardless of the operator's locale cookie.
@@ -422,6 +436,7 @@ export default async function AdminProductsPage({
     type: sp.type,
     show_drafts: sp.show_drafts,
     ready: sp.ready,
+    defect: sp.defect,
   };
 
   // Status chips intentionally DROP ?ready — picking a status replaces the
@@ -447,6 +462,19 @@ export default async function AdminProductsPage({
     if (sp.type) params.set("type", sp.type);
     if (sp.show_drafts) params.set("show_drafts", sp.show_drafts);
     if (!readyOnly) params.set("ready", "1");
+    const qs = params.toString();
+    return qs ? `/admin?${qs}` : "/admin";
+  })();
+
+  // "Defect" chip — sets ?defect=1, drops ?status and ?ready (a defect view
+  // spans every status and is the opposite of "ready").
+  const defectHref = (() => {
+    const params = new URLSearchParams();
+    if (sp.q) params.set("q", sp.q);
+    if (sp.sort) params.set("sort", sp.sort);
+    if (sp.type) params.set("type", sp.type);
+    if (sp.show_drafts) params.set("show_drafts", sp.show_drafts);
+    if (!defectOnly) params.set("defect", "1");
     const qs = params.toString();
     return qs ? `/admin?${qs}` : "/admin";
   })();
@@ -539,6 +567,7 @@ export default async function AdminProductsPage({
         const blocked = sp.blocked ? Number(sp.blocked) : 0;
         // PB3-A — reason is a comma-separated list of every failing gate.
         const REASON_LABELS: Record<string, string> = {
+          defect: "flagged as defective",
           rooms: "no rooms picked",
           cutouts: "no product photo",
           glb: "no GLB attached",
@@ -548,7 +577,17 @@ export default async function AdminProductsPage({
         const reasonLabel =
           (sp.reason ?? "")
             .split(",")
-            .map((r) => REASON_LABELS[r.trim()])
+            .map((r) => {
+              const key = r.trim();
+              // Name the actual defect text — "defect: 场景图错误" is
+              // actionable, "flagged as defective" isn't.
+              if (key === "defect") {
+                return sp.defect_reason
+                  ? `defect: ${sp.defect_reason}`
+                  : "defect";
+              }
+              return REASON_LABELS[key];
+            })
             .filter(Boolean)
             .join(", ") || "missing publish requirements";
         const tone = sp.err
@@ -619,6 +658,22 @@ export default async function AdminProductsPage({
                   >
                     Ready to publish
                     {readyIds.size ? ` (${readyIds.size})` : ""}
+                  </Link>
+                )}
+                {/* Defect sits next to Ready because they're two halves of the
+                    same question: what can ship, and what is known-broken. */}
+                {s === "draft" && (
+                  <Link
+                    href={defectHref}
+                    className={`rounded-full px-3 py-1 text-xs transition ${
+                      defectOnly
+                        ? "bg-rose-100 text-rose-800 ring-1 ring-black"
+                        : "bg-rose-100 text-rose-800 hover:opacity-80"
+                    }`}
+                    title="Products a human flagged as defective (wrong scene image, broken 3D, bad data). Blocked from publishing until cleared."
+                  >
+                    Defect
+                    {defectIds.size ? ` (${defectIds.size})` : ""}
                   </Link>
                 )}
               </Fragment>
@@ -720,7 +775,9 @@ export default async function AdminProductsPage({
                 return (
                   <tr
                     key={p.id}
-                    className="border-b border-neutral-100 last:border-0"
+                    className={`border-b border-neutral-100 last:border-0 ${
+                      p.defect ? "bg-rose-50/60" : ""
+                    }`}
                   >
                     <td className="px-4 py-3 align-middle">
                       <input
@@ -757,6 +814,12 @@ export default async function AdminProductsPage({
                             overflow-hidden wrapper — on a narrow screen it is
                             clipped and simply unreachable. Always rendered (not
                             hover-only) and a 40px tap target. */}
+                        <DefectFlag
+                          productId={p.id}
+                          productName={p.name}
+                          defect={p.defect === true}
+                          reason={p.defect_reason}
+                        />
                         <Link
                           href={`/admin/products/${p.id}/edit`}
                           title="Open the full edit page"
@@ -1021,7 +1084,7 @@ export default async function AdminProductsPage({
                     colSpan={16}
                     className="px-4 py-12 text-center text-sm text-neutral-500"
                   >
-                    {sp.q || statusFilter || readyOnly ? (
+                    {sp.q || statusFilter || readyOnly || defectOnly ? (
                       <>
                         No products match these filters.{" "}
                         <Link href="/admin" className="text-sky-600 hover:underline">

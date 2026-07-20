@@ -153,3 +153,40 @@ export async function saveInlineFieldAction(
   revalidatePath(`/product/${productId}`);
   return { ok: true, value: (update as Record<string, string | string[] | null>)[field] ?? null };
 }
+
+/**
+ * Raise / clear the defect flag from the product list (mig 0051).
+ *
+ * Separate from saveInlineFieldAction because defect is not a field the
+ * operator "edits" — it's a verdict with a reason attached, and it has a
+ * consequence the other fields don't: checkPublishGates refuses to publish a
+ * flagged product. Kept in this file because it's the same surface (per-row
+ * actions on the list) and returns the same result shape.
+ *
+ * Clearing sets the reason back to NULL — a stale reason on an unflagged
+ * product would be misleading.
+ */
+export async function setProductDefectAction(
+  productId: string,
+  defect: boolean,
+  reason: string,
+): Promise<InlineEditResult> {
+  await requireAdmin();
+  if (!UUID_RE.test(productId)) return { ok: false, error: "Invalid product." };
+
+  const trimmed = reason.trim();
+  if (defect && trimmed === "") {
+    return { ok: false, error: "Pick or type a reason." };
+  }
+
+  const supabase = createServiceRoleClient();
+  const { error } = await supabase
+    .from("products")
+    .update({ defect, defect_reason: defect ? trimmed : null } as never)
+    .eq("id", productId);
+  if (error) return { ok: false, error: error.message };
+
+  revalidatePath("/admin");
+  revalidatePath(`/product/${productId}`);
+  return { ok: true, value: defect ? trimmed : null };
+}

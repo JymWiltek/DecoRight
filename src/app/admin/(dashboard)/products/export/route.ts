@@ -24,7 +24,7 @@ export async function GET() {
       supabase
         .from("products")
         .select(
-          "id, name, sku_id, brand, item_type, subtype_slug, room_slugs, styles, materials, colors, dimensions_mm, price_myr, status",
+          "id, name, sku_id, brand, defect, defect_reason, item_type, subtype_slug, room_slugs, styles, materials, colors, dimensions_mm, price_myr, status",
         )
         .order("created_at", { ascending: false }),
       supabase.from("product_suppliers").select("product_id, supplier_id"),

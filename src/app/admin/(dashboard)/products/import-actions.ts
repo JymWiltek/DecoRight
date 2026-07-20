@@ -42,6 +42,8 @@ export type ResolvedUpdate = {
   name?: string;
   sku_id?: string;
   brand?: string;
+  defect?: boolean;
+  defect_reason?: string;
   item_type?: string;
   subtype_slug?: string;
   room_slugs?: string[];
@@ -112,6 +114,8 @@ type DbProduct = {
   name: string | null;
   sku_id: string | null;
   brand: string | null;
+  defect: boolean | null;
+  defect_reason: string | null;
   item_type: string | null;
   subtype_slug: string | null;
   room_slugs: string[] | null;
@@ -124,7 +128,7 @@ type DbProduct = {
 };
 
 const PRODUCT_COLS =
-  "id, name, sku_id, brand, item_type, subtype_slug, room_slugs, styles, materials, colors, dimensions_mm, price_myr, status";
+  "id, name, sku_id, brand, defect, defect_reason, item_type, subtype_slug, room_slugs, styles, materials, colors, dimensions_mm, price_myr, status";
 
 // ── Parse + build plan ──────────────────────────────────────────────
 
@@ -310,6 +314,38 @@ export async function parseImportFile(
           changes.push({ col: "brand", label: labelOf("brand"), before: currentBrand, after: normBrand });
         }
       }
+    }
+
+    // Mig 0051 — defect flag + reason. Blank cell = leave alone (the
+    // catalog-wide rule for this importer); "yes"/"y"/"true"/"1" raises the
+    // flag, "no"/"n"/"false"/"0" clears it. Clearing also blanks the reason so
+    // a stale explanation can't outlive the flag.
+    if (has("defect")) {
+      const raw = norm(cell("defect"));
+      const yes = ["yes", "y", "true", "1"].includes(raw);
+      const no = ["no", "n", "false", "0"].includes(raw);
+      if (yes || no) {
+        const next = yes;
+        if (next !== (product.defect === true)) {
+          updates.defect = next;
+          if (!next) updates.defect_reason = "";
+          changes.push({
+            col: "defect",
+            label: labelOf("defect"),
+            before: product.defect ? "yes" : "",
+            after: next ? "yes" : "",
+          });
+        }
+      }
+    }
+    if (has("defect_reason") && cell("defect_reason") !== (product.defect_reason ?? "")) {
+      updates.defect_reason = cell("defect_reason");
+      changes.push({
+        col: "defect_reason",
+        label: labelOf("defect_reason"),
+        before: product.defect_reason ?? "",
+        after: cell("defect_reason"),
+      });
     }
 
     // sku — change detected here; collision judged in the second pass.
@@ -567,6 +603,9 @@ export async function applyImport(entries: UpdateEntry[]): Promise<ApplyResult> 
     if (typeof u.name === "string" && u.name.trim()) write.name = u.name.trim();
     if (typeof u.brand === "string")
       write.brand = normalizeBrandAgainst(u.brand, knownBrands);
+    if (typeof u.defect === "boolean") write.defect = u.defect;
+    if (typeof u.defect_reason === "string")
+      write.defect_reason = u.defect_reason.trim() || null;
     if (typeof u.price_myr === "number" && Number.isFinite(u.price_myr) && u.price_myr >= 0)
       write.price_myr = u.price_myr;
     if (u.dimensions_mm && typeof u.dimensions_mm === "object")

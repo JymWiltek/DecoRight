@@ -141,6 +141,8 @@ export default async function EditProductPage({
   // to a button on this page. Centralized here so ProductForm stays a
   // dumb renderer.
   const PUBLISH_BLOCKED_MESSAGES: Record<string, string> = {
+    defect:
+      "This product is flagged as DEFECTIVE. Fix what's wrong, then clear the flag from the product list before publishing.",
     rooms:
       "Pick at least one room in the Rooms picker below before publishing.",
     // Mig 0027 — operator may now satisfy the cutout gate two ways:
