@@ -562,6 +562,13 @@ export default function ProductForm({
             <Field label="Brand">
               <input
                 form={FORM_ID}
+                // Keyed on the STORED brand so the field remounts when the
+                // server changes it. Brand goes through the casing gate on
+                // save (type "palazzo", store "PALAZZO"); without this key the
+                // uncontrolled input keeps the operator's typed casing after
+                // the post-save navigation and only shows the canonical
+                // spelling on a manual reload.
+                key={`brand-${p?.brand ?? ""}`}
                 name="brand"
                 defaultValue={p?.brand ?? ""}
                 className={inputCls}

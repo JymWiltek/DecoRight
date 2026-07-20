@@ -14,6 +14,7 @@ import {
   thumbnailPublicUrl,
   copyRawToCutouts,
 } from "@/lib/storage";
+import { normalizeBrand } from "@/lib/admin/brand-normalize";
 import { dispatchGlbCompression } from "@/lib/glb-compression-dispatch";
 import { dispatchSceneCover } from "@/lib/scene-cover-dispatch";
 import { dispatchFbxBundle } from "@/lib/fbx-bundle-dispatch";
@@ -935,6 +936,12 @@ export async function updateProduct(id: string, fd: FormData): Promise<void> {
     );
   }
   Object.assign(updates, built.updates);
+
+  // Brand casing gate — typing "saniware" saves as "SANIWARE" when the catalog
+  // already carries that brand. Same shared rule the list's inline cell, the AI
+  // writers and the Excel import run, so no entry point can mint a new case
+  // variant. A brand we've never seen is stored exactly as typed.
+  updates.brand = await normalizeBrand(payload.brand);
 
   // PB3-B item 7 — SKU uniqueness. Block the save when this SKU (trimmed,
   // case-insensitive) already belongs to ANOTHER product. Empty SKU never
@@ -2863,7 +2870,9 @@ export async function processDraftAsync(d: BulkCreateDraft): Promise<void> {
     missing.push("name");
   }
   if (f.brand.value && f.brand.value.trim()) {
-    updates.brand = f.brand.value.trim();
+    // Same casing gate as every other brand write — the bulk-create AI tail is
+    // otherwise a second way for GPT to mint a case variant.
+    updates.brand = await normalizeBrand(f.brand.value);
     filled.push("brand");
     confidences.brand = f.brand.confidence;
   } else {

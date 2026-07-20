@@ -7,6 +7,7 @@ import {
   loadValidSlugs,
   findSkuCollision,
 } from "@/lib/admin/product-validation";
+import { normalizeBrand } from "@/lib/admin/brand-normalize";
 
 /**
  * Per-cell inline editing on the admin product list.
@@ -78,7 +79,10 @@ export async function saveInlineFieldAction(
       if (raw === "") return { ok: false, error: "Name can't be empty." };
       update = { name: raw };
     } else if (field === "brand") {
-      update = { brand: raw === "" ? null : raw };
+      // Casing gate: "saniware" lands as "SANIWARE" when the catalog already
+      // carries that brand. Empty clears it. Shared with the edit page, the
+      // AI writers and the Excel import.
+      update = { brand: await normalizeBrand(raw) };
     } else if (field === "sku_id") {
       if (raw === "") {
         update = { sku_id: null };

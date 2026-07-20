@@ -9,6 +9,10 @@ import {
   findSkuCollision,
 } from "@/lib/admin/product-validation";
 import {
+  loadKnownBrands,
+  normalizeBrandAgainst,
+} from "@/lib/admin/brand-normalize";
+import {
   parseSpreadsheet,
   PRODUCT_EXCEL_COLUMNS,
   READONLY_COLUMN_KEYS,
@@ -150,11 +154,15 @@ export async function parseImportFile(
   }
 
   const supabase = createServiceRoleClient();
-  const [{ data: products }, valid, { data: suppliers }] = await Promise.all([
-    supabase.from("products").select(PRODUCT_COLS),
-    loadValidSlugs(),
-    supabase.from("suppliers").select("id, name"),
-  ]);
+  const [{ data: products }, valid, { data: suppliers }, knownBrands] =
+    await Promise.all([
+      supabase.from("products").select(PRODUCT_COLS),
+      loadValidSlugs(),
+      supabase.from("suppliers").select("id, name"),
+      // Brand casing gate — loaded ONCE for the whole sheet so an N-row
+      // import stays one query.
+      loadKnownBrands(),
+    ]);
   const byId = new Map<string, DbProduct>();
   const bySku = new Map<string, DbProduct>();
   for (const p of (products ?? []) as DbProduct[]) {
@@ -280,9 +288,28 @@ export async function parseImportFile(
       updates.name = cell("name");
       changes.push({ col: "name", label: labelOf("name"), before: product.name ?? "", after: cell("name") });
     }
-    if (has("brand") && cell("brand") !== (product.brand ?? "")) {
-      updates.brand = cell("brand");
-      changes.push({ col: "brand", label: labelOf("brand"), before: product.brand ?? "", after: cell("brand") });
+    // Brand casing gate runs HERE, in the preview pass, so the diff Jym
+    // confirms already shows the spelling that will actually be stored
+    // (type "wiltek", see "WILTEK"). A brand the catalog has never carried
+    // passes through exactly as typed.
+    //
+    // Only cells the operator actually CHANGED are gated. An untouched cell
+    // (same brand, whatever its casing) is left exactly as stored: the export
+    // writes each product's current spelling, so normalizing those too would
+    // turn any unrelated import — a price fix, say — into a silent bulk
+    // re-casing of the back catalog. Existing variants stay put; the gate is
+    // for new input.
+    if (has("brand")) {
+      const brandCell = cell("brand").trim();
+      const currentBrand = (product.brand ?? "").trim();
+      const touched = brandCell.toLowerCase() !== currentBrand.toLowerCase();
+      if (touched) {
+        const normBrand = normalizeBrandAgainst(brandCell, knownBrands) ?? "";
+        if (normBrand !== currentBrand) {
+          updates.brand = normBrand;
+          changes.push({ col: "brand", label: labelOf("brand"), before: currentBrand, after: normBrand });
+        }
+      }
     }
 
     // sku — change detected here; collision judged in the second pass.
@@ -508,6 +535,9 @@ export async function applyImport(entries: UpdateEntry[]): Promise<ApplyResult> 
   }
   const supabase = createServiceRoleClient();
   const valid = await loadValidSlugs();
+  // Re-normalize on write too: the confirmed entries come back from the
+  // client, so the gate must not live only in the preview pass.
+  const knownBrands = await loadKnownBrands();
   const { data: suppliers } = await supabase.from("suppliers").select("id, name");
   const supplierIdByName = new Map(
     (suppliers ?? []).map((s) => [s.name.trim().toLowerCase(), s.id]),
@@ -535,7 +565,8 @@ export async function applyImport(entries: UpdateEntry[]): Promise<ApplyResult> 
     const u = e.updates ?? {};
     const write: ProductUpdate = {};
     if (typeof u.name === "string" && u.name.trim()) write.name = u.name.trim();
-    if (typeof u.brand === "string") write.brand = u.brand.trim();
+    if (typeof u.brand === "string")
+      write.brand = normalizeBrandAgainst(u.brand, knownBrands);
     if (typeof u.price_myr === "number" && Number.isFinite(u.price_myr) && u.price_myr >= 0)
       write.price_myr = u.price_myr;
     if (u.dimensions_mm && typeof u.dimensions_mm === "object")

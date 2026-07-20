@@ -9,6 +9,7 @@ import {
   isUnnamedProduct,
 } from "@/lib/admin/product-validation";
 import { guardDimensions } from "@/lib/admin/dimension-guard";
+import { normalizeBrand } from "@/lib/admin/brand-normalize";
 import { maybeGenerateSceneCover } from "@/lib/scene-cover";
 import { runSpecParseV2 } from "./actions";
 
@@ -89,7 +90,10 @@ export async function runSpecParseAndApply(
   // description/sku/item_type/etc. all wrote fine (19 products in that state).
   // A real operator-chosen name is still never overwritten.
   if (f.name && isUnnamedProduct(cur.name)) { updates.name = f.name; filled.push("name"); }
-  if (f.brand && isBlankStr(cur.brand)) { updates.brand = f.brand; filled.push("brand"); }
+  // brand goes through the casing gate too — GPT reads whatever the spec sheet
+  // printed ("saniware", "Saniware"), and without this the AI itself becomes a
+  // source of new case variants.
+  if (f.brand && isBlankStr(cur.brand)) { updates.brand = await normalizeBrand(f.brand); filled.push("brand"); }
   if (f.description && isBlankStr(cur.description)) { updates.description = f.description; filled.push("description"); }
   if (f.weight_kg != null && cur.weight_kg == null) { updates.weight_kg = f.weight_kg; filled.push("weight"); }
   if (f.price_myr != null && cur.price_myr == null) { updates.price_myr = f.price_myr; filled.push("price"); }
