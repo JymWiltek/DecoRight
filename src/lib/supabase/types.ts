@@ -890,6 +890,13 @@ export type Database = {
         Update: SupplierUpdate;
         Relationships: [];
       };
+      // Mig 0053 — brand list managed from Settings → Brand.
+      brands: {
+        Row: { id: string; name: string; created_at: string };
+        Insert: { id?: string; name: string; created_at?: string };
+        Update: { id?: string; name?: string; created_at?: string };
+        Relationships: [];
+      };
       product_suppliers: {
         Row: ProductSupplierRow;
         Insert: ProductSupplierInsert;

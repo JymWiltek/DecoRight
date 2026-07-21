@@ -11,57 +11,28 @@ import { createServiceRoleClient } from "@/lib/supabase/service";
  *
  * Deliberately NOT doing:
  *   • no cleanup of existing rows — Jym re-casts the back catalog via Excel;
- *   • no brands table and no config word list — the match set is simply the
- *     distinct brands already on products;
  *   • no "unknown brand" rejection — a genuinely new brand is stored verbatim.
  *     This only collapses CASE variants of brands we already carry.
+ *
+ * The match set is the `brands` table (mig 0053, managed from Settings →
+ * Brand). It began life as DISTINCT products.brand and is seeded from it.
  *
  * The rule lives once in `normalizeBrandAgainst`. Single-row callers use
  * `normalizeBrand`; batch callers (Excel import) load the known set once and
  * call the pure function per row so an N-row import is still one query.
  */
 
-/** Distinct non-empty brands currently stored on products, in the order the
- *  DOMINANT casing should win (see normalizeBrandAgainst). */
+/** Canonical brand spellings from the `brands` table — the option list every
+ *  picker offers and the set the casing gate matches against. */
 export async function loadKnownBrands(): Promise<string[]> {
+  // Mig 0053 — brands now live in their own table (managed from Settings →
+  // Brand), instead of being re-derived from DISTINCT products.brand on every
+  // call. Single entry point unchanged: every caller (the product list, the
+  // edit page, the Excel importer) still gets a string[] of canonical
+  // spellings, so nothing downstream had to move.
   const supabase = createServiceRoleClient();
-  const { data } = await supabase
-    .from("products")
-    .select("brand")
-    .not("brand", "is", null);
-
-  // Count each exact casing, then keep the most frequently used spelling per
-  // case-insensitive key. The catalog already contains both SANIWARE and
-  // Saniware; without a tie-break the "existing casing" would depend on row
-  // order. Most-used wins, first-seen breaks ties — deterministic either way.
-  const counts = new Map<string, Map<string, number>>();
-  const firstSeen = new Map<string, number>();
-  let i = 0;
-  for (const row of data ?? []) {
-    const raw = (row.brand ?? "").trim();
-    if (!raw) continue;
-    const key = raw.toLowerCase();
-    if (!counts.has(key)) {
-      counts.set(key, new Map());
-      firstSeen.set(key, i++);
-    }
-    const per = counts.get(key)!;
-    per.set(raw, (per.get(raw) ?? 0) + 1);
-  }
-
-  const winners: string[] = [];
-  for (const [, per] of counts) {
-    let best = "";
-    let bestN = -1;
-    for (const [spelling, n] of per) {
-      if (n > bestN) {
-        best = spelling;
-        bestN = n;
-      }
-    }
-    winners.push(best);
-  }
-  return winners;
+  const { data } = await supabase.from("brands").select("name");
+  return (data ?? []).map((r) => r.name).filter((n): n is string => !!n);
 }
 
 /**

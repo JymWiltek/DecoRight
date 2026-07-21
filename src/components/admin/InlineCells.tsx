@@ -25,6 +25,7 @@ import {
   type InlineField,
 } from "@/app/admin/(dashboard)/products/inline-edit-actions";
 import BrandCombobox from "./BrandCombobox";
+import { addBrandAction } from "@/app/admin/(dashboard)/settings/brand-actions";
 
 export type Option = { slug: string; label: string };
 
@@ -234,6 +235,7 @@ export function InlineBrandCell({
           onChange={setDraft}
           onCommit={commit}
           onCancel={cancel}
+          onAddNew={addBrandAction}
         />
         <ErrorLine error={error} />
       </div>

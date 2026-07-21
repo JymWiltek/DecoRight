@@ -25,14 +25,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             <Link href="/admin/taxonomy" className="hover:text-black">
               Taxonomy
             </Link>
-            <Link href="/admin/designers" className="hover:text-black">
-              Designers
-            </Link>
-            <Link href="/admin/bundles" className="hover:text-black">
-              Bundles
-            </Link>
-            <Link href="/admin/suppliers" className="hover:text-black">
-              Suppliers
+            {/* Designers / Bundles / Suppliers moved into Settings tabs. Their
+                old top-level routes redirect (next.config) to the tab. */}
+            <Link href="/admin/settings" className="hover:text-black">
+              Settings
             </Link>
           </nav>
         </div>

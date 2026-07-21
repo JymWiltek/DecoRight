@@ -63,6 +63,12 @@ const nextConfig: NextConfig = {
       { source: "/category/shower", destination: "/c/shower", permanent: true },
       { source: "/category/cabinet", destination: "/c/bathroom_vanity", permanent: true },
       { source: "/category/accessory", destination: "/", permanent: true },
+      // Designers / Bundles / Suppliers now live under Settings tabs. The old
+      // index routes redirect to the matching tab so no link goes dead. Their
+      // /new and /[id] sub-routes still resolve normally.
+      { source: "/admin/designers", destination: "/admin/settings?tab=designers", permanent: false },
+      { source: "/admin/bundles", destination: "/admin/settings?tab=bundles", permanent: false },
+      { source: "/admin/suppliers", destination: "/admin/settings?tab=suppliers", permanent: false },
     ];
   },
 };
