@@ -35,6 +35,12 @@ type Props = {
   onCommit?: (v: string) => void;
   /** Esc. */
   onCancel?: () => void;
+  /** Called when the operator picks the "Add …" row for a brand not in the
+   *  list. If provided, a confirm dialog appears first and the brand is only
+   *  written (and the cell filled) on confirm — the combobox stays generic and
+   *  the write itself lives in the caller's action. If omitted, "Add" settles
+   *  the typed value directly (legacy behaviour). */
+  onAddNew?: (name: string) => Promise<{ ok: boolean; error?: string }>;
   autoFocus?: boolean;
   inputClassName?: string;
   placeholder?: string;
@@ -46,12 +52,18 @@ export default function BrandCombobox({
   onChange,
   onCommit,
   onCancel,
+  onAddNew,
   autoFocus,
   inputClassName,
   placeholder,
 }: Props) {
   const [query, setQuery] = useState(value);
   const [open, setOpen] = useState(!!autoFocus);
+  // The brand-name pending confirmation in the "add to brand table?" dialog,
+  // or null when no dialog is open.
+  const [confirming, setConfirming] = useState<string | null>(null);
+  const [adding, setAdding] = useState(false);
+  const [addError, setAddError] = useState<string | null>(null);
   // The input is pre-filled with the current brand, so treating it as a filter
   // straight away would open the list showing only that one brand. Nothing is
   // filtered until the operator actually types — opening shows the full list,
@@ -95,6 +107,33 @@ export default function BrandCombobox({
     onCommit?.(v);
   }
 
+  /** Picking a row. A brand-new name (add=true) with an onAddNew handler opens
+   *  the confirm dialog instead of settling directly; everything else settles. */
+  function pick(v: string, add?: boolean) {
+    if (add && onAddNew) {
+      settled.current = true; // stop the outside-click handler settling the raw text
+      setAddError(null);
+      setConfirming(v);
+      return;
+    }
+    settle(v);
+  }
+
+  async function confirmAdd() {
+    if (confirming == null) return;
+    setAdding(true);
+    setAddError(null);
+    const res = await onAddNew!(confirming);
+    setAdding(false);
+    if (res.ok) {
+      const name = confirming;
+      setConfirming(null);
+      settle(name);
+    } else {
+      setAddError(res.error ?? "Could not add brand.");
+    }
+  }
+
   // Click outside = settle on whatever is typed (blur-to-save, same rule as
   // the other inline cells).
   useEffect(() => {
@@ -133,7 +172,8 @@ export default function BrandCombobox({
           } else if (e.key === "Enter") {
             // Never submit the surrounding form from here.
             e.preventDefault();
-            settle(open && rows[hi] ? rows[hi].value : q);
+            if (open && rows[hi]) pick(rows[hi].value, rows[hi].add);
+            else settle(q);
           } else if (e.key === "Escape") {
             e.preventDefault();
             settled.current = true;
@@ -164,7 +204,7 @@ export default function BrandCombobox({
               // mousedown and would close the list before a click landed.
               onMouseDown={(e) => {
                 e.preventDefault();
-                settle(r.value);
+                pick(r.value, r.add);
               }}
               onMouseEnter={() => setHi(i)}
               className={`block w-full px-2 py-1.5 text-left text-xs ${
@@ -193,6 +233,52 @@ export default function BrandCombobox({
               Clear brand
             </button>
           )}
+        </div>
+      )}
+
+      {/* Confirm dialog for adding a brand not yet in the brand table. Nothing
+          is written until the operator confirms — Cancel leaves the table
+          untouched and the cell unchanged. */}
+      {confirming != null && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-sm rounded-lg bg-white p-5 shadow-xl">
+            <div className="mb-2 text-sm text-neutral-800">
+              <span className="font-mono font-medium">
+                &ldquo;{confirming}&rdquo;
+              </span>{" "}
+              不在品牌库,确认新增为品牌?
+            </div>
+            <p className="mb-4 text-xs text-neutral-500">
+              It will be added to the brand list (through the casing gate) and
+              set on this product.
+            </p>
+            {addError && (
+              <div className="mb-3 text-xs text-rose-700">{addError}</div>
+            )}
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                disabled={adding}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => {
+                  setConfirming(null);
+                  setAddError(null);
+                }}
+                className="rounded-md border border-neutral-300 px-3 py-1.5 text-sm text-neutral-700 hover:border-neutral-500 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={adding}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={confirmAdd}
+                className="rounded-md bg-black px-4 py-1.5 text-sm font-medium text-white hover:bg-neutral-800 disabled:opacity-50"
+              >
+                {adding ? "Adding…" : "确认新增"}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

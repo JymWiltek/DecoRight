@@ -51,6 +51,7 @@ import ReunifyThumbnailButton from "./ReunifyThumbnailButton";
 import FitCenterButton from "./FitCenterButton";
 import AiAutofillButton from "./AiAutofillButton";
 import BrandCombobox from "./BrandCombobox";
+import { addBrandAction } from "@/app/admin/(dashboard)/settings/brand-actions";
 import { AutofillTextInput, AutofillTextarea } from "./AutofillTextInput";
 import DeleteButton from "./DeleteButton";
 import SavedToast from "./SavedToast";
@@ -581,6 +582,7 @@ export default function ProductForm({
                 value={brandDraft}
                 options={brandOptions}
                 onChange={setBrandDraft}
+                onAddNew={addBrandAction}
                 inputClassName={inputCls}
                 placeholder="Pick or type a brand"
               />

@@ -34,9 +34,9 @@ import {
   InlineMultiCell,
   InlineBrandCell,
 } from "@/components/admin/InlineCells";
-// Brand picker options — the SAME distinct-brand list the casing gate matches
-// against, so the list can only offer spellings the gate already considers
-// canonical. No brand table; this is just DISTINCT products.brand.
+// Brand picker options — the SAME list the casing gate matches against, so the
+// picker can only offer spellings the gate already considers canonical. Both
+// read the `brands` table (mig 0053) via loadKnownBrands.
 import { loadKnownBrands } from "@/lib/admin/brand-normalize";
 import { NAME_CONFLICT_KEY } from "@config/name-conflict-rules";
 
