@@ -20,6 +20,7 @@ import {
   nameConflictMessage,
   NAME_CONFLICT_KEY,
 } from "@config/name-conflict-rules";
+import { applyAiImageKinds } from "@/lib/admin/spec-sheet-tagging";
 import { dispatchGlbCompression } from "@/lib/glb-compression-dispatch";
 import { dispatchSceneCover } from "@/lib/scene-cover-dispatch";
 import { dispatchFbxBundle } from "@/lib/fbx-bundle-dispatch";
@@ -2464,22 +2465,11 @@ async function runSpecParseV2Inner(
   // explicitly classified (image_kind_source IS NULL), and only when the model
   // actually returned a verdict for that index. A product_photo verdict writes
   // nothing: "untagged" already means "show it", which is today's default.
-  let specSheetTagged = 0;
-  const kindGuesses = Array.isArray(parsed.result.image_kinds)
-    ? parsed.result.image_kinds
-    : [];
-  for (const g of kindGuesses) {
-    if (g?.kind !== "spec_sheet") continue;
-    const row = inputRows[g.index];
-    if (!row) continue; // index out of range → ignore, never guess
-    if (row.image_kind_source != null) continue; // a human decided; hands off
-    if (row.image_kind === "spec_sheet") continue; // already right, no write
-    const { error: tagErr } = await supabase
-      .from("product_images")
-      .update({ image_kind: "spec_sheet", image_kind_source: "ai" } as never)
-      .eq("id", row.id);
-    if (!tagErr) specSheetTagged++;
-  }
+  const specSheetTagged = await applyAiImageKinds(
+    supabase,
+    inputRows,
+    parsed.result.image_kinds,
+  );
 
   return {
     ok: true,
