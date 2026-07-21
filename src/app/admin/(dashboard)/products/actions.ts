@@ -20,6 +20,7 @@ import {
   nameConflictMessage,
   NAME_CONFLICT_KEY,
 } from "@config/name-conflict-rules";
+import { applyAiImageKinds } from "@/lib/admin/spec-sheet-tagging";
 import { dispatchGlbCompression } from "@/lib/glb-compression-dispatch";
 import { dispatchSceneCover } from "@/lib/scene-cover-dispatch";
 import { dispatchFbxBundle } from "@/lib/fbx-bundle-dispatch";
@@ -2285,6 +2286,9 @@ export type RunSpecV2Result =
       confidence: Record<string, Confidence>;
       /** Keys that got a non-empty value (drives the chips + ai_filled_fields). */
       inferredKeys: string[];
+      /** How many images this run auto-tagged as spec sheets (0 when none, or
+       *  when every candidate was human-classified already). */
+      specSheetTagged: number;
       note: string;
       debug: {
         imageCount: number;
@@ -2320,7 +2324,7 @@ async function runSpecParseV2Inner(
   const supabase = createServiceRoleClient();
   const { data: imgs } = await supabase
     .from("product_images")
-    .select("id, raw_image_url, cutout_image_url, feed_to_ai")
+    .select("id, raw_image_url, cutout_image_url, feed_to_ai, image_kind, image_kind_source")
     .eq("product_id", productId)
     .eq("feed_to_ai", true)
     .order("created_at", { ascending: true })
@@ -2337,9 +2341,16 @@ async function runSpecParseV2Inner(
   // NEVER pass a bare storage path here — the AI reads image *content*,
   // so an un-openable URL is a blind parse (the #12 residual bug).
   const inputs: { url: string }[] = [];
+  // The model classifies images BY POSITION, so we must keep the row that
+  // produced each input — an image we couldn't resolve is skipped and would
+  // otherwise shift every later index by one.
+  const inputRows: typeof imgs = [];
   for (const img of imgs) {
     const url = await resolveImageUrl(img);
-    if (url) inputs.push({ url });
+    if (url) {
+      inputs.push({ url });
+      inputRows.push(img);
+    }
   }
   if (inputs.length === 0) {
     return { ok: false, error: "Could not read any of the Feed-to-AI images." };
@@ -2449,11 +2460,23 @@ async function runSpecParseV2Inner(
     ? nameConflictMessage(fields.name ?? "", parsedNameConflict)
     : "";
 
+  // Auto-tag spec sheets. Free — the same call already looked at every image.
+  // Only writes the spec_sheet direction, only onto images nobody has
+  // explicitly classified (image_kind_source IS NULL), and only when the model
+  // actually returned a verdict for that index. A product_photo verdict writes
+  // nothing: "untagged" already means "show it", which is today's default.
+  const specSheetTagged = await applyAiImageKinds(
+    supabase,
+    inputRows,
+    parsed.result.image_kinds,
+  );
+
   return {
     ok: true,
     fields,
     confidence,
     inferredKeys,
+    specSheetTagged,
     note: [parsed.result.notes ?? "", conflictNote].filter(Boolean).join(" · "),
     debug: {
       imageCount: inputs.length,

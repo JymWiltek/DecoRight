@@ -339,7 +339,19 @@ export type FieldV2<T> = {
   confidence: Confidence;
 };
 
+/** Per-input-image classification the same call returns alongside the fields.
+ *  `index` refers to the position in the `inputs` array that was sent. An
+ *  image the model couldn't classify is simply absent — callers treat a
+ *  missing entry as "leave this image alone". */
+export type ImageKindGuess = {
+  index: number;
+  kind: "product_photo" | "spec_sheet";
+};
+
 export type SpecSheetParseV2 = {
+  /** Empty when the model returned nothing usable — never a guess. Named to
+   *  match the wire format so no remapping step can drift. */
+  image_kinds: ImageKindGuess[];
   fields: {
     name: FieldV2<string>;
     brand: FieldV2<string>;
@@ -434,8 +446,25 @@ const RESPONSE_SCHEMA_V2 = {
         "style_slugs",
         "material_slugs",
         "color_slugs",
+        "image_kinds",
       ],
       properties: {
+        // One entry per input image, in the order they were supplied. Rides
+        // along on the SAME call that already looks at every image — no extra
+        // request, no extra cost. Used to auto-tag spec sheets so they stop
+        // leaking onto the storefront.
+        image_kinds: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: false,
+            required: ["index", "kind"],
+            properties: {
+              index: { type: "integer" },
+              kind: { type: "string", enum: ["product_photo", "spec_sheet"] },
+            },
+          },
+        },
         name: fieldSchema({ type: ["string", "null"] }),
         brand: fieldSchema({ type: ["string", "null"] }),
         sku_id: fieldSchema({ type: ["string", "null"] }),
@@ -524,6 +553,19 @@ function renderTaxonomyDictionary(t: TaxonomyHints): string {
   return lines.join("\n");
 }
 
+const V2_SPEC_SHEET_INSTRUCTION = `
+ALSO classify every image you were given, in the order supplied (index starts
+at 0), and return it as "image_kinds":
+  - "spec_sheet"    — a technical drawing, dimension diagram, parts/parameter
+                      table, catalogue or website page, or any mostly-text
+                      document image. These exist to be READ, not shown to a
+                      shopper.
+  - "product_photo" — a photo or render of the product itself (studio shot on
+                      white, a cut-out, or the product installed in a room).
+If you genuinely cannot tell for an image, OMIT that index rather than
+guessing — a missing entry is treated as "leave it alone".
+`;
+
 const V2_SYSTEM_PROMPT_BASE = `You extract product spec data from MULTIPLE product images at once (these are different views / spec sheet pages / installed photos of the same single product, for a Malaysian bathroom & sanitary-ware retailer).
 
 Be CONFIDENT. The retailer would rather have a medium-confidence "Black Freestanding Bathtub" than a null. Make educated guesses based on product appearance, then mark your confidence:
@@ -573,7 +615,8 @@ Field-by-field rules:
 
 - notes: empty string by default. Use only for cross-image conflicts ("image 2 says 680mm, image 4 says 685mm — used 685mm") or "image is purely decorative, no extractable spec data".
 
-DO NOT invent slugs. DO NOT add markdown. Output JSON only.`;
+DO NOT invent slugs. DO NOT add markdown. Output JSON only.
+${V2_SPEC_SHEET_INSTRUCTION}`;
 
 /** V2 — multi-image merged parse returning per-field confidence +
  *  taxonomy slugs. Caller MUST provide TaxonomyHints loaded from the
