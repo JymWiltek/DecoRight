@@ -7,12 +7,15 @@
 //
 // Gates in fix-order — cheapest to fix first (rooms = a few clicks in a
 // picker) to costliest (GLB = run Meshy ~$0.20). PB3-A added `fbx` +
-// `retailer`; unlike the original three these were never enforced, so a
+// `retailer`; the scene gate (`scene`, this change) plugs the hole that let
+// white-cutout-only products reach the storefront looking half-finished.
+// Unlike the original three, these later gates were never enforced, so a
 // large slice of legacy published products predates them (see the PB3-A
-// scan). Enforcement is therefore TRANSITION-ONLY: the caller checks the
-// gates only when a row goes draft→published, never when re-saving an
-// already-published row — existing incomplete products stay published,
-// editable, and are never demoted (既往不咎).
+// scan + the docs/audit-2026-07-22 quality report). Enforcement is therefore
+// TRANSITION-ONLY: the caller checks the gates only when a row goes
+// draft→published, never when re-saving an already-published row — existing
+// incomplete products stay published, editable, and are never demoted
+// (既往不咎).
 //
 // checkPublishGates returns ALL failing gates (not just the first) so the
 // operator sees every missing item at once instead of fixing-one-then-
@@ -47,6 +50,14 @@ export type PublishGateInput = {
   /** PB3-A — number of product_suppliers links (the internal "Others"
    *  marker counts; it's a legitimate "no real channel" choice). */
   supplierCount: number;
+  /** The product has at least one AI scene cover (its thumbnail_url is a
+   *  /scene- image — see isSceneCoverUrl, the SAME proxy #21's Regenerate,
+   *  the list scene chip and CategoryProgress use). "See it, buy it" lives
+   *  in the scene: a white-background cutout alone is a half-finished
+   *  listing, so no scene = not publishable, hard gate, no exceptions.
+   *  Required (not optional like `defect`) so the compiler forces every
+   *  gate-input site to supply it — that is the anti-drift guarantee. */
+  hasScene: boolean;
   /** Mig 0051 — operator flagged this product as defective after eyeballing
    *  it (wrong scene image, broken 3D model, bad data). Blocks publishing
    *  until cleared. Unlike the other five this is not "something missing"
@@ -59,6 +70,7 @@ export type PublishGateReason =
   | "defect"
   | "rooms"
   | "cutouts"
+  | "scene"
   | "glb"
   | "fbx"
   | "retailer";
@@ -74,6 +86,10 @@ export function missingPublishGates(input: PublishGateInput): PublishGateReason[
   if (input.defect === true) missing.push("defect");
   if (input.rooms.length === 0) missing.push("rooms");
   if (input.cutoutApprovedCount < 1) missing.push("cutouts");
+  // Scene sits right after the cutout it's built from and before the costlier
+  // 3D gates: "See it, buy it" means the storefront shows the product IN a
+  // room, not on a white swatch. Hard gate, no exceptions (Jym).
+  if (!input.hasScene) missing.push("scene");
   if (!input.glbUrl) missing.push("glb");
   if (!input.fbxUrl) missing.push("fbx");
   if (input.supplierCount < 1) missing.push("retailer");

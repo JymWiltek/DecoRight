@@ -5,6 +5,7 @@ import {
   PUBLISHABLE_PHOTO_KIND,
   type PublishGateInput,
 } from "@/lib/publish-gates";
+import { isSceneCoverUrl } from "@/lib/scene-cover-url";
 
 export type AdminProductSort =
   | "updated_desc"
@@ -230,6 +231,9 @@ export async function listAllProducts(
       glbUrl: p.glb_url ?? null,
       fbxUrl: p.fbx_url ?? p.fbx_bundle_url ?? null,
       supplierCount: gateSupplierCounts[p.id] ?? 0,
+      // Scene gate — same /scene- thumbnail proxy as the single-product
+      // loader, so the "Ready to publish" filter and the publish action agree.
+      hasScene: isSceneCoverUrl(p.thumbnail_url),
       defect: p.defect === true,
       defectReason: p.defect_reason ?? null,
     };
@@ -346,7 +350,7 @@ export async function getCategoryProgress(): Promise<CategoryProgressRow[]> {
     if (p.status === "published") row.published++;
     else if (p.status === "draft") row.draft++;
     if (p.glb_url || p.glb_compressed_url) row.with3d++;
-    if ((p.thumbnail_url ?? "").includes("/scene-")) row.withScene++;
+    if (isSceneCoverUrl(p.thumbnail_url)) row.withScene++;
   }
   return [...map.values()].sort((a, b) => {
     // Keep the "(untyped)" bucket last — real categories lead the panel.

@@ -16,6 +16,7 @@ import {
   NAME_CONFLICT_KEY,
 } from "@config/name-conflict-rules";
 import { maybeGenerateSceneCover } from "@/lib/scene-cover";
+import { isSceneCoverUrl } from "@/lib/scene-cover-url";
 import { runSpecParseV2 } from "./actions";
 
 /**
@@ -322,7 +323,7 @@ export async function getAiPanelInfo(ids: string[]): Promise<AiPanelInfo> {
       .select("thumbnail_url")
       .in("id", validIds);
     withSceneCount = (data ?? []).filter((p) =>
-      (p.thumbnail_url ?? "").includes("/scene-"),
+      isSceneCoverUrl(p.thumbnail_url),
     ).length;
   }
 

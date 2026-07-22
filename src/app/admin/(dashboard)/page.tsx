@@ -7,6 +7,7 @@ import {
 } from "@/lib/admin/products";
 // The SAME gate the publish actions enforce — see readyIds below.
 import { checkPublishGates } from "@/lib/publish-gates";
+import { isSceneCoverUrl } from "@/lib/scene-cover-url";
 import { loadTaxonomy, labelMap } from "@/lib/taxonomy";
 import { PRODUCT_STATUS_LABELS } from "@/lib/constants/enum-labels";
 import {
@@ -573,6 +574,7 @@ export default async function AdminProductsPage({
           defect: "flagged as defective",
           rooms: "no rooms picked",
           cutouts: "no product photo",
+          scene: "缺少场景图",
           glb: "no GLB attached",
           fbx: "no FBX original",
           retailer: "no retailer attached",
@@ -932,7 +934,7 @@ export default async function AdminProductsPage({
                       )}
                     </td>
                     <td className="px-4 py-3 align-middle text-center text-sm">
-                      {(p.thumbnail_url ?? "").includes("/scene-") ? (
+                      {isSceneCoverUrl(p.thumbnail_url) ? (
                         <span title="Has scene cover" aria-label="Scene image present">
                           ✅
                         </span>
