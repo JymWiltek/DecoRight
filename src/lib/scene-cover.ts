@@ -3,6 +3,7 @@ import "server-only";
 import sharp from "sharp";
 import { resolveMountingRule } from "@config/mounting-scene-rules";
 import { createServiceRoleClient } from "@/lib/supabase/service";
+import { isSceneCoverUrl } from "@/lib/scene-cover-url";
 
 /**
  * Scene-cover engine (Wave 13, Mode A) — WHOLE-IMAGE generation.
@@ -290,7 +291,7 @@ export async function maybeGenerateSceneCover(
   if (pErr) throw new Error(`db read: ${pErr.message}`);
   if (!product) return { status: "skipped", reason: "product not found" };
   if (!product.thumbnail_url) return skip("no thumbnail");
-  if (!force && product.thumbnail_url.includes("/scene-"))
+  if (!force && isSceneCoverUrl(product.thumbnail_url))
     return skip("already a scene cover");
 
   const { data: imgs } = await supabase
@@ -302,8 +303,7 @@ export async function maybeGenerateSceneCover(
     !force &&
     rows.some(
       (r) =>
-        r.image_kind === "real_photo" &&
-        (r.cutout_image_url ?? "").includes("/scene-"),
+        r.image_kind === "real_photo" && isSceneCoverUrl(r.cutout_image_url),
     )
   )
     return skip("scene row exists");
