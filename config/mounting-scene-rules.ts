@@ -71,6 +71,44 @@ export const MOUNTING_SCENE_RULES: Record<string, string> = {
 };
 
 /**
+ * SECOND placement layer — by item_type. Jym-editable.
+ *
+ * Why a second layer: mounting alone is not enough. `floor_standing` tells a
+ * toilet and a sofa the exact same thing ("stands on the floor"), but a toilet
+ * has a soil pipe out of its back, so it MUST sit against a wall; a sofa
+ * doesn't. That orientation-in-the-room rule belongs to the item_type, not the
+ * mounting, so it lives here and is injected AFTER the mounting constraint.
+ *
+ * KEYS ARE `products.item_type` VALUES. This layer is grown ONE category at a
+ * time as scene errors show up (Jym's cadence). An item_type with no entry
+ * here injects nothing and does not error — the mechanism is ready for every
+ * category; the wording is filled in per-category. Only `toilet` today.
+ *
+ * Wording: same hardened范式 as semi_recessed — a positive requirement AND an
+ * explicit FORBIDDEN list, because the failures were the model inventing a
+ * placement (toilet floating mid-room, back off the wall).
+ */
+export const ITEM_TYPE_SCENE_RULES: Record<string, string> = {
+  toilet:
+    "PLACEMENT (mandatory): the toilet's BACK — its cistern/tank and rear face " +
+    "— must sit FLUSH AGAINST A WALL, in full contact with it, because the " +
+    "soil/waste pipe exits the back into the wall. " +
+    "FORBIDDEN: do NOT place the toilet in the middle of the room; do NOT float " +
+    "it at an angle or diagonally away from the walls; do NOT leave any gap " +
+    "between its back and the wall; do NOT place it on a countertop, vanity or " +
+    "any raised surface. It stands on the floor with its back flush to the wall.",
+};
+
+/** Single reader for the item_type placement layer. Returns the rule string or
+ *  null when this item_type has no entry (→ inject nothing, never error). */
+export function resolveItemTypeSceneRule(
+  itemType: string | null | undefined,
+): string | null {
+  const t = (itemType ?? "").trim();
+  return (t && ITEM_TYPE_SCENE_RULES[t]) || null;
+}
+
+/**
  * subtype_slug → mounting, used ONLY when a product has no explicit
  * attributes.mounting. Keys are real subtype slugs in the taxonomy.
  * Deliberately conservative: a subtype is only mapped when it unambiguously

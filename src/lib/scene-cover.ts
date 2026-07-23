@@ -1,9 +1,13 @@
 import "server-only";
 
 import sharp from "sharp";
-import { resolveMountingRule } from "@config/mounting-scene-rules";
+import {
+  resolveMountingRule,
+  resolveItemTypeSceneRule,
+} from "@config/mounting-scene-rules";
 import { createServiceRoleClient } from "@/lib/supabase/service";
 import { isSceneCoverUrl } from "@/lib/scene-cover-url";
+import type { Dimensions } from "@/lib/supabase/types";
 
 /**
  * Scene-cover engine (Wave 13, Mode A) — WHOLE-IMAGE generation.
@@ -125,8 +129,33 @@ function surfaceHint(itemType: string | null, name: string): string {
   return "The product rests naturally ON the surface, fully grounded — not floating.";
 }
 
+/** Real-size injection — the SINGLE source of truth for BOTH the interception
+ *  decision (null ⇒ the generator must skip, never guess) AND the wording. All
+ *  three axes are required: a missing axis is one the model would have to
+ *  invent, and inventing dimensions is exactly what threw the toilet-vs-room
+ *  proportions off. dimensions_mm axes map to the storefront's W/D/H —
+ *  length=width, width=depth, height=height (see PB1-3). */
+export function sceneDimensionClause(
+  dims: Dimensions | null | undefined,
+): string | null {
+  const w = dims?.length;
+  const d = dims?.width;
+  const h = dims?.height;
+  const ok = (v: number | undefined): v is number =>
+    typeof v === "number" && Number.isFinite(v) && v > 0;
+  if (!ok(w) || !ok(d) || !ok(h)) return null;
+  return (
+    `REAL SIZE (mandatory): this product measures ${w} mm wide × ${d} mm deep × ` +
+    `${h} mm tall. Render it at exactly this real-world scale relative to the room ` +
+    `and to every adjacent object (walls, floor, doors, counters, props) — do NOT ` +
+    `enlarge or shrink it; its proportions against the space must read as correct.`
+  );
+}
+
 /** Exported so the prompt can be inspected / asserted without spending an
- *  image generation. Pure string building. */
+ *  image generation. Pure string building — every constraint is pre-resolved
+ *  by the caller and injected in a FIXED order: mounting → item_type placement
+ *  → real size. */
 export function scenePrompt(
   itemType: string | null,
   name: string,
@@ -137,14 +166,30 @@ export function scenePrompt(
    *  old surfaceHint guess — that guess is what put wall-hung basins on
    *  countertops, so keeping both would contradict itself. */
   mountingConstraint?: string | null,
+  /** Second placement layer, resolved from ITEM_TYPE_SCENE_RULES by item_type
+   *  (e.g. "toilet back must be against a wall"). null for item_types with no
+   *  rule yet — nothing is injected. */
+  itemTypeConstraint?: string | null,
+  /** Real-size clause from sceneDimensionClause. The caller only reaches here
+   *  when it's non-null (a missing size blocks generation upstream). */
+  dimensionClause?: string | null,
 ): string {
   const scene = isKitchenItem(itemType)
     ? pickVariant(seed, KITCHEN)
     : isLivingItem(itemType)
       ? LIVING[tone]
       : pickVariant(seed, PALETTES[tone]);
+  // Fixed order: mounting → item_type placement → real size. Empties dropped
+  // so an item_type with no rule doesn't leave a double space.
+  const constraints = [
+    mountingConstraint ?? surfaceHint(itemType, name),
+    itemTypeConstraint,
+    dimensionClause,
+  ]
+    .filter(Boolean)
+    .join(" ");
   return (
-    `Place this exact product into ${scene}. ${mountingConstraint ?? surfaceHint(itemType, name)} ` +
+    `Place this exact product into ${scene}. ${constraints} ` +
     `The product must be genuinely INSTALLED in the scene — sitting/standing/mounted on the surface ` +
     `with correct perspective, natural contact shadows, and fully integrated lighting and reflections. ` +
     `It must NOT look pasted-on, floating, hovering, or tilted off the surface. ` +
@@ -155,20 +200,93 @@ export function scenePrompt(
   );
 }
 
+export type ScenePromptResult =
+  /** Ready to generate. `note` carries a non-fatal remark (currently "this
+   *  mounting has no scene rule yet") so the long tail is generated but visible
+   *  instead of silently unconstrained. */
+  | { ok: true; prompt: string; note?: string }
+  /** Blocked before generation — mounting or real size unknown. `reason` is the
+   *  operator-facing skip message. */
+  | { ok: false; reason: string };
+
+/**
+ * THE single entry that turns a product row into its scene prompt — or a block
+ * reason. Both the generator (maybeGenerateSceneCover) and the dry-run test go
+ * through here, so the three injected segments, their ORDER (mounting →
+ * item_type placement → real size), and the "don't guess, block instead"
+ * interception can never diverge. Pure: no I/O, no OpenAI.
+ */
+export function buildScenePromptForProduct(
+  product: {
+    item_type: string | null;
+    name: string;
+    colors: string[] | null;
+    attributes: Record<string, unknown> | null;
+    subtype_slug: string | null;
+    dimensions_mm: Dimensions | null;
+  },
+  seed: string,
+): ScenePromptResult {
+  // ① mounting — unknown blocks (this is exactly how wrong installations were
+  // produced: a wall-hung basin on a countertop).
+  const mountingValue =
+    product.attributes && typeof product.attributes === "object"
+      ? ((product.attributes as Record<string, unknown>).mounting as
+          | string
+          | null
+          | undefined)
+      : null;
+  const mount = resolveMountingRule(mountingValue, product.subtype_slug);
+  if (mount.kind === "unknown") {
+    return {
+      ok: false,
+      reason:
+        "no mounting — fill Installation method (attributes.mounting) first, otherwise the scene will guess and get it wrong",
+    };
+  }
+
+  // ③ real size — a missing axis is one the model would invent (忽大忽小 toilet
+  // bug). All three axes required; single source of truth.
+  const dimensionClause = sceneDimensionClause(product.dimensions_mm);
+  if (!dimensionClause) {
+    return {
+      ok: false,
+      reason:
+        "no dimensions — fill W/D/H (dimensions_mm) first; the scene must not guess the product's real size",
+    };
+  }
+
+  // ② item_type placement — null for item_types with no rule yet (inject
+  // nothing, never error).
+  const itemTypeConstraint = resolveItemTypeSceneRule(product.item_type);
+
+  const tone = classify(product.colors ?? [], product.name);
+  const prompt = scenePrompt(
+    product.item_type,
+    product.name,
+    tone,
+    seed,
+    mount.kind === "rule" ? mount.constraint : null,
+    itemTypeConstraint,
+    dimensionClause,
+  );
+  const note =
+    mount.kind === "no_rule"
+      ? `mounting "${mount.mounting}" has no scene rule — add one in config/mounting-scene-rules.ts (generated without an installation constraint)`
+      : undefined;
+  return { ok: true, prompt, note };
+}
+
 /**
  * Mode A: put the product on a portrait white canvas, then let gpt-image-1
  * redraw the WHOLE frame with the product placed into a scene. No mask, no
- * compositing.
+ * compositing. The prompt is pre-assembled by buildScenePromptForProduct and
+ * passed in — this function does image work + the OpenAI call only.
  */
 export async function buildSceneCoverPng(
   sourceBytes: Uint8Array,
-  itemType: string | null,
-  colors: string[],
-  name: string,
-  seed: string,
-  mountingConstraint?: string | null,
+  prompt: string,
 ): Promise<Buffer> {
-  const tone = classify(colors, name);
   const prod = await sharp(Buffer.from(sourceBytes), { failOn: "none" })
     .flatten({ background: "#ffffff" })
     .trim({ threshold: 12 })
@@ -187,10 +305,7 @@ export async function buildSceneCoverPng(
     .png()
     .toBuffer();
 
-  return gptEditWholeImage(
-    base,
-    scenePrompt(itemType, name, tone, seed, mountingConstraint),
-  );
+  return gptEditWholeImage(base, prompt);
 }
 
 /** gpt-image-1 images.edit with NO mask — whole-frame regeneration. */
@@ -285,7 +400,7 @@ export async function maybeGenerateSceneCover(
 
   const { data: product, error: pErr } = await supabase
     .from("products")
-    .select("id,name,item_type,colors,thumbnail_url,attributes,subtype_slug")
+    .select("id,name,item_type,colors,thumbnail_url,attributes,subtype_slug,dimensions_mm")
     .eq("id", productId)
     .maybeSingle();
   if (pErr) throw new Error(`db read: ${pErr.message}`);
@@ -308,20 +423,12 @@ export async function maybeGenerateSceneCover(
   )
     return skip("scene row exists");
 
-  // Installation pre-flight. A product whose mounting we cannot determine is
-  // NOT generated: that is precisely the case that produced wall-hung basins
-  // standing on countertops. A mounting we simply have no rule for still runs
-  // (the long tail must not be blocked) — the caller surfaces the note.
-  const mountingValue =
-    product.attributes && typeof product.attributes === "object"
-      ? ((product.attributes as Record<string, unknown>).mounting as string | null | undefined)
-      : null;
-  const mount = resolveMountingRule(mountingValue, product.subtype_slug);
-  if (mount.kind === "unknown") {
-    return skip(
-      "no mounting — fill Installation method (attributes.mounting) first, otherwise the scene will guess and get it wrong",
-    );
-  }
+  // Prompt pre-flight — ONE entry (buildScenePromptForProduct) resolves
+  // mounting + real size + item_type placement and assembles the prompt, OR
+  // blocks. It runs BEFORE the source image is fetched, so a product missing
+  // mounting/dimensions is rejected cheaply and the scene can never guess.
+  const promptResult = buildScenePromptForProduct(product, productId);
+  if (!promptResult.ok) return skip(promptResult.reason);
 
   const srcUrl =
     rows.find((r) => r.is_primary && r.cutout_image_url)?.cutout_image_url ??
@@ -333,18 +440,8 @@ export async function maybeGenerateSceneCover(
 
   await setStatus("pending");
   try {
-    const mountNote =
-      mount.kind === "no_rule"
-        ? `mounting "${mount.mounting}" has no scene rule — add one in config/mounting-scene-rules.ts (generated without an installation constraint)`
-        : undefined;
-    const cover = await buildSceneCoverPng(
-      srcBytes,
-      product.item_type,
-      product.colors ?? [],
-      product.name,
-      productId,
-      mount.kind === "rule" ? mount.constraint : null,
-    );
+    const mountNote = promptResult.note;
+    const cover = await buildSceneCoverPng(srcBytes, promptResult.prompt);
 
     const path = `${productId}/scene-${Date.now()}.png`;
     const { error: upErr } = await supabase.storage
