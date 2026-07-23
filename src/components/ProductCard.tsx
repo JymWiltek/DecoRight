@@ -1,5 +1,6 @@
 import Link from "next/link";
 import type { ProductRow } from "@/lib/supabase/types";
+import { getDesignerSession } from "@/lib/auth/require-designer";
 
 type Props = {
   product: ProductRow;
@@ -51,7 +52,7 @@ function thumbVersion(url: string): string {
  *     this wave (no paywall). The unit word stays English ("credit"),
  *     matching the spec mockup, like the hardcoded "RM" elsewhere.
  */
-export default function ProductCard({
+export default async function ProductCard({
   product,
   itemTypeLabels,
   styleLabels,
@@ -60,6 +61,11 @@ export default function ProductCard({
   priority = false,
   masonry = false,
 }: Props) {
+  // Credit is a designer-download concept — the storefront must NEVER expose
+  // it to a consumer or logged-out visitor (Jym). Gating here, inside the one
+  // card component every listing renders, means no call site can leak it; the
+  // session read is React-cached so a whole grid costs one JWT verify.
+  const designerLoggedIn = (await getDesignerSession()) !== null;
   const styleLabel = product.styles[0] ? styleLabels[product.styles[0]] : null;
   const subtypeLabel = product.subtype_slug
     ? subtypeLabels?.[product.subtype_slug]
@@ -160,9 +166,11 @@ export default function ProductCard({
             ))}
           </div>
         )}
-        <div className="mt-auto pt-1 text-sm font-semibold text-neutral-900">
-          {product.download_credit_cost} credit
-        </div>
+        {designerLoggedIn && (
+          <div className="mt-auto pt-1 text-sm font-semibold text-neutral-900">
+            {product.download_credit_cost} credit
+          </div>
+        )}
       </div>
     </Link>
   );

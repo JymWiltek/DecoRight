@@ -3,6 +3,7 @@ import { createClient as createAnonSbClient } from "@supabase/supabase-js";
 import { createClient } from "./supabase/server";
 import type { Database, ProductRow, BundleRow } from "./supabase/types";
 import type { PriceTier } from "./constants/enums";
+import { isSceneCoverUrl } from "./scene-cover-url";
 
 export type ProductFilters = {
   itemTypes?: string[];
@@ -387,12 +388,17 @@ export async function coversByItemType(): Promise<Record<string, string>> {
         const slug = row.item_type;
         const thumb = row.thumbnail_url;
         if (!slug || !thumb) continue;
+        // Scene-only covers (Jym): a category card must never show a
+        // white-background cutout. Only /scene- thumbnails qualify; a
+        // category whose newest products are all white-bg simply stays
+        // absent → the card falls back to its neutral typographic tile.
+        if (!isSceneCoverUrl(thumb)) continue;
         if (out[slug]) continue;
         out[slug] = thumb;
       }
       return out;
     },
-    ["covers-by-item-type-v1"],
+    ["covers-by-item-type-v2-scene-only"],
     { tags: [PRODUCT_COUNTS_TAG], revalidate: 300 },
   )();
 }
@@ -442,12 +448,15 @@ export async function coversByItemTypeInRoom(
         const slug = row.item_type;
         const thumb = row.thumbnail_url;
         if (!slug || !thumb) continue;
+        // Scene-only (see coversByItemType) — no white-bg covers on the
+        // room-page rails/grids either.
+        if (!isSceneCoverUrl(thumb)) continue;
         if (out[slug]) continue;
         out[slug] = thumb;
       }
       return out;
     },
-    ["covers-by-item-type-in-room-v1", roomSlug],
+    ["covers-by-item-type-in-room-v2-scene-only", roomSlug],
     { tags: [PRODUCT_COUNTS_TAG], revalidate: 300 },
   )();
 }

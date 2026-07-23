@@ -149,13 +149,18 @@ export default async function RoomPage({ params }: PageProps) {
   const room = taxonomy.rooms.find((r) => r.slug === slug);
   if (!room) notFound();
 
-  // Item-type rail (existing): only types that already have stock in
-  // this room. Surfaces the "buy now" path immediately. Sort by
-  // taxonomy order (label_en — set in loadTaxonomy's ORDER BY) so
-  // the shelf is stable across publishes.
-  const itemTypesInRoom = taxonomy.itemTypes.filter(
-    (it) => (counts[it.slug] ?? 0) > 0,
-  );
+  // Item-type rail ("Pick an item"): only types that already have stock in
+  // this room — the "buy now" path. Sorted by stock count DESC (biggest
+  // shelf first) so the busiest categories lead, label_en as a stable
+  // tie-breaker.
+  const itemTypesInRoom = taxonomy.itemTypes
+    .filter((it) => (counts[it.slug] ?? 0) > 0)
+    .sort(
+      (a, b) =>
+        (counts[b.slug] ?? 0) - (counts[a.slug] ?? 0) ||
+        a.label_en.localeCompare(b.label_en, "en"),
+    );
+  const stockedSlugs = new Set(itemTypesInRoom.map((it) => it.slug));
 
   // Wave UI · Commit 3 — full item-type grid (M2M-defined, all of them).
   //
@@ -186,8 +191,14 @@ export default async function RoomPage({ params }: PageProps) {
       roomItemTypeOrder.set(r.item_type_slug, r.sort_order);
     }
   }
-  const allItemTypesForRoom = taxonomy.itemTypes
-    .filter((it) => roomItemTypeOrder.has(it.slug))
+  // "All categories" is now the COMING-SOON block: only the M2M categories
+  // this room has NO stock in yet, minus everything already in the rail
+  // above. That makes the two sections a clean partition (in-stock rail ⊎
+  // coming-soon grid) with zero overlap — no product appears twice.
+  const comingSoonForRoom = taxonomy.itemTypes
+    .filter(
+      (it) => roomItemTypeOrder.has(it.slug) && !stockedSlugs.has(it.slug),
+    )
     .sort((a, b) => {
       const ao = roomItemTypeOrder.get(a.slug) ?? Number.MAX_SAFE_INTEGER;
       const bo = roomItemTypeOrder.get(b.slug) ?? Number.MAX_SAFE_INTEGER;
@@ -309,57 +320,38 @@ export default async function RoomPage({ params }: PageProps) {
           </section>
         ) : null}
 
-        {/* ─── Section · All categories in this room (full grid) ───
+        {/* ─── Section · Coming soon (empty categories only) ───────
          *
-         * Wave UI · Commit 3. The rail above shows only stocked
-         * categories ("buy now"); this grid shows EVERY item type
-         * that's defined to belong in this room (M2M from
-         * item_type_rooms), regardless of whether we've stocked it
-         * yet. Two purposes:
-         *   1. On under-stocked rooms (office / children / laundry
-         *      / outdoor / entrance) the page used to collapse to a
-         *      hero + empty state. The grid keeps it useful: visitors
-         *      see what categories are CONCEIVED for this room and
-         *      can tap into /item/<slug>?room=<slug> to see if any
-         *      individual category has stock yet.
-         *   2. On well-stocked rooms (kitchen, bathroom) the grid
-         *      doubles as a sitemap of "everything that lives here"
-         *      — the rail handles the impatient buyer; the grid
-         *      handles the "I'm not sure what I want" browser.
+         * De-duped (Jym): the rail above is the in-stock "buy now" path;
+         * this grid is now STRICTLY the categories that belong in this
+         * room (M2M item_type_rooms) but have NO stock yet — the rail's
+         * slugs are subtracted out, so the two sections never show the
+         * same category twice. Each tile is labelled "Coming soon" (its
+         * count is 0 by construction) and links to /item/<slug>?room=…
+         * where the empty-state page invites the visitor to come back.
          *
-         * Card shape mirrors the rail card (typographic) for now;
-         * Commit 4 swaps both rail and grid cards for cover-image
-         * tiles via a shared helper.
-         *
-         * Hidden when the room has zero M2M-mapped item types
-         * (would only happen for a brand-new room that hasn't been
-         * seeded yet — currently none in prod, but the guard keeps
-         * the page from emitting an empty grid heading).
+         * Hidden when every mapped category is already stocked (nothing
+         * "coming"): the guard keeps the page from emitting an empty
+         * heading.
          */}
-        {allItemTypesForRoom.length > 0 ? (
+        {comingSoonForRoom.length > 0 ? (
           <section className="mb-8 sm:mb-12">
             <SectionHeading
-              title={tRoom("allCategories")}
-              subtitle={tRoom("allCategoriesSubtitle", { room: roomLabel })}
+              title={tRoom("comingSoon")}
+              subtitle={tRoom("comingSoonSubtitle", { room: roomLabel })}
             />
             <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 lg:grid-cols-4">
-              {allItemTypesForRoom.map((it, i) => {
-                const count = counts[it.slug] ?? 0;
+              {comingSoonForRoom.map((it, i) => {
                 return (
                   <li key={it.slug} className="list-none">
-                    {/* Wave UI · Commit 4 — shared `ItemTypeCoverCard`
-                     *  replaces the previously inlined card body. Same
-                     *  component drives the rails above; visual rhythm
-                     *  stays in sync between rail and grid by
-                     *  construction. coverUrl is room-scoped (covers
-                     *  comes from `coversByItemTypeInRoom`) so the
-                     *  cover image always matches what /item/<slug>?
-                     *  room=<this> would surface on click. */}
+                    {/* coverUrl is null by construction (no stock → no
+                     *  scene cover) → neutral typographic tile. countLabel
+                     *  reads "Coming soon" instead of "0 items". */}
                     <ItemTypeCoverCard
                       href={`/item/${it.slug}?room=${slug}`}
                       label={labelFor(it, locale)}
-                      count={count}
-                      countLabel={tHome("itemCount", { count })}
+                      count={0}
+                      countLabel={tRoom("comingSoon")}
                       coverUrl={covers[it.slug] ?? null}
                       // First 8 grid cards are above the fold on a
                       // 1024+ viewport (4-col grid × 2 rows). Eager-
