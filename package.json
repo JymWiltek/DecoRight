@@ -4,9 +4,11 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "prebuild": "tsx scripts/export-scene-rules.ts",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "scene-rules:export": "tsx scripts/export-scene-rules.ts",
     "supabase:test": "tsx --env-file=.env.local scripts/supabase-roundtrip.ts",
     "supabase:seed": "tsx --env-file=.env.local scripts/seed-test-products.ts"
   },
