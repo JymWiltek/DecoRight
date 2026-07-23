@@ -42,6 +42,8 @@
     "pickItemSubtitle": "Di {room}, apa yang anda cari?",
     "allCategories": "Semua kategori",
     "allCategoriesSubtitle": "Setiap jenis perabot yang sesuai untuk {room} — termasuk yang belum kami stok lagi.",
+    "comingSoon": "Akan datang",
+    "comingSoonSubtitle": "Lebih banyak kategori {room} akan hadir tidak lama lagi.",
     "allProducts": "Semua produk",
     "empty": "Belum ada jenis barang dalam bilik ini.",
     "notFound": "Bilik tidak dijumpai"

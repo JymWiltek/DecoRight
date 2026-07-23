@@ -42,6 +42,8 @@
     "pickItemSubtitle": "Choose what you want to shop for in {room}.",
     "allCategories": "All categories",
     "allCategoriesSubtitle": "Every kind of furniture that goes in {room} — including ones we haven't stocked yet.",
+    "comingSoon": "Coming soon",
+    "comingSoonSubtitle": "More {room} categories we're stocking soon.",
     "allProducts": "All products",
     "empty": "No item types in this room yet.",
     "notFound": "Room not found"

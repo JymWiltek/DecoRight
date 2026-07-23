@@ -419,10 +419,11 @@ export default function ProductDetail({
             business. The GLB file, AR, and the in-page 3D viewer are
             untouched — only the download ENTRY POINT is gone. */}
 
-        {/* Sprint 1 C2 — Download .fbx is gated behind designer login +
-            credit. PB3-B item 2 renders it as a low-emphasis one-line link,
-            not a button-weight block. */}
-        {fbxDownload && (
+        {/* Download .fbx — designer tooling. The block carries a credit
+            price, so it's shown ONLY to a logged-in designer (Jym: no credit
+            anywhere in the consumer view). Consumers/visitors don't see it or
+            its price at all; GLB / AR / Buy stay available to everyone. */}
+        {fbxDownload && designerLoggedIn && (
           <FbxDownloadButton
             productId={product.id}
             creditCost={product.download_credit_cost}

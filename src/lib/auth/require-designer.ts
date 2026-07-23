@@ -1,4 +1,5 @@
 import "server-only";
+import { cache } from "react";
 import { cookies } from "next/headers";
 import { SESSION_COOKIE, verifySession } from "./session";
 
@@ -28,12 +29,18 @@ export async function requireDesigner(): Promise<{ designerId: string }> {
 }
 
 /** Non-throwing variant for storefront pages that adapt UI to login
- *  state (e.g. the FBX download button). Returns null when not a
- *  logged-in designer. */
-export async function getDesignerSession(): Promise<{ designerId: string } | null> {
-  try {
-    return await requireDesigner();
-  } catch {
-    return null;
-  }
-}
+ *  state (e.g. the FBX download button, the per-card credit price).
+ *  Returns null when not a logged-in designer.
+ *
+ *  React-cached: ProductCard reads this itself so credit can never leak
+ *  to a consumer, and a grid of N cards then triggers exactly ONE
+ *  cookie/JWT verify per request instead of N. */
+export const getDesignerSession = cache(
+  async (): Promise<{ designerId: string } | null> => {
+    try {
+      return await requireDesigner();
+    } catch {
+      return null;
+    }
+  },
+);

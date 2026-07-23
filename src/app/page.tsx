@@ -22,6 +22,7 @@ import {
   HERO_BUY_IMAGE,
   ITEM_TYPE_COVERS,
 } from "@/lib/home-config";
+import { isSceneCoverUrl } from "@/lib/scene-cover-url";
 
 /**
  * Sprint 1 — full-catalog, designer-focused home.
@@ -146,9 +147,15 @@ export default async function Home() {
                   label={itemTypeLabels[c.slug] ?? c.slug}
                   count={c.count}
                   countLabel={tHome("itemCount", { count: c.count })}
-                  // FIXED per-type cover (home-config); unlisted types fall
-                  // back to the dynamic newest-product cover.
-                  coverUrl={ITEM_TYPE_COVERS[c.slug] ?? c.coverUrl}
+                  // Scene-only covers (Jym): use the FIXED per-type cover
+                  // only when it's a /scene- image; otherwise fall back to the
+                  // dynamic scene cover (c.coverUrl, already scene-only). A
+                  // white-bg fixed cover is dropped → neutral tile.
+                  coverUrl={
+                    isSceneCoverUrl(ITEM_TYPE_COVERS[c.slug])
+                      ? ITEM_TYPE_COVERS[c.slug]
+                      : c.coverUrl
+                  }
                   priority={i < 3}
                 />
               ))}
