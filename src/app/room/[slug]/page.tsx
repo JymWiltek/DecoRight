@@ -1,4 +1,5 @@
 import { notFound } from "next/navigation";
+import Image from "next/image";
 import { getLocale, getTranslations } from "next-intl/server";
 import type { Metadata, ResolvingMetadata } from "next";
 import type { Locale } from "@/i18n/config";
@@ -245,13 +246,15 @@ export default async function RoomPage({ params }: PageProps) {
         >
           {room.cover_url ? (
             <div className="relative h-48 w-full sm:h-64 lg:h-80">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
+              {/* next/image (PR-D) — room hero is this page's LCP; priority
+               *  preloads a viewport-width AVIF/WebP, not the raw scene PNG. */}
+              <Image
                 src={room.cover_url}
                 alt={roomLabel}
-                loading="eager"
-                fetchPriority="high"
-                className="absolute inset-0 h-full w-full object-cover"
+                fill
+                priority
+                sizes="100vw"
+                className="object-cover"
               />
               <div
                 className="

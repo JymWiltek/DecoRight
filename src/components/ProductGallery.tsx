@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Image from "next/image";
 import { useTranslations } from "next-intl";
 import ModelViewer from "./ModelViewer";
 import ModelViewerErrorBoundary from "./ModelViewerErrorBoundary";
@@ -159,12 +160,17 @@ export default function ProductGallery({
                 "linear-gradient(180deg, #f6f6f6 0%, #e7e7e7 60%, #d8d8d8 100%)",
             }}
           >
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
+            {/* next/image (PR-D) — the detail main image serves a MEDIUM
+             *  AVIF/WebP (~detail-width) from the raw scene PNG, not the full
+             *  ~2 MB original. priority: it's the product-page LCP. */}
+            <Image
               src={current.url}
               alt={productName}
+              fill
+              priority
+              sizes="(min-width: 1024px) 600px, 100vw"
               onError={() => markFailed(current.url)}
-              className="h-full w-full object-contain p-3"
+              className="object-contain p-3"
             />
           </div>
         )}
@@ -235,12 +241,15 @@ function ThumbPreview({
     );
   }
   return (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img
+    // next/image (PR-D) — 64px thumbnails no longer pull the full ~2 MB
+    // original; Vercel serves a tiny AVIF/WebP.
+    <Image
       src={slide.url}
       alt=""
+      fill
+      sizes="64px"
       onError={onError}
-      className="h-full w-full object-cover"
+      className="object-cover"
     />
   );
 }
