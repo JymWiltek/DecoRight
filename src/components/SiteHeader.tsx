@@ -1,4 +1,5 @@
 import Link from "next/link";
+import Image from "next/image";
 import { getLocale, getTranslations } from "next-intl/server";
 import type { Locale } from "@/i18n/config";
 import { BRAND } from "@config/brand";
@@ -176,10 +177,15 @@ export default async function SiteHeader({
                   <div className="invisible absolute left-0 top-full z-50 w-64 translate-y-1 rounded-lg border border-neutral-200 bg-white p-3 opacity-0 shadow-lg transition group-hover:visible group-hover:translate-y-0 group-hover:opacity-100">
                     <div className="flex gap-3">
                       {c.coverUrl && (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img
+                        // next/image (PR-D): serves a 64px AVIF/WebP (~2 KB)
+                        // instead of the raw ~2 MB scene PNG, and lazy-loads —
+                        // the dropdown is hidden until hover, so these covers
+                        // no longer weigh down first paint at all.
+                        <Image
                           src={c.coverUrl}
                           alt=""
+                          width={64}
+                          height={64}
                           className="h-16 w-16 shrink-0 rounded object-cover"
                         />
                       )}

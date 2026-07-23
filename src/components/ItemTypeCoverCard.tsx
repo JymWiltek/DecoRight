@@ -44,6 +44,7 @@
  * doesn't today — placeholder for the day it does).
  */
 import Link from "next/link";
+import Image from "next/image";
 
 export default function ItemTypeCoverCard({
   href,
@@ -81,19 +82,19 @@ export default function ItemTypeCoverCard({
         "
       >
         <div className="relative aspect-square w-full overflow-hidden bg-neutral-50">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
+          {/* next/image (PR-D) — Vercel serves a card-sized AVIF/WebP from
+           *  the raw scene PNG and lazy-loads below the fold. object-contain
+           *  (not cover): cutouts have transparent backgrounds framed tight
+           *  to the silhouette; cropping would clip handles/legs. p-3 gives
+           *  breathing room so the product doesn't look pinched. */}
+          <Image
             src={coverUrl}
             alt={label}
-            loading={priority ? "eager" : "lazy"}
-            fetchPriority={priority ? "high" : "auto"}
-            // object-contain (not cover): cutouts have transparent
-            // backgrounds and are framed tight to the silhouette;
-            // cropping would clip handles/legs. p-3 gives breathing
-            // room from the card edge so the product doesn't look
-            // pinched.
+            fill
+            sizes="(min-width: 1024px) 220px, (min-width: 640px) 33vw, 50vw"
+            priority={priority}
             className="
-              absolute inset-0 h-full w-full object-contain p-3
+              object-contain p-3
               transition duration-300
               group-hover:scale-[1.04]
               group-active:scale-[1.02]

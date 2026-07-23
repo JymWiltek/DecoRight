@@ -30,6 +30,7 @@
  * `eager` because the home grid is the first painted block.
  */
 import Link from "next/link";
+import Image from "next/image";
 
 export default function RoomCard({
   href,
@@ -92,18 +93,16 @@ export default function RoomCard({
       "
     >
       <div className="relative aspect-square w-full overflow-hidden">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
+        {/* next/image (PR-D) — a room-tile-sized AVIF/WebP instead of the raw
+         *  scene PNG, lazy-loaded (the room grid sits below the hero +
+         *  featured + browse-by-type, so eager loading only slowed first
+         *  paint). Slight zoom on hover/active keeps it tactile. */}
+        <Image
           src={coverUrl}
           alt={label}
-          // Above-the-fold for the first ~4 cards on mobile; the rest
-          // can lazy-load. Caller can opt out by passing a different
-          // strategy in a future commit if needed.
-          loading="eager"
-          fetchPriority="high"
-          // Slightly zoom on hover/active so the card feels tactile
-          // on touch (active) and on cursor (hover).
-          className="absolute inset-0 h-full w-full object-cover transition duration-300 group-hover:scale-[1.03] group-active:scale-[1.02]"
+          fill
+          sizes="(min-width: 1024px) 25vw, (min-width: 640px) 33vw, 50vw"
+          className="object-cover transition duration-300 group-hover:scale-[1.03] group-active:scale-[1.02]"
         />
         {/* Bottom gradient + text overlay — gives the label a guaranteed
          *  contrast surface no matter the photo. */}

@@ -1,4 +1,5 @@
 import { notFound } from "next/navigation";
+import Image from "next/image";
 import { getLocale, getTranslations } from "next-intl/server";
 import type { Metadata } from "next";
 import type { Locale } from "@/i18n/config";
@@ -89,11 +90,14 @@ export default async function BundlePage({ params }: PageProps) {
         <section className="overflow-hidden rounded-xl border border-neutral-200 bg-neutral-50">
           <div className="relative aspect-[21/9] w-full bg-neutral-100">
             {bundle.cover_image_url ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
+              // next/image (PR-D) — bundle hero as a viewport-width AVIF/WebP.
+              <Image
                 src={bundle.cover_image_url}
                 alt={bundle.name}
-                className="h-full w-full object-cover"
+                fill
+                priority
+                sizes="(min-width: 1024px) 960px, 100vw"
+                className="object-cover"
               />
             ) : (
               <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-neutral-100 to-neutral-200 text-sm text-neutral-400">

@@ -7,6 +7,24 @@ import createNextIntlPlugin from "next-intl/plugin";
 const withNextIntl = createNextIntlPlugin("./src/i18n/request.ts");
 
 const nextConfig: NextConfig = {
+  // PR-D (list image perf) — storefront covers used to render the raw
+  // ~2 MB scene PNG from Supabase Storage via a plain <img>, at display
+  // sizes as small as 64×64 (the header mega-menu). One page pulled
+  // ~15 MB of covers. Routing those through next/image lets the Vercel
+  // image optimizer serve a display-sized AVIF/WebP (a few KB) and
+  // cache it at the edge. remotePatterns whitelists the Storage host;
+  // masonry product cards keep the bespoke /api/card-image route (border
+  // trim + already ~20 KB WebP), which next/image can't replicate.
+  images: {
+    formats: ["image/avif", "image/webp"],
+    remotePatterns: [
+      {
+        protocol: "https",
+        hostname: "mooggzqjybwuprrsgnny.supabase.co",
+        pathname: "/storage/v1/object/public/**",
+      },
+    ],
+  },
   experimental: {
     serverActions: {
       // Default is 1MB. The /admin/products/[id]/upload action accepts

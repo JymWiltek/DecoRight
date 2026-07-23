@@ -1,4 +1,5 @@
 import Link from "next/link";
+import Image from "next/image";
 import { getLocale, getTranslations } from "next-intl/server";
 import type { Locale } from "@/i18n/config";
 import SiteHeader from "@/components/SiteHeader";
@@ -107,11 +108,14 @@ export default async function Home() {
                 >
                   <div className="relative aspect-[16/9] w-full overflow-hidden bg-neutral-100">
                     {b.cover_image_url ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
+                      // next/image (PR-D) — bundle cover as a card-sized
+                      // AVIF/WebP, lazy below the fold.
+                      <Image
                         src={b.cover_image_url}
                         alt={b.name}
-                        className="h-full w-full object-cover transition group-hover:scale-[1.02]"
+                        fill
+                        sizes="(min-width: 768px) 33vw, 100vw"
+                        className="object-cover transition group-hover:scale-[1.02]"
                       />
                     ) : (
                       <div className="flex h-full w-full items-center justify-center text-sm text-neutral-400">
@@ -239,8 +243,16 @@ function HomeBanner({
   return (
     <div className="relative min-h-[260px] overflow-hidden rounded-2xl bg-neutral-200">
       {bg && (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img src={bg} alt="" className="absolute inset-0 h-full w-full object-cover" />
+        // next/image (PR-D) — the hero is the home LCP; priority preloads a
+        // viewport-sized AVIF/WebP instead of the raw scene PNG.
+        <Image
+          src={bg}
+          alt=""
+          fill
+          priority
+          sizes="(min-width: 640px) 50vw, 100vw"
+          className="object-cover"
+        />
       )}
       {/* Bottom-up scrim ONLY behind the text — keeps the product image
           clear while text stays legible (no full-image gray wash). */}

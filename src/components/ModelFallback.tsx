@@ -32,6 +32,7 @@
  *     boundary, etc.).
  */
 
+import Image from "next/image";
 import { useTranslations } from "next-intl";
 
 type Props = {
@@ -52,11 +53,13 @@ export default function ModelFallback({ thumbnail, alt }: Props) {
       aria-label={t("modelUnavailable")}
     >
       {thumbnail ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
+        // next/image (PR-D) — optimized poster for the 3D-unavailable state.
+        <Image
           src={thumbnail}
           alt={alt}
-          className="h-full w-full object-contain p-6"
+          fill
+          sizes="(min-width: 1024px) 600px, 100vw"
+          className="object-contain p-6"
         />
       ) : (
         <div className="flex h-full w-full items-center justify-center text-3xl text-neutral-400">
