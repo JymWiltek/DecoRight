@@ -261,7 +261,9 @@ export default async function ProductPage({ params }: PageProps) {
           leadEmail={BRAND.email}
           leadWhatsapp={BRAND.whatsapp}
           productUrl={absoluteUrl(`/product/${id}`)}
-          arUnlocked={consumerUser !== null}
+          // Unlimited AR for any signed-in account — a consumer OR a designer;
+          // logged-out visitors get the free-preview quota + sign-in nudge.
+          arUnlocked={consumerUser !== null || designerLoggedIn}
           consumerEmail={consumerUser?.email ?? null}
         />
 

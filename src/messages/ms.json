@@ -102,6 +102,7 @@
     "insufficientCredit": "Kredit tidak cukup — tambah nilai melalui WhatsApp.",
     "downloadFailed": "Muat turun gagal — cuba lagi.",
     "arViewInAR": "Lihat dalam AR",
+    "arFreePreview": "Pratonton percuma · {count} lagi",
     "arLoginToView": "Log masuk untuk AR",
     "arGateHint": "AR percuma untuk 3 produk pertama anda — selepas itu, log masuk (percuma) untuk terus melihat.",
     "openOnPhone": "Want to see it in your room? Open this page on your phone.",
@@ -182,8 +183,8 @@
     "whatsappRetailer": "WhatsApp Peruncit"
   },
   "authGate": {
-    "title": "Daftar — AR Percuma",
-    "subtitle": "Terus lihat produk dalam ruang anda — percuma selama-lamanya.",
+    "title": "Terus lihat dalam AR — percuma",
+    "subtitle": "Anda telah guna 3 pratonton percuma. Log masuk — percuma — untuk lihat mana-mana produk dalam ruang anda tanpa had.",
     "google": "Teruskan dengan Google",
     "googleUnavailable": "Log masuk Google belum diaktifkan — sila guna e-mel.",
     "or": "atau",
