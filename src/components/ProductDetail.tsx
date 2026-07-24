@@ -13,24 +13,13 @@ import { consumerSignOut } from "@/app/auth/actions";
 import { buildFbxDownload, formatMYR } from "@/lib/format";
 import { waLink } from "@/lib/whatsapp";
 import { glbUrlForGallery } from "@/lib/glb-display";
+import {
+  AR_FREE_LIMIT,
+  AR_RESUME_KEY,
+  readArViews,
+  incrementArViews,
+} from "@/lib/ar-quota";
 import type { ProductRow } from "@/lib/supabase/types";
-
-// PB3-B item 6 — free AR quota. A logged-out visitor may open AR on up to
-// this many DISTINCT products (tracked by product id in localStorage) before
-// the sign-in modal appears. Per-product, not per-click: re-opening a product
-// already in the list is free and doesn't consume a slot. This is lead
-// capture, not DRM — incognito / cleared storage resets it, by design.
-const AR_FREE_LIMIT = 3;
-const AR_QUOTA_KEY = "dr_ar_free_products";
-
-function readArQuota(): string[] {
-  try {
-    const raw = JSON.parse(localStorage.getItem(AR_QUOTA_KEY) || "[]");
-    return Array.isArray(raw) ? raw.filter((x) => typeof x === "string") : [];
-  } catch {
-    return [];
-  }
-}
 
 // PB3-B item 3 — layout signal. Which CTA is primary is a device form-factor
 // decision, so it reads the viewport's pointer type, NOT model-viewer's
@@ -147,29 +136,51 @@ export default function ProductDetail({
   // calls it after the free-quota / login check.
   const arLaunchRef = useRef<(() => void) | null>(null);
 
-  // PB3-B item 6 — AR launch decision. Logged-in consumers: unlimited.
-  // Logged-out: first AR_FREE_LIMIT distinct products are free, then the
-  // sign-in modal. A product already viewed is always free (no re-consume).
+  // Free-AR quota (soft count). viewsUsed mirrors localStorage so the hint
+  // badge re-renders as previews are spent; hydrated on mount to stay SSR-safe.
+  const [viewsUsed, setViewsUsed] = useState(0);
+  useEffect(() => {
+    setViewsUsed(readArViews());
+  }, []);
+  const freeRemaining = Math.max(0, AR_FREE_LIMIT - viewsUsed);
+
+  // Resume-after-login: if the modal was opened from THIS product's AR button
+  // and the visitor is now unlocked, continue straight to that AR (native AR
+  // may still want a tap on some mobile browsers — activateAR rejects
+  // gracefully if so). Fires on mount (OAuth redirect return) and when
+  // arUnlocked flips true (in-place email login → router.refresh()).
+  useEffect(() => {
+    if (!arUnlocked) return;
+    try {
+      if (localStorage.getItem(AR_RESUME_KEY) === product.id) {
+        localStorage.removeItem(AR_RESUME_KEY);
+        arLaunchRef.current?.();
+      }
+    } catch {
+      // storage blocked — nothing to resume
+    }
+  }, [arUnlocked, product.id]);
+
+  // AR launch decision — the SINGLE gate. Unlocked (consumer OR designer):
+  // unlimited. Logged-out: the first AR_FREE_LIMIT OPENS are free (repeats
+  // count too — 3 is a preview budget, not a per-product one), then the
+  // invite-to-sign-in modal. Every count read/write goes through @/lib/ar-quota.
   const handleArClick = () => {
     if (arUnlocked) {
       arLaunchRef.current?.();
       return;
     }
-    const seen = readArQuota();
-    if (!seen.includes(product.id)) {
-      if (seen.length >= AR_FREE_LIMIT) {
-        setLoginOpen(true);
-        return;
-      }
+    if (readArViews() >= AR_FREE_LIMIT) {
+      // Remember which AR they wanted so login can resume it.
       try {
-        localStorage.setItem(
-          AR_QUOTA_KEY,
-          JSON.stringify([...seen, product.id]),
-        );
+        localStorage.setItem(AR_RESUME_KEY, product.id);
       } catch {
-        // localStorage unavailable → don't block (lead capture, not DRM).
+        // storage blocked — modal still opens, just no auto-resume
       }
+      setLoginOpen(true);
+      return;
     }
+    setViewsUsed(incrementArViews());
     arLaunchRef.current?.();
   };
 
@@ -251,6 +262,7 @@ export default function ProductDetail({
 
   return (
     <div className="grid gap-8 md:grid-cols-[1.2fr_1fr]">
+      <div className="relative">
       <ProductGallery
         productName={product.name}
         // Decoded-budget gate (lib/glb-display): nulls the URL for
@@ -274,6 +286,15 @@ export default function ProductDetail({
         emptyLabel={t("noImages")}
         arLaunchRef={arLaunchRef}
       />
+        {/* Free-AR hint — a light, ignorable corner badge for logged-out
+         *  visitors on a device where AR runs. Non-blocking (pointer-events-
+         *  none); counts down as previews are spent. */}
+        {isTouchDevice && hasModel && !arUnlocked && (
+          <div className="pointer-events-none absolute left-3 top-3 z-10 rounded-full bg-black/60 px-2.5 py-1 text-[11px] font-medium text-white shadow-sm backdrop-blur-sm">
+            {t("arFreePreview", { count: freeRemaining })}
+          </div>
+        )}
+      </div>
 
       <div className="flex flex-col gap-5">
         <div>

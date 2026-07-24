@@ -102,6 +102,7 @@
     "insufficientCredit": "credit 不足 — 请 WhatsApp 充值。",
     "downloadFailed": "下载失败 — 请重试。",
     "arViewInAR": "在 AR 中查看",
+    "arFreePreview": "免费预览 · 还剩 {count} 次",
     "arLoginToView": "登录后查看 AR",
     "arGateHint": "前 3 个产品免费用 AR 看,之后免费登录即可继续。",
     "openOnPhone": "Want to see it in your room? Open this page on your phone.",
@@ -182,8 +183,8 @@
     "whatsappRetailer": "WhatsApp 联系零售商"
   },
   "authGate": {
-    "title": "注册 — 免费 AR",
-    "subtitle": "继续在你的空间里查看产品 — 永久免费。",
+    "title": "免费无限查看 AR",
+    "subtitle": "你已用完 3 次免费预览。免费登录即可在你的空间里无限查看任何产品。",
     "google": "用 Google 继续",
     "googleUnavailable": "Google 登录暂未开通,请用邮箱登录。",
     "or": "或",

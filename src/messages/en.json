@@ -102,6 +102,7 @@
     "insufficientCredit": "Not enough credit — top up via WhatsApp.",
     "downloadFailed": "Download failed — try again.",
     "arViewInAR": "View in AR",
+    "arFreePreview": "Free preview · {count} left",
     "arLoginToView": "Sign in to view AR",
     "arGateHint": "AR is free for your first 3 products — after that, sign in (free) to keep viewing.",
     "openOnPhone": "Want to see it in your room? Open this page on your phone.",
@@ -182,8 +183,8 @@
     "whatsappRetailer": "WhatsApp a Retailer"
   },
   "authGate": {
-    "title": "Register — Free AR",
-    "subtitle": "Keep viewing products in your space — free forever.",
+    "title": "Keep viewing in AR — free",
+    "subtitle": "You've used your 3 free previews. Sign in — it's free — and view any product in your space, unlimited.",
     "google": "Continue with Google",
     "googleUnavailable": "Google sign-in isn't enabled yet — please use email.",
     "or": "or",
