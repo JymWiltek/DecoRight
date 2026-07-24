@@ -13,6 +13,19 @@ import {
   ITEM_TYPE_SCENE_RULES,
   SUBTYPE_IMPLIES_MOUNTING,
 } from "../config/mounting-scene-rules";
+import {
+  SCENE_PALETTE_POOLS,
+  LIVING_SCENES,
+  KITCHEN_SCENES,
+  SCENE_PROP_RULES,
+} from "../config/scene-style-rules";
+
+const PALETTE_LABELS: Record<string, string> = {
+  warm: "白瓷 / 浅色产品(需最散,~9成马桶白瓷)",
+  cool: "深色 / 金属产品",
+  luxury: "金 / 黄铜产品",
+  neutral: "彩色产品",
+};
 
 const DOC = "docs/scene-rules.md";
 const L: string[] = [];
@@ -52,6 +65,44 @@ for (const [k, v] of Object.entries(ITEM_TYPE_SCENE_RULES)) {
   L.push(`### \`${k}\``);
   L.push("");
   L.push(v);
+  L.push("");
+}
+
+L.push(`## ③ 背景色调池(材质 → 色调池,每次从池随机抽一个)`);
+L.push("");
+L.push(
+  "白瓷池刻意多样(暖木 / 冷灰水泥 / 深色地板 / 水磨石 / 浅彩墙),让一页白马桶不再是同一种暖米色。" +
+    "抽签按产品 id 稳定(同批产品散开),Regenerate 时换一个。",
+);
+L.push("");
+for (const [tone, pool] of Object.entries(SCENE_PALETTE_POOLS)) {
+  L.push(`### \`${tone}\` — ${PALETTE_LABELS[tone] ?? tone}(${pool.length} 个)`);
+  L.push("");
+  for (const s of pool) L.push(`- ${s}`);
+  L.push("");
+}
+L.push("**客厅场景(sofa 等,每材质一个):**");
+L.push("");
+for (const [tone, s] of Object.entries(LIVING_SCENES)) L.push(`- \`${tone}\`: ${s}`);
+L.push("");
+L.push(`**厨房场景(range_hood,${KITCHEN_SCENES.length} 个):**`);
+L.push("");
+for (const s of KITCHEN_SCENES) L.push(`- ${s}`);
+L.push("");
+
+L.push(`## ④ 东南亚背景道具层(item_type → 道具)`);
+L.push("");
+L.push(
+  "卫生间场景注入真实东南亚配件指引;若库内有对应 `referenceItemTypes` 的已上传产品," +
+    "取其白底图喂给模型作风格参照(所引用产品 id 会被记录,作未来「场景中的其他产品」链接的数据基础)。" +
+    "库内无对应配件 → 降级纯文字,不报错。道具永远是配角,不抢镜、不遮挡主产品。",
+);
+L.push("");
+for (const [it, rule] of Object.entries(SCENE_PROP_RULES)) {
+  L.push(`### \`${it}\``);
+  L.push("");
+  L.push(`- 指引:${rule.guidance}`);
+  L.push(`- 参照 item_types:${rule.referenceItemTypes.map((t) => `\`${t}\``).join(", ")}`);
   L.push("");
 }
 

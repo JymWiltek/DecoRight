@@ -5,9 +5,15 @@ import {
   resolveMountingRule,
   resolveItemTypeSceneRule,
 } from "@config/mounting-scene-rules";
+import {
+  resolveScenePalettePool,
+  resolveScenePropRule,
+} from "@config/scene-style-rules";
 import { createServiceRoleClient } from "@/lib/supabase/service";
 import { isSceneCoverUrl } from "@/lib/scene-cover-url";
 import type { Dimensions } from "@/lib/supabase/types";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import type { Database } from "@/lib/supabase/types";
 
 /**
  * Scene-cover engine (Wave 13, Mode A) — WHOLE-IMAGE generation.
@@ -51,67 +57,15 @@ export function classify(colors: string[], name: string): Tone {
   return "warm";
 }
 
-// Diversified background pools (Wave 13, stop the warm-beige monotone). Each
-// family rotates across cool/warm/light/dark variants via pickVariant (hashed
-// on the product id → stable per product, spread across the catalogue):
-//   warm    = white ceramic / wood → beige / light-grey / cool-white / soft-green
-//   cool    = black / chrome / gunmetal / steel → cool-grey / concrete / dark / industrial
-//   luxury  = gold / rose-gold / brass → dark-luxury / warm-boutique / neutral / dark-green
-//   neutral = colourful products → clean neutral gallery
-const PALETTES: Record<Tone, string[]> = {
-  warm: [
-    "a soft minimalist bathroom with warm beige plaster walls, light travertine floor and diffused warm daylight",
-    "a clean minimalist bathroom with pale warm-grey stone walls, light concrete floor and soft even daylight",
-    "a bright airy bathroom with crisp cool-white walls, pale grey large-format tile and clean north-facing daylight",
-    "a calm spa bathroom with soft sage-green plaster walls, light oak accents and gentle diffused daylight",
-  ],
-  cool: [
-    "a cool modern bathroom with matte pale-grey stone and concrete, crisp cool-white daylight",
-    "a contemporary bathroom with raw concrete and charcoal microcement walls, soft cool north light",
-    "a moody dark bathroom with deep charcoal stone walls and low-key dramatic lighting",
-    "a minimalist industrial bathroom with brushed grey concrete, dark-grout tile and neutral cool light",
-  ],
-  luxury: [
-    "a dark luxury bathroom with near-black marble walls and warm low-key lighting",
-    "a warm boutique bathroom with deep taupe walls, walnut cabinetry and soft warm pooled light",
-    "an elegant neutral bathroom with soft greige stone walls and even refined daylight",
-    "a boutique-hotel bathroom in dark green-black marble with warm pooled light",
-  ],
-  neutral: [
-    "a clean neutral gallery-like bathroom with soft light-grey walls and even shadowless daylight",
-    "a minimal studio-like bathroom with off-white walls, pale grey floor and bright even light",
-    "an airy neutral bathroom with white plaster walls, light grey stone and soft cool-neutral daylight",
-  ],
-};
-// Living-room palettes for sofas etc. (index-matched to Tone by reuse of hue).
-const LIVING: Record<Tone, string> = {
-  warm: "a bright Scandinavian living room with warm white walls, light oak floor and a large window",
-  cool: "a cool modern living room with grey concrete walls, matte flooring and soft cool daylight",
-  luxury: "a dark luxury living room with charcoal walls, walnut and warm gold accent lighting",
-  neutral: "a clean neutral living room with soft light-grey walls and even daylight",
-};
-// Kitchen scenes for range hoods etc. — rotated cool/warm/dark/light so a
-// wall of extractor hoods still varies (a range hood belongs over a cooktop,
-// never in a bathroom next to towels).
-const KITCHEN: string[] = [
-  "a modern kitchen with matte pale-grey cabinetry, a cooktop directly below and soft cool daylight",
-  "a contemporary kitchen with warm wood cabinets, a stone backsplash, a cooktop directly below and gentle warm light",
-  "a sleek dark kitchen with charcoal cabinetry, a cooktop directly below and moody low-key lighting",
-  "a minimalist kitchen with white cabinets, a concrete counter, a cooktop directly below and clean cool daylight",
-];
+// Background-scene pools (material class → pool of scenes) + the SEA prop
+// layer moved to config/scene-style-rules.ts (Jym-editable, re-exported to
+// docs/scene-rules.md). scenePrompt picks one scene from the resolved pool via
+// pickVariant, seeded per product so a batch spreads out.
 
 function pickVariant(seed: string, arr: string[]): string {
   let h = 0;
   for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0;
   return arr[h % arr.length];
-}
-
-function isLivingItem(itemType: string | null): boolean {
-  return !!itemType && /sofa|dining_table|dining_chair|bed_frame|cabinet|console/.test(itemType);
-}
-
-function isKitchenItem(itemType: string | null): boolean {
-  return !!itemType && /range_hood/.test(itemType);
 }
 
 /** Where the product physically belongs — so Mode A grounds it correctly. */
@@ -173,18 +127,21 @@ export function scenePrompt(
   /** Real-size clause from sceneDimensionClause. The caller only reaches here
    *  when it's non-null (a missing size blocks generation upstream). */
   dimensionClause?: string | null,
+  /** SEA background-prop段, built from SCENE_PROP_RULES by the caller (it also
+   *  did the catalog reference lookup). null for item_types with no prop rule.
+   *  Appended AFTER the #28 segments — it never touches placement/size. */
+  propsClause?: string | null,
 ): string {
-  const scene = isKitchenItem(itemType)
-    ? pickVariant(seed, KITCHEN)
-    : isLivingItem(itemType)
-      ? LIVING[tone]
-      : pickVariant(seed, PALETTES[tone]);
-  // Fixed order: mounting → item_type placement → real size. Empties dropped
-  // so an item_type with no rule doesn't leave a double space.
+  // Material class + item_type → background-scene pool (config), one picked by
+  // the per-product seed so a batch of white toilets spreads across looks.
+  const scene = pickVariant(seed, resolveScenePalettePool(tone, itemType));
+  // Fixed order: mounting → item_type placement → real size → background props.
+  // Empties dropped so a missing layer doesn't leave a double space.
   const constraints = [
     mountingConstraint ?? surfaceHint(itemType, name),
     itemTypeConstraint,
     dimensionClause,
+    propsClause,
   ]
     .filter(Boolean)
     .join(" ");
@@ -202,12 +159,21 @@ export function scenePrompt(
 
 export type ScenePromptResult =
   /** Ready to generate. `note` carries a non-fatal remark (currently "this
-   *  mounting has no scene rule yet") so the long tail is generated but visible
-   *  instead of silently unconstrained. */
-  | { ok: true; prompt: string; note?: string }
+   *  mounting has no scene rule yet"). `referenceProductIds` are the in-catalog
+   *  accessory products the props段 referenced — the caller records them (the
+   *  data基础 for a future "other products in this scene" link). */
+  | { ok: true; prompt: string; note?: string; referenceProductIds: string[] }
   /** Blocked before generation — mounting or real size unknown. `reason` is the
    *  operator-facing skip message. */
   | { ok: false; reason: string };
+
+/** Pre-resolved SEA prop info for buildScenePromptForProduct. `guidance` is the
+ *  config text; `referenceProductIds` are the catalog accessories found by the
+ *  caller's DB lookup (empty ⇒ text-only, graceful degrade). */
+export type SceneProps = {
+  guidance: string;
+  referenceProductIds: string[];
+};
 
 /**
  * THE single entry that turns a product row into its scene prompt — or a block
@@ -226,6 +192,9 @@ export function buildScenePromptForProduct(
     dimensions_mm: Dimensions | null;
   },
   seed: string,
+  /** Pre-resolved by the caller (config guidance + catalog reference lookup).
+   *  null / undefined ⇒ no prop rule for this item_type ⇒ no props段. */
+  sceneProps?: SceneProps | null,
 ): ScenePromptResult {
   // ① mounting — unknown blocks (this is exactly how wrong installations were
   // produced: a wall-hung basin on a countertop).
@@ -260,6 +229,18 @@ export function buildScenePromptForProduct(
   // nothing, never error).
   const itemTypeConstraint = resolveItemTypeSceneRule(product.item_type);
 
+  // ④ SEA background props (appended after #28's三段). References that the
+  // catalog actually stocks were resolved by the caller; when empty the段
+  // degrades to text guidance only.
+  const referenceProductIds = sceneProps?.referenceProductIds ?? [];
+  const propsClause = sceneProps
+    ? `BACKGROUND PROPS (secondary): the scene should include ${sceneProps.guidance}. ` +
+      (referenceProductIds.length > 0
+        ? "Model the shape and style of these background accessories on the ATTACHED reference product photos — same type and family, no need to copy them exactly. "
+        : "") +
+      "These accessories are strictly SECONDARY and SMALL: the product is the hero and dominates the frame — the props must not overlap, cover, touch or upstage it."
+    : null;
+
   const tone = classify(product.colors ?? [], product.name);
   const prompt = scenePrompt(
     product.item_type,
@@ -269,12 +250,61 @@ export function buildScenePromptForProduct(
     mount.kind === "rule" ? mount.constraint : null,
     itemTypeConstraint,
     dimensionClause,
+    propsClause,
   );
   const note =
     mount.kind === "no_rule"
       ? `mounting "${mount.mounting}" has no scene rule — add one in config/mounting-scene-rules.ts (generated without an installation constraint)`
       : undefined;
-  return { ok: true, prompt, note };
+  return { ok: true, prompt, note, referenceProductIds };
+}
+
+/**
+ * Catalog reference lookup for the prop layer — the "道具 reference" resolver.
+ * Returns up to `limit` published accessory products (id + their WHITE-BG
+ * cutout shot) whose item_type is one of `referenceItemTypes`. We read the
+ * cutout from product_images, NOT thumbnail_url: a published accessory's
+ * thumbnail is its own /scene- cover, but the clean white-bg product shot Jym
+ * wants as a style reference is the cutout row. Empty list ⇒ props段 degrades
+ * to text-only. Ordered by id for a stable, deterministic pick. Impure.
+ */
+export async function findSceneReferenceProducts(
+  supabase: SupabaseClient<Database>,
+  referenceItemTypes: string[],
+  limit = 3,
+): Promise<{ id: string; url: string }[]> {
+  if (referenceItemTypes.length === 0) return [];
+  const { data: prods } = await supabase
+    .from("products")
+    .select("id")
+    .eq("status", "published")
+    .in("item_type", referenceItemTypes)
+    .order("id", { ascending: true })
+    .limit(limit * 4);
+  const ids = (prods ?? []).map((p) => p.id);
+  if (ids.length === 0) return [];
+
+  const { data: imgs } = await supabase
+    .from("product_images")
+    .select("product_id, cutout_image_url, image_kind, state")
+    .in("product_id", ids)
+    .eq("state", "cutout_approved");
+
+  // One clean white-bg cutout per product (image_kind='cutout', not a scene).
+  const whiteBgByProduct = new Map<string, string>();
+  for (const im of imgs ?? []) {
+    const url = im.cutout_image_url;
+    if (!url || im.image_kind !== "cutout" || isSceneCoverUrl(url)) continue;
+    if (!whiteBgByProduct.has(im.product_id)) whiteBgByProduct.set(im.product_id, url);
+  }
+
+  const out: { id: string; url: string }[] = [];
+  for (const id of ids) {
+    const url = whiteBgByProduct.get(id);
+    if (url) out.push({ id, url });
+    if (out.length >= limit) break;
+  }
+  return out;
 }
 
 /**
@@ -286,6 +316,10 @@ export function buildScenePromptForProduct(
 export async function buildSceneCoverPng(
   sourceBytes: Uint8Array,
   prompt: string,
+  /** White-bg accessory shots to feed as background-prop style references
+   *  (the props段 tells the model to model props on them). Empty ⇒ single
+   *  image, exactly as before. */
+  referenceImages: Buffer[] = [],
 ): Promise<Buffer> {
   const prod = await sharp(Buffer.from(sourceBytes), { failOn: "none" })
     .flatten({ background: "#ffffff" })
@@ -305,16 +339,31 @@ export async function buildSceneCoverPng(
     .png()
     .toBuffer();
 
-  return gptEditWholeImage(base, prompt);
+  return gptEditWholeImage(base, prompt, referenceImages);
 }
 
-/** gpt-image-1 images.edit with NO mask — whole-frame regeneration. */
-async function gptEditWholeImage(baseBuf: Buffer, prompt: string): Promise<Buffer> {
+/** gpt-image-1 images.edit with NO mask — whole-frame regeneration. When
+ *  reference images are present they ride along as additional `image[]`
+ *  entries (gpt-image-1 accepts multiple: the first is the frame being redrawn,
+ *  the rest are style references). No references ⇒ the original single-image
+ *  `image` field, byte-for-byte the proven path. */
+async function gptEditWholeImage(
+  baseBuf: Buffer,
+  prompt: string,
+  referenceImages: Buffer[] = [],
+): Promise<Buffer> {
   const key = process.env.OPENAI_API_KEY;
   if (!key) throw new Error("OPENAI_API_KEY not configured");
   const form = new FormData();
   form.set("model", "gpt-image-1");
-  form.set("image", new Blob([baseBuf as BlobPart], { type: "image/png" }), "b.png");
+  if (referenceImages.length === 0) {
+    form.set("image", new Blob([baseBuf as BlobPart], { type: "image/png" }), "b.png");
+  } else {
+    form.append("image[]", new Blob([baseBuf as BlobPart], { type: "image/png" }), "base.png");
+    referenceImages.forEach((buf, i) =>
+      form.append("image[]", new Blob([buf as BlobPart], { type: "image/png" }), `ref${i}.png`),
+    );
+  }
   form.set("prompt", prompt);
   form.set("size", "1024x1536");
   form.set("quality", "medium");
@@ -423,11 +472,28 @@ export async function maybeGenerateSceneCover(
   )
     return skip("scene row exists");
 
+  // Palette-pool seed: normal generation uses the product id (stable → a batch
+  // spreads across looks). Regenerate (force) salts it with a fresh nonce so
+  // the operator gets a DIFFERENT scene; a plain page refresh doesn't
+  // regenerate, so the stored image stays put.
+  const seed = force ? `${productId}:${Date.now()}` : productId;
+
+  // SEA background props (config) + catalog references. The id lookup is one
+  // small query; the reference IMAGE bytes are fetched later, only for a
+  // product that actually generates.
+  const propRule = resolveScenePropRule(product.item_type);
+  const refProducts = propRule
+    ? await findSceneReferenceProducts(supabase, propRule.referenceItemTypes)
+    : [];
+  const sceneProps = propRule
+    ? { guidance: propRule.guidance, referenceProductIds: refProducts.map((r) => r.id) }
+    : null;
+
   // Prompt pre-flight — ONE entry (buildScenePromptForProduct) resolves
-  // mounting + real size + item_type placement and assembles the prompt, OR
-  // blocks. It runs BEFORE the source image is fetched, so a product missing
-  // mounting/dimensions is rejected cheaply and the scene can never guess.
-  const promptResult = buildScenePromptForProduct(product, productId);
+  // mounting + real size + item_type placement + props and assembles the
+  // prompt, OR blocks. Runs BEFORE the source image is fetched, so a product
+  // missing mounting/dimensions is rejected cheaply and can never guess.
+  const promptResult = buildScenePromptForProduct(product, seed, sceneProps);
   if (!promptResult.ok) return skip(promptResult.reason);
 
   const srcUrl =
@@ -441,7 +507,23 @@ export async function maybeGenerateSceneCover(
   await setStatus("pending");
   try {
     const mountNote = promptResult.note;
-    const cover = await buildSceneCoverPng(srcBytes, promptResult.prompt);
+    // Fetch the reference accessory shots now (generatable product). A failed
+    // fetch is skipped — the props段 degrades to text-only, never fatal.
+    const fetched = await Promise.all(
+      refProducts.map(async (r) => {
+        try {
+          return Buffer.from(await (await fetch(r.url)).arrayBuffer());
+        } catch {
+          return null;
+        }
+      }),
+    );
+    const referenceImages = fetched.filter((b) => b != null) as Buffer[];
+    const cover = await buildSceneCoverPng(
+      srcBytes,
+      promptResult.prompt,
+      referenceImages,
+    );
 
     const path = `${productId}/scene-${Date.now()}.png`;
     const { error: upErr } = await supabase.storage
@@ -459,6 +541,22 @@ export async function maybeGenerateSceneCover(
       .update({ thumbnail_url: url })
       .eq("id", productId);
     if (tErr) throw new Error(`thumbnail update: ${tErr.message}`);
+
+    // Record which in-catalog accessories this scene referenced — the data
+    // basis for a future "other products in this scene" link (this round: only
+    // stored, never shown). Kept in attributes JSON so no migration is needed;
+    // tolerant — a record failure must never fail an otherwise-good generation.
+    if (promptResult.referenceProductIds.length > 0) {
+      const nextAttributes = {
+        ...(product.attributes ?? {}),
+        scene_reference_product_ids: promptResult.referenceProductIds,
+      };
+      const { error: aErr } = await supabase
+        .from("products")
+        .update({ attributes: nextAttributes })
+        .eq("id", productId);
+      if (aErr) console.warn(`scene reference record failed: ${aErr.message}`);
+    }
 
     await supabase.from("product_images").insert({
       product_id: productId,
