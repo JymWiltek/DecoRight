@@ -95,7 +95,33 @@ export default async function CategoryPage({ params, searchParams }: PageProps) 
   // Per-category, in-stock filter options — the iron rule: a Style/Color
   // option shows ONLY if this category (+ subtype, if picked) actually has a
   // product with it. Computed live from the DB, recomputed per category.
-  const facets = await getCategoryFacets(itemType.slug, subtypeSlug);
+  // Validate style/color URL params against the full taxonomy (not the
+  // per-category facets) so the product query doesn't depend on
+  // getCategoryFacets — that lets facets + products run in PARALLEL. A style
+  // valid in the taxonomy but absent from this category simply matches zero
+  // products (there are none), which is correct; the facets below still decide
+  // which CHIPS render (in-stock styles/colors only).
+  const taxStyleSet = new Set(taxonomy.styles.map((r) => r.slug));
+  const taxColorSet = new Set(taxonomy.colors.map((r) => r.slug));
+  const filters: ProductFilters = {
+    q: typeof sp.q === "string" ? sp.q : undefined,
+    itemTypes: [itemType.slug],
+    subtypes: subtypeSlug ? [subtypeSlug] : undefined,
+    styles: pickMany(sp.styles, taxStyleSet),
+    colors: pickMany(sp.colors, taxColorSet),
+    sort: pickOne(sp.sort, ["latest", "price_asc", "price_desc"]) as
+      | "latest"
+      | "price_asc"
+      | "price_desc"
+      | undefined,
+  };
+
+  // Parallel (③): facets (chip options) + products no longer chain. All three
+  // catalog reads are data-cached, so a warm SSR skips the DB entirely.
+  const [facets, products] = await Promise.all([
+    getCategoryFacets(itemType.slug, subtypeSlug),
+    listPublishedProducts(filters),
+  ]);
   const styleSet = new Set(facets.styles);
   const colorSet = new Set(facets.colors);
   const styleOptions = taxonomy.styles
@@ -104,22 +130,6 @@ export default async function CategoryPage({ params, searchParams }: PageProps) 
   const colorOptions = taxonomy.colors
     .filter((r) => colorSet.has(r.slug))
     .map((r) => ({ slug: r.slug, label: labelFor(r, locale), hex: r.hex }));
-
-  const filters: ProductFilters = {
-    q: typeof sp.q === "string" ? sp.q : undefined,
-    itemTypes: [itemType.slug],
-    subtypes: subtypeSlug ? [subtypeSlug] : undefined,
-    // Only accept a style/color URL value that is actually in this category.
-    styles: pickMany(sp.styles, styleSet),
-    colors: pickMany(sp.colors, colorSet),
-    sort: pickOne(sp.sort, ["latest", "price_asc", "price_desc"]) as
-      | "latest"
-      | "price_asc"
-      | "price_desc"
-      | undefined,
-  };
-
-  const products = await listPublishedProducts(filters);
   const itemTypeLabels = labelMap(taxonomy.itemTypes, locale);
   const styleLabels = labelMap(taxonomy.styles, locale);
   const subtypeLabels = labelMap(taxonomy.itemSubtypes, locale);
