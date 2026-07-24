@@ -34,11 +34,27 @@ export type ProductFilters = {
   sort?: "latest" | "price_asc" | "price_desc";
 };
 
-export async function listPublishedProducts(
-  filters: ProductFilters = {},
-  limit = 60,
+/** Anon client for PUBLIC storefront reads — no cookies, so the result can be
+ *  data-cached (a cookie-aware client can't be, and reading cookies is also
+ *  what forces the page dynamic). Same pattern the count/cover helpers use. */
+function anonClient() {
+  const url = process.env.NEXT_PUBLIC_APP_SUPABASE_URL;
+  const anonKey = process.env.NEXT_PUBLIC_APP_SUPABASE_ANON_KEY;
+  if (!url || !anonKey) {
+    throw new Error(
+      "Missing NEXT_PUBLIC_APP_SUPABASE_URL or NEXT_PUBLIC_APP_SUPABASE_ANON_KEY",
+    );
+  }
+  return createAnonSbClient<Database>(url, anonKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+}
+
+async function queryPublishedProducts(
+  filters: ProductFilters,
+  limit: number,
 ): Promise<ProductRow[]> {
-  const supabase = await createClient();
+  const supabase = anonClient();
   let query = supabase.from("products").select("*").eq("status", "published");
 
   // Room filter — products.room_slugs overlaps the user's picks.
@@ -91,6 +107,26 @@ export async function listPublishedProducts(
 }
 
 /**
+ * Storefront product list. DATA-CACHED + tagged so an SSR render (now in sin1)
+ * skips the DB round-trips that made prod TTFB slow, AND a publish/unpublish —
+ * which calls invalidatePublishedCountsCache() → updateTag(PRODUCT_COUNTS_TAG)
+ * — refreshes it AT ONCE. The storefront must never keep showing a product the
+ * publish gate just pulled, so gate-immediacy rides the SAME tag the counts do.
+ * Free-text search (q) has an unbounded key-space → left uncached.
+ */
+export async function listPublishedProducts(
+  filters: ProductFilters = {},
+  limit = 60,
+): Promise<ProductRow[]> {
+  if (filters.q?.trim()) return queryPublishedProducts(filters, limit);
+  return unstable_cache(
+    () => queryPublishedProducts(filters, limit),
+    ["storefront-products-v1", JSON.stringify(filters), String(limit)],
+    { tags: [PRODUCT_COUNTS_TAG], revalidate: 300 },
+  )();
+}
+
+/**
  * Distinct style + color slugs actually present in a category's published
  * stock (optionally narrowed to a subtype). Powers the "only show filter
  * options that have products in THIS category" rule. Deliberately ignores
@@ -100,21 +136,29 @@ export async function getCategoryFacets(
   itemType: string,
   subtype?: string,
 ): Promise<{ styles: string[]; colors: string[] }> {
-  const supabase = await createClient();
-  let query = supabase
-    .from("products")
-    .select("styles,colors")
-    .eq("status", "published")
-    .eq("item_type", itemType);
-  if (subtype) query = query.eq("subtype_slug", subtype);
-  const { data } = await query;
-  const styles = new Set<string>();
-  const colors = new Set<string>();
-  for (const p of data ?? []) {
-    for (const st of p.styles ?? []) styles.add(st);
-    for (const c of p.colors ?? []) colors.add(c);
-  }
-  return { styles: [...styles], colors: [...colors] };
+  // Cached + tagged like the product list: publish/unpublish refreshes it, and
+  // an SSR render skips the DB hit.
+  return unstable_cache(
+    async () => {
+      const supabase = anonClient();
+      let query = supabase
+        .from("products")
+        .select("styles,colors")
+        .eq("status", "published")
+        .eq("item_type", itemType);
+      if (subtype) query = query.eq("subtype_slug", subtype);
+      const { data } = await query;
+      const styles = new Set<string>();
+      const colors = new Set<string>();
+      for (const p of data ?? []) {
+        for (const st of p.styles ?? []) styles.add(st);
+        for (const c of p.colors ?? []) colors.add(c);
+      }
+      return { styles: [...styles], colors: [...colors] };
+    },
+    ["category-facets-v1", itemType, subtype ?? ""],
+    { tags: [PRODUCT_COUNTS_TAG], revalidate: 300 },
+  )();
 }
 
 /**
@@ -127,23 +171,29 @@ export async function getCategoryFacets(
 export async function getInStockSubtypesByItemType(): Promise<
   Record<string, string[]>
 > {
-  const supabase = await createClient();
-  const { data } = await supabase
-    .from("products")
-    .select("item_type, subtype_slug")
-    .eq("status", "published")
-    .not("item_type", "is", null)
-    .not("subtype_slug", "is", null);
-  const byType: Record<string, Set<string>> = {};
-  for (const r of data ?? []) {
-    const it = r.item_type as string | null;
-    const st = r.subtype_slug as string | null;
-    if (!it || !st) continue;
-    (byType[it] ??= new Set()).add(st);
-  }
-  return Object.fromEntries(
-    Object.entries(byType).map(([k, v]) => [k, [...v]]),
-  );
+  return unstable_cache(
+    async () => {
+      const supabase = anonClient();
+      const { data } = await supabase
+        .from("products")
+        .select("item_type, subtype_slug")
+        .eq("status", "published")
+        .not("item_type", "is", null)
+        .not("subtype_slug", "is", null);
+      const byType: Record<string, Set<string>> = {};
+      for (const r of data ?? []) {
+        const it = r.item_type as string | null;
+        const st = r.subtype_slug as string | null;
+        if (!it || !st) continue;
+        (byType[it] ??= new Set()).add(st);
+      }
+      return Object.fromEntries(
+        Object.entries(byType).map(([k, v]) => [k, [...v]]),
+      );
+    },
+    ["instock-subtypes-by-itemtype-v1"],
+    { tags: [PRODUCT_COUNTS_TAG], revalidate: 300 },
+  )();
 }
 
 /**
