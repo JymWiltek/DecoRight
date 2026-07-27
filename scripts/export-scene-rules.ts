@@ -61,6 +61,13 @@ L.push(
     "规则内容按 Jym 的节奏逐类补,不预造。",
 );
 L.push("");
+L.push(
+  "> ⚠️ `urinal` / `paper_holder` / `towel_shelf` 三条目前**不是**真实 item_type —— 库里这三类" +
+    "产品全是 `item_type='bathroom_equipments'`,靠**产品名关键词**(urinal / paper holder / towel)" +
+    "命中(见 `ACCESSORY_NAME_TO_RULE`)。待 taxonomy 拆分出独立 item_type(方案 B)后,按 item_type" +
+    "直接命中,名称分类器自动失效。",
+);
+L.push("");
 for (const [k, v] of Object.entries(ITEM_TYPE_SCENE_RULES)) {
   L.push(`### \`${k}\``);
   L.push("");

@@ -83,6 +83,9 @@ type Props = {
   errCode?: string;
   /** ?msg=… message accompanying errCode. */
   errMsg?: string;
+  /** ?reason=… — the raw list of failing publish gates (e.g. ["scene","glb"]).
+   *  Drives the actionable fix-links under the publish-blocked banner. */
+  publishBlockedReasons?: string[];
   imagesSection?: React.ReactNode;
   /** Optional Meshy generation status banner (Edit page only). When
    *  provided, renders at the very top of the form so the operator
@@ -150,6 +153,7 @@ export default function ProductForm({
   freshlyCreated,
   errCode,
   errMsg,
+  publishBlockedReasons,
   imagesSection,
   meshyBanner,
   // aiCandidateImages: retired — the single AiAutofillButton reads
@@ -389,6 +393,27 @@ export default function ProductForm({
                       : `Error (${errCode})`}
             </div>
             {errMsg && <div className="mt-1 text-xs">{errMsg}</div>}
+            {/* Scene gate — two clickable fix paths so the operator doesn't
+                have to hunt: mark an existing image as the cover (in-page
+                jump to the Images section), or generate one via Bulk AI on
+                the list filtered to this product. */}
+            {errCode === "publish_blocked" &&
+              publishBlockedReasons?.includes("scene") && (
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <a
+                    href="#ch-images"
+                    className="rounded-md border border-rose-300 bg-white px-2.5 py-1 text-xs font-medium text-rose-700 transition hover:bg-rose-100"
+                  >
+                    标记已有图片为场景图 ↑
+                  </a>
+                  <a
+                    href={`/admin?q=${encodeURIComponent(p?.name ?? "")}`}
+                    className="rounded-md border border-rose-300 bg-white px-2.5 py-1 text-xs font-medium text-rose-700 transition hover:bg-rose-100"
+                  >
+                    生成场景图（Run AI）→
+                  </a>
+                </div>
+              )}
           </div>
         )}
 

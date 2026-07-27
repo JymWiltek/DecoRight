@@ -36,13 +36,27 @@ INSTALLATION (mandatory): the product is recessed INTO the wall or into cabinetr
 
 INSTALLATION (mandatory): the product is fitted into the internal angle where TWO WALLS MEET, touching both wall faces, with empty space below it. It must not be placed on a table, counter, shelf or any other furniture.
 
-## ② Item_type 摆位规则(1 条)
+## ② Item_type 摆位规则(4 条)
 
 键 = `products.item_type` 的真实值。**无条目的类别不注入、不报错** —— 机制对所有类别就绪,规则内容按 Jym 的节奏逐类补,不预造。
+
+> ⚠️ `urinal` / `paper_holder` / `towel_shelf` 三条目前**不是**真实 item_type —— 库里这三类产品全是 `item_type='bathroom_equipments'`,靠**产品名关键词**(urinal / paper holder / towel)命中(见 `ACCESSORY_NAME_TO_RULE`)。待 taxonomy 拆分出独立 item_type(方案 B)后,按 item_type直接命中,名称分类器自动失效。
 
 ### `toilet`
 
 PLACEMENT (mandatory): the toilet's BACK — its cistern/tank and rear face — must sit FLUSH AGAINST A WALL, in full contact with it, because the soil/waste pipe exits the back into the wall. FORBIDDEN: do NOT place the toilet in the middle of the room; do NOT float it at an angle or diagonally away from the walls; do NOT leave any gap between its back and the wall; do NOT place it on a countertop, vanity or any raised surface. It stands on the floor with its back flush to the wall.
+
+### `urinal`
+
+BATHROOM CONTEXT (mandatory): a real bathroom with tiled or waterproof walls. The urinal is fixed to the wall with its BACK flush against it; the bowl/rim sits about 600 mm above the floor, and the floor below it reads as a wet-area with a visible floor drain / drainage context. FORBIDDEN: do NOT render a domestic hallway, wood-floor or bedroom look; do NOT put it on open wooden shelving dressed with towels and plants; do NOT float it in the middle of the room; do NOT place it on a countertop.
+
+### `paper_holder`
+
+BATHROOM CONTEXT (mandatory): mounted on the wall within arm's reach of a toilet, about 700 mm above the floor, and by default LOADED with a paper roll. PREFERRED (not required): let the edge of the frame catch a corner of the toilet's side, so the bathroom context reads as real. FORBIDDEN: do NOT place it above a countertop; do NOT stage it on a cement counter with soap like a magazine styled-shoot; do NOT render it with no bathroom context around it.
+
+### `towel_shelf`
+
+BATHROOM CONTEXT (mandatory): mounted on the wall, about 1550 mm above the floor, and by default DRAPED with a folded towel. PREFERRED (not required): a wall near the shower area or beside the washbasin. FORBIDDEN: do NOT stand it on a countertop or on the floor; do NOT render a bedroom / hallway wooden-shelf look; do NOT pile it with clutter as if it were a general storage rack.
 
 ## ③ 背景色调池(材质 → 色调池,每次从池随机抽一个)
 
