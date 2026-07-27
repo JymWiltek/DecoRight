@@ -231,8 +231,15 @@ export async function listAllProducts(
       glbUrl: p.glb_url ?? null,
       fbxUrl: p.fbx_url ?? p.fbx_bundle_url ?? null,
       supplierCount: gateSupplierCounts[p.id] ?? 0,
-      // Scene gate — same /scene- thumbnail proxy as the single-product
-      // loader, so the "Ready to publish" filter and the publish action agree.
+      // Scene gate — batch uses the CHEAP /scene- URL proxy (no fetch). The
+      // single-product publish gate (loadPublishGateFacts) does the fuller
+      // source-blind non-white pixel check via hasQualifiedSceneCover, which
+      // this batch can't afford per-row (one image fetch × up to 500 rows on
+      // every admin render). Intentional, one-directional asymmetry: a draft
+      // whose ONLY scene is a manual non-white upload may not surface in the
+      // "Ready to publish" filter, but publishing it still succeeds (the gate
+      // is authoritative). Removing the drift needs a stored white-bg flag
+      // (option B, next round) — not a live fetch here.
       hasScene: isSceneCoverUrl(p.thumbnail_url),
       defect: p.defect === true,
       defectReason: p.defect_reason ?? null,
@@ -331,7 +338,10 @@ export type CategoryProgressRow = {
  * published vs draft counts + 3D / scene-cover coverage, across the WHOLE
  * catalog (independent of the filtered list below it). One lightweight
  * select. Sorted by total desc so the biggest categories lead. Scene = the
- * thumbnail is an AI /scene- cover (the cheap queryable proxy).
+ * thumbnail is an AI /scene- cover (the cheap queryable proxy — this rollup is
+ * a coverage dashboard, so it intentionally counts only AI covers and does not
+ * fetch every thumbnail to pixel-test manual scenes; see the note in
+ * listAllProducts).
  */
 export async function getCategoryProgress(): Promise<CategoryProgressRow[]> {
   const supabase = createServiceRoleClient();

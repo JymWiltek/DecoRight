@@ -88,6 +88,19 @@ export const MOUNTING_SCENE_RULES: Record<string, string> = {
  * explicit FORBIDDEN list, because the failures were the model inventing a
  * placement (toilet floating mid-room, back off the wall).
  */
+/**
+ * Mounting heights (mm above finished floor) for the accessory scene rules.
+ * Pulled out as named numbers so Jym can retune "how high" without touching the
+ * rule prose. Values are the mid-point of the range Jym specified. Referenced
+ * inside ITEM_TYPE_SCENE_RULES below (declared first — a `const` is not hoisted,
+ * so the rule object must be able to read it at module-load time).
+ */
+export const MOUNTING_HEIGHT_MM = {
+  urinal: 600,
+  paper_holder: 700, // Jym's 650–750 mm range, mid-point
+  towel_shelf: 1550, // Jym's 1500–1600 mm range, mid-point
+} as const;
+
 export const ITEM_TYPE_SCENE_RULES: Record<string, string> = {
   toilet:
     "PLACEMENT (mandatory): the toilet's BACK — its cistern/tank and rear face " +
@@ -97,15 +110,83 @@ export const ITEM_TYPE_SCENE_RULES: Record<string, string> = {
     "it at an angle or diagonally away from the walls; do NOT leave any gap " +
     "between its back and the wall; do NOT place it on a countertop, vanity or " +
     "any raised surface. It stands on the floor with its back flush to the wall.",
+
+  // Three bathroom-accessory rules added after the urinal/paper-holder/towel
+  // scenes came back wrong (urinal in a wood-panelled hallway, paper holder
+  // styled on a cement counter with soap). NOTE: no product in the catalog
+  // actually carries item_type='urinal' / 'paper_holder' / 'towel_shelf' today —
+  // they are all item_type='bathroom_equipments' (verified by grep). These keys
+  // are therefore reached via the NAME sub-classifier below (ACCESSORY_NAME_TO_
+  // RULE). Keying them by their eventual item_type means that when the taxonomy
+  // is later split (option B), item_type matches directly and the classifier
+  // goes inert — no rule rewrite. The MOUNTING_HEIGHT_MM constants keep the
+  // Jym-editable "how high off the floor" numbers in one obvious place.
+  urinal:
+    "BATHROOM CONTEXT (mandatory): a real bathroom with tiled or waterproof " +
+    "walls. The urinal is fixed to the wall with its BACK flush against it; the " +
+    `bowl/rim sits about ${MOUNTING_HEIGHT_MM.urinal} mm above the floor, and the ` +
+    "floor below it reads as a wet-area with a visible floor drain / drainage " +
+    "context. " +
+    "FORBIDDEN: do NOT render a domestic hallway, wood-floor or bedroom look; do " +
+    "NOT put it on open wooden shelving dressed with towels and plants; do NOT " +
+    "float it in the middle of the room; do NOT place it on a countertop.",
+
+  paper_holder:
+    "BATHROOM CONTEXT (mandatory): mounted on the wall within arm's reach of a " +
+    `toilet, about ${MOUNTING_HEIGHT_MM.paper_holder} mm above the floor, and by ` +
+    "default LOADED with a paper roll. " +
+    "PREFERRED (not required): let the edge of the frame catch a corner of the " +
+    "toilet's side, so the bathroom context reads as real. " +
+    "FORBIDDEN: do NOT place it above a countertop; do NOT stage it on a cement " +
+    "counter with soap like a magazine styled-shoot; do NOT render it with no " +
+    "bathroom context around it.",
+
+  towel_shelf:
+    "BATHROOM CONTEXT (mandatory): mounted on the wall, about " +
+    `${MOUNTING_HEIGHT_MM.towel_shelf} mm above the floor, and by default DRAPED ` +
+    "with a folded towel. " +
+    "PREFERRED (not required): a wall near the shower area or beside the " +
+    "washbasin. " +
+    "FORBIDDEN: do NOT stand it on a countertop or on the floor; do NOT render a " +
+    "bedroom / hallway wooden-shelf look; do NOT pile it with clutter as if it " +
+    "were a general storage rack.",
 };
 
+/**
+ * NAME → item_type-rule-key sub-classifier. ONLY consulted when a product's own
+ * item_type has no direct ITEM_TYPE_SCENE_RULES entry. Today every urinal /
+ * paper holder / towel accessory ships as item_type='bathroom_equipments' (one
+ * shared bucket — see the grep note above), so the product NAME is the only
+ * signal that separates them. Order matters: first regex to match wins.
+ *
+ * TODO(option B — taxonomy split): give these their own item_type values
+ * (urinal / paper_holder / towel_rail) and delete this table — resolve then
+ * matches on item_type directly. Until then, name is all we have.
+ */
+const ACCESSORY_NAME_TO_RULE: { test: RegExp; key: string }[] = [
+  { test: /urinal/i, key: "urinal" },
+  { test: /paper\s*holder|toilet\s*paper/i, key: "paper_holder" },
+  { test: /towel/i, key: "towel_shelf" }, // rack / shelf / rail / bar
+];
+
 /** Single reader for the item_type placement layer. Returns the rule string or
- *  null when this item_type has no entry (→ inject nothing, never error). */
+ *  null when neither the item_type NOR the product name maps to a rule (→ inject
+ *  nothing, never error). `name` is consulted only as a fallback for the shared
+ *  'bathroom_equipments' bucket, where item_type can't tell urinal from paper
+ *  holder from towel rail. */
 export function resolveItemTypeSceneRule(
   itemType: string | null | undefined,
+  name?: string | null | undefined,
 ): string | null {
   const t = (itemType ?? "").trim();
-  return (t && ITEM_TYPE_SCENE_RULES[t]) || null;
+  if (t && ITEM_TYPE_SCENE_RULES[t]) return ITEM_TYPE_SCENE_RULES[t];
+  const n = (name ?? "").trim();
+  if (n) {
+    for (const { test, key } of ACCESSORY_NAME_TO_RULE) {
+      if (test.test(n)) return ITEM_TYPE_SCENE_RULES[key] ?? null;
+    }
+  }
+  return null;
 }
 
 /**

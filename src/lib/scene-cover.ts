@@ -84,25 +84,39 @@ function surfaceHint(itemType: string | null, name: string): string {
 }
 
 /** Real-size injection — the SINGLE source of truth for BOTH the interception
- *  decision (null ⇒ the generator must skip, never guess) AND the wording. All
- *  three axes are required: a missing axis is one the model would have to
- *  invent, and inventing dimensions is exactly what threw the toilet-vs-room
- *  proportions off. dimensions_mm axes map to the storefront's W/D/H —
+ *  decision (null ⇒ the generator must skip, never guess) AND the wording.
+ *
+ *  Jym's locked rule (same one the AR GLB scaling already uses): only the
+ *  longest edge is truly needed — the other axes are inferred from the product
+ *  photo's own proportions. So the clause requires at least ONE axis: known
+ *  axes get their real mm value, unknown axes are marked "infer from the product
+ *  image". ONLY an all-blank product (no axis at all) blocks — there is then no
+ *  real-size anchor and the model would invent the whole thing (the toilet-vs-
+ *  room 忽大忽小 bug). dimensions_mm axes map to the storefront's W/D/H —
  *  length=width, width=depth, height=height (see PB1-3). */
 export function sceneDimensionClause(
   dims: Dimensions | null | undefined,
 ): string | null {
-  const w = dims?.length;
-  const d = dims?.width;
-  const h = dims?.height;
   const ok = (v: number | undefined): v is number =>
     typeof v === "number" && Number.isFinite(v) && v > 0;
-  if (!ok(w) || !ok(d) || !ok(h)) return null;
+  const axes: { label: string; v: number | undefined }[] = [
+    { label: "wide", v: dims?.length },
+    { label: "deep", v: dims?.width },
+    { label: "tall", v: dims?.height },
+  ];
+  if (!axes.some((a) => ok(a.v))) return null; // all three empty → block
+  const parts = axes.map((a) =>
+    ok(a.v)
+      ? `${a.v} mm ${a.label}`
+      : `${a.label}: infer proportionally from the product image`,
+  );
   return (
-    `REAL SIZE (mandatory): this product measures ${w} mm wide × ${d} mm deep × ` +
-    `${h} mm tall. Render it at exactly this real-world scale relative to the room ` +
-    `and to every adjacent object (walls, floor, doors, counters, props) — do NOT ` +
-    `enlarge or shrink it; its proportions against the space must read as correct.`
+    `REAL SIZE (mandatory): ${parts.join("; ")}. ` +
+    `Render every axis given in mm at exactly that real-world scale relative to ` +
+    `the room and to every adjacent object (walls, floor, doors, counters, props). ` +
+    `For any axis marked "infer", keep it in natural proportion to the given ` +
+    `axis using the product's own shape — do NOT enlarge or shrink the product; ` +
+    `its proportions against the space must read as correct.`
   );
 }
 
@@ -214,8 +228,11 @@ export function buildScenePromptForProduct(
     };
   }
 
-  // ③ real size — a missing axis is one the model would invent (忽大忽小 toilet
-  // bug). All three axes required; single source of truth.
+  // ③ real size — Jym's rule: only the longest edge is required, the rest are
+  // inferred from the product photo's proportions (same as the AR GLB scaling).
+  // Blocks ONLY when ALL THREE axes are empty — an all-blank product has no
+  // real-size anchor at all and the model would invent the whole thing
+  // (忽大忽小 toilet bug). Message unchanged (Jym).
   const dimensionClause = sceneDimensionClause(product.dimensions_mm);
   if (!dimensionClause) {
     return {
@@ -226,8 +243,12 @@ export function buildScenePromptForProduct(
   }
 
   // ② item_type placement — null for item_types with no rule yet (inject
-  // nothing, never error).
-  const itemTypeConstraint = resolveItemTypeSceneRule(product.item_type);
+  // nothing, never error). Name is passed so the shared 'bathroom_equipments'
+  // bucket can be sub-classified into urinal / paper holder / towel rule.
+  const itemTypeConstraint = resolveItemTypeSceneRule(
+    product.item_type,
+    product.name,
+  );
 
   // ④ SEA background props (appended after #28's三段). References that the
   // catalog actually stocks were resolved by the caller; when empty the段
@@ -385,6 +406,53 @@ async function gptEditWholeImage(
   } finally {
     clearTimeout(t);
   }
+}
+
+/**
+ * Fetch an image URL and decide if it is a plain white/studio background — the
+ * SINGLE white-bg detector shared by the publish gate and the admin (no inlined
+ * copies). Pure pixel judgement (corner sampling via isWhiteBg), zero AI, zero
+ * OpenAI. On ANY fetch/decode failure it returns FALSE (can't confirm white ⇒
+ * treat as NOT white) so a transient error never false-blocks a real scene —
+ * matches Jym's intent that real photos pass, white cutouts don't.
+ */
+export async function isWhiteBackgroundImage(
+  url: string | null | undefined,
+): Promise<boolean> {
+  if (!url) return false;
+  try {
+    const buf = Buffer.from(await (await fetch(url)).arrayBuffer());
+    return await isWhiteBg(buf);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * THE publish-gate scene test: does this cover URL qualify as a scene image?
+ * Qualified = it is NOT a plain white background. Source-blind by design —
+ * Jym's ruling — so a real scene PHOTO he uploaded counts exactly like an AI
+ * /scene- cover; the only disqualifier implemented this round is white bg.
+ *
+ * The /scene- URL is a cheap short-circuit (an AI cover is white-free by
+ * construction) that also skips a fetch; anything else is decided on pixels.
+ * This is the ONE place the gate loaders call — isSceneCoverUrl stays the
+ * cheap URL sub-check inside it, not a competing definition.
+ *
+ * TODO(deferred — needs a vision-model call, budget not approved by Jym):
+ * the SECOND disqualifier is severe scale distortion — the product occupying
+ * >80% or <20% of the frame is also "not a usable scene". Not implemented here
+ * because a reliable subject-area estimate needs a vision model (pixel corner
+ * sampling can't measure how much of the frame the product fills). When
+ * approved, add the check alongside the white-bg one and keep this the single
+ * entry.
+ */
+export async function hasQualifiedSceneCover(
+  url: string | null | undefined,
+): Promise<boolean> {
+  if (!url) return false;
+  if (isSceneCoverUrl(url)) return true; // AI cover — white-free by construction
+  return !(await isWhiteBackgroundImage(url));
 }
 
 /** True iff the 4 corners are light + low-saturation + consistent — a

@@ -23,7 +23,7 @@ import {
 import { applyAiImageKinds } from "@/lib/admin/spec-sheet-tagging";
 import { dispatchGlbCompression } from "@/lib/glb-compression-dispatch";
 import { dispatchSceneCover } from "@/lib/scene-cover-dispatch";
-import { isSceneCoverUrl } from "@/lib/scene-cover-url";
+import { hasQualifiedSceneCover } from "@/lib/scene-cover";
 import { dispatchFbxBundle } from "@/lib/fbx-bundle-dispatch";
 import { validateFbxZipContainsFbx } from "@/lib/fbx-bundle";
 import { inferProductFields } from "@/lib/ai/infer";
@@ -806,7 +806,10 @@ async function loadPublishGateFacts(
     fbxUrl: rowRes.data?.fbx_url ?? rowRes.data?.fbx_bundle_url ?? null,
     cutoutApprovedCount: cutCountRes.count ?? 0,
     supplierCount: supCountRes.count ?? 0,
-    hasScene: isSceneCoverUrl(rowRes.data?.thumbnail_url),
+    // Scene gate (Jym redefinition): qualified = the cover is NOT a white
+    // background, source-blind (a real photo he uploaded counts like an AI
+    // /scene- cover). One fetch+pixel check; the /scene- fast-path skips it.
+    hasScene: await hasQualifiedSceneCover(rowRes.data?.thumbnail_url),
     defect: rowRes.data?.defect === true,
     defectReason: rowRes.data?.defect_reason ?? null,
     currentStatus: rowRes.data?.status ?? null,
@@ -1005,8 +1008,9 @@ export async function updateProduct(id: string, fd: FormData): Promise<void> {
         // A manual thumbnail uploaded THIS save overrides the stale DB value
         // (mirrors glb/fbx above); scene covers themselves are generated
         // async after commit, so otherwise the DB thumbnail is authoritative.
+        // Same source-blind non-white qualifier as loadPublishGateFacts.
         hasScene: updates.thumbnail_url
-          ? isSceneCoverUrl(updates.thumbnail_url)
+          ? await hasQualifiedSceneCover(updates.thumbnail_url)
           : facts.hasScene,
       });
       if (!gate.ok) {
