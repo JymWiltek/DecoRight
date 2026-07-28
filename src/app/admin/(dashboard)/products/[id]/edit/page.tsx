@@ -10,6 +10,8 @@ import { loadKnownBrands } from "@/lib/admin/brand-normalize";
 import { providerAvailability } from "@/lib/rembg";
 import { isSceneCoverUrl } from "@/lib/scene-cover-url";
 import { sceneCoverageVerdict, readSceneCoveragePct } from "@/lib/scene-coverage";
+import DeployStaleBanner from "@/components/admin/DeployStaleBanner";
+import { deployVersion } from "@/lib/deploy-version";
 import { updateProduct } from "../../actions";
 
 export const dynamic = "force-dynamic";
@@ -205,9 +207,13 @@ export default async function EditProductPage({
     isMeshyErr || isPublishErr || isSkuErr ? undefined : sp.msg;
 
   return (
-    <ProductForm
-      product={product}
-      taxonomy={taxonomy}
+    <>
+      <div className="mx-auto max-w-4xl px-4">
+        <DeployStaleBanner currentVersion={deployVersion()} />
+      </div>
+      <ProductForm
+        product={product}
+        taxonomy={taxonomy}
       brandOptions={brandOptions}
       action={action}
       saved={sp.saved === "1"}
@@ -261,6 +267,7 @@ export default async function EditProductPage({
           rembgUsage={rembgUsage}
         />
       }
-    />
+      />
+    </>
   );
 }
