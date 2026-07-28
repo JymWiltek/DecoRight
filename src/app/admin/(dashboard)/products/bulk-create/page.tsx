@@ -2,6 +2,8 @@ import "server-only";
 import Link from "next/link";
 import { requireAdmin } from "@/lib/auth/require-admin";
 import BulkCreateForm from "@/components/admin/BulkCreateForm";
+import DeployStaleBanner from "@/components/admin/DeployStaleBanner";
+import { deployVersion } from "@/lib/deploy-version";
 import { loadTaxonomy, labelFor } from "@/lib/taxonomy";
 import { loadSuppliers } from "@/lib/suppliers";
 import { getLocale } from "next-intl/server";
@@ -41,6 +43,7 @@ export default async function BulkCreatePage() {
 
   return (
     <div className="mx-auto max-w-5xl px-6 py-8 pb-32">
+      <DeployStaleBanner currentVersion={deployVersion()} />
       <div className="mb-6 flex items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold">Bulk create products</h1>

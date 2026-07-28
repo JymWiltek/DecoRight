@@ -52,6 +52,15 @@ const TEXTURE_MAX_MB = 25;
 // absurd AR scales. 10 m matches the single-product action's check.
 const REAL_DIM_MAX_MM = 10_000;
 
+// PB #34 大蓄水池 — deterministic extension → slot routing. Jym's business fact:
+// a .zip IS an FBX bundle. Images go to Photos, non-image texture formats go to
+// the FBX-textures slot. Anything else (e.g. .pdf) is ignored with a light hint.
+// No AI, no guessing, no "needs confirmation" state.
+const POOL_IMAGE_EXTS = new Set(["jpg", "jpeg", "png", "webp"]);
+const POOL_TEXTURE_EXTS = new Set([
+  "tga", "exr", "tif", "tiff", "bmp", "dds", "hdr", "psd", "ktx", "ktx2",
+]);
+
 export type GlbBudgetMeta = {
   sizeKb: number;
   vertexCount: number;
@@ -180,6 +189,10 @@ export default function ProductDraftCard({
   const [photoDragging, setPhotoDragging] = useState(false);
   const [glbDragging, setGlbDragging] = useState(false);
   const [fbxDragging, setFbxDragging] = useState(false);
+  // PB #34 大蓄水池
+  const poolInputRef = useRef<HTMLInputElement>(null);
+  const [poolDragging, setPoolDragging] = useState(false);
+  const [poolHints, setPoolHints] = useState<string[]>([]);
 
   // Object URLs for previews. Revoke on unmount + on photo list
   // change to avoid leaking blob URLs.
@@ -446,6 +459,148 @@ export default function ProductDraftCard({
     onChange({ ...state, textureFiles: next });
   }
 
+  // ─── PB #34 — 大蓄水池: one drop, auto-routed by extension ─────────
+  //
+  // Everything EXCEPT hand-picked cover photos goes here; the system files
+  // each by extension into its existing slot. CRITICAL: it builds ONE merged
+  // next-state and calls onChange ONCE — calling the per-slot accept* helpers
+  // in sequence would each spread the SAME stale `state` and clobber the
+  // others. All the per-slot validation (mime, size caps, GLB budget) is
+  // reused. Boundary rules are light (a hint line, never a popup or a
+  // needs-confirmation state): over-slot files replace/overflow, unsupported
+  // extensions are ignored. Per-card only — `state` is this card's.
+  async function acceptPool(incoming: File[]) {
+    if (incoming.length === 0) return;
+    const imgs: File[] = [];
+    const glbs: File[] = [];
+    const fbxs: File[] = [];
+    const texs: File[] = [];
+    let ignored = 0;
+    for (const f of incoming) {
+      const ext = f.name.toLowerCase().split(".").pop() ?? "";
+      if (POOL_IMAGE_EXTS.has(ext)) imgs.push(f);
+      else if (ext === "glb") glbs.push(f);
+      else if (ext === "zip" || ext === "fbx") fbxs.push(f);
+      else if (POOL_TEXTURE_EXTS.has(ext)) texs.push(f);
+      else ignored++;
+    }
+
+    const hints: string[] = [];
+    let next: DraftCardState = state;
+
+    // images → Photos (append after cover; default-by-slot type keeps slot 0 /
+    // Primary untouched and lands extras as Reference = fed to the AI parser).
+    if (imgs.length) {
+      const vetted = imgs.filter(
+        (f) => PHOTO_MIMES.has(f.type) && f.size <= PHOTO_MAX_MB * 1024 * 1024,
+      );
+      if (vetted.length < imgs.length) {
+        hints.push(`${imgs.length - vetted.length} 张图片格式/体积不合格,已跳过`);
+      }
+      const remaining = PHOTO_MAX - next.photos.length;
+      const accepted = vetted.slice(0, Math.max(0, remaining));
+      if (accepted.length < vetted.length) {
+        hints.push(`照片已达 ${PHOTO_MAX} 张上限,忽略多余 ${vetted.length - accepted.length} 张`);
+      }
+      if (accepted.length) {
+        const newTypes = accepted.map((_, i) =>
+          defaultPhotoType(next.photos.length + i),
+        );
+        next = {
+          ...next,
+          photos: [...next.photos, ...accepted],
+          photoTypes: [...next.photoTypes, ...newTypes],
+        };
+      }
+    }
+
+    // .glb → 3D slot (last wins; replaces an existing one with a hint).
+    if (glbs.length) {
+      if (glbs.length > 1) hints.push("拖入多个 .glb,只保留最后一个");
+      const f = glbs[glbs.length - 1];
+      if (f.size > GLB_MAX_MB * 1024 * 1024) {
+        hints.push(`.glb 超 ${GLB_MAX_MB} MB,已跳过`);
+      } else {
+        try {
+          const report = await checkGlbBudget(f);
+          if (next.glbFile) hints.push("已有 3D 模型,新的 .glb 顶替旧的");
+          next = {
+            ...next,
+            glbFile: f,
+            glbBudget: {
+              sizeKb: Math.round(f.size / 1024),
+              vertexCount: report.totalVertices,
+              maxTextureDim: report.largestTexture
+                ? Math.max(report.largestTexture.width, report.largestTexture.height)
+                : 0,
+              decodedRamMb: Math.round(report.estimatedDecodedMb),
+            },
+          };
+        } catch (err) {
+          hints.push(
+            err instanceof GlbBudgetExceededError
+              ? ".glb 预算超标,已跳过(改用 3D 格单独处理)"
+              : ".glb 检查失败,已跳过",
+          );
+        }
+      }
+    }
+
+    // .zip / .fbx → FBX slot (last wins; a .zip is an FBX bundle — Jym's fact).
+    if (fbxs.length) {
+      if (fbxs.length > 1) hints.push("拖入多个 FBX/zip,只保留最后一个");
+      const f = fbxs[fbxs.length - 1];
+      if (f.size > FBX_MAX_MB * 1024 * 1024) {
+        hints.push(`FBX/zip 超 ${FBX_MAX_MB} MB,已跳过`);
+      } else {
+        if (next.fbxFile) hints.push("已有 FBX,新的顶替旧的");
+        next = { ...next, fbxFile: f, fbxIsZip: /\.zip$/i.test(f.name) };
+      }
+    }
+
+    // texture formats → FBX-textures slot (append, capped).
+    if (texs.length) {
+      const vetted = texs.filter((f) => f.size <= TEXTURE_MAX_MB * 1024 * 1024);
+      const remaining = TEXTURE_MAX - next.textureFiles.length;
+      const accepted = vetted.slice(0, Math.max(0, remaining));
+      if (accepted.length < texs.length) {
+        hints.push(`贴图超上限或过大,忽略 ${texs.length - accepted.length} 个`);
+      }
+      if (accepted.length) {
+        next = { ...next, textureFiles: [...next.textureFiles, ...accepted] };
+      }
+    }
+
+    if (ignored) hints.push(`已忽略 ${ignored} 个不支持的文件`);
+
+    if (next !== state) onChange(next);
+    setPoolHints(hints);
+  }
+
+  function onPoolPick(e: ChangeEvent<HTMLInputElement>) {
+    const incoming = Array.from(e.target.files ?? []);
+    e.target.value = "";
+    void acceptPool(incoming);
+  }
+
+  function onPoolDrop(e: DragEvent<HTMLDivElement>) {
+    e.preventDefault();
+    setPoolDragging(false);
+    if (busy) return;
+    void acceptPool(Array.from(e.dataTransfer.files));
+  }
+
+  function onPoolDragOver(e: DragEvent<HTMLDivElement>) {
+    e.preventDefault();
+    if (busy) return;
+    if (!poolDragging) setPoolDragging(true);
+  }
+
+  function onPoolDragLeave(e: DragEvent<HTMLDivElement>) {
+    if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+    setPoolDragging(false);
+  }
+
   // ─── Sprint 1 (PART B) — category (item_type) + room handlers ──
   //
   // Reuses the same columns single-edit writes (item_type / subtype_slug
@@ -680,6 +835,73 @@ export default function ProductDraftCard({
           <div className="mt-1 rounded bg-rose-50 px-2 py-1 text-[11px] text-rose-700">
             {photoErrors.map((e, i) => (
               <div key={i}>{e}</div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* PB #34 — 大蓄水池: drop everything except cover photos here; the
+          system files each by extension. The per-slot dropzones below all
+          stay — this is additive, not a replacement. */}
+      <div className="mb-3">
+        <div className="mb-1.5 flex items-center justify-between">
+          <span className="text-xs font-medium uppercase tracking-wide text-neutral-500">
+            🪣 蓄水池 · Drop-all
+          </span>
+          <button
+            type="button"
+            onClick={() => poolInputRef.current?.click()}
+            disabled={busy}
+            className="text-xs text-sky-700 hover:text-sky-900 disabled:opacity-40"
+          >
+            + Pick files
+          </button>
+        </div>
+        <input
+          ref={poolInputRef}
+          type="file"
+          multiple
+          onChange={onPoolPick}
+          className="hidden"
+          data-testid={`pool-input-${index}`}
+        />
+        <div
+          onDrop={onPoolDrop}
+          onDragOver={onPoolDragOver}
+          onDragLeave={onPoolDragLeave}
+          onClick={() => {
+            if (!busy) poolInputRef.current?.click();
+          }}
+          role="button"
+          tabIndex={0}
+          aria-label={`Drop all files for product ${index + 1}`}
+          onKeyDown={(e) => {
+            if ((e.key === "Enter" || e.key === " ") && !busy) {
+              e.preventDefault();
+              poolInputRef.current?.click();
+            }
+          }}
+          className={`rounded-md border-2 border-dashed p-4 text-center text-xs transition ${
+            busy
+              ? "cursor-not-allowed border-neutral-300 bg-neutral-50 opacity-60"
+              : poolDragging
+                ? "cursor-pointer border-black bg-neutral-100"
+                : "cursor-pointer border-sky-300 bg-sky-50/40 hover:border-sky-500"
+          }`}
+        >
+          <div className="text-neutral-600">
+            一次拖入这个产品的<strong>其余所有文件</strong> —— 系统按类型自动归位:
+          </div>
+          <div className="mt-1 text-[11px] text-neutral-500">
+            <code>.glb</code> → 3D · <code>.zip</code>/<code>.fbx</code> → FBX 原文件 ·{" "}
+            <code>.jpg/.png/.webp</code> → 图片(排在封面后,默认喂 AI)·{" "}
+            <code>.tga</code> 等 → 贴图 · 其他忽略
+          </div>
+        </div>
+        {poolHints.length > 0 && (
+          <div className="mt-1 rounded bg-amber-50 px-2 py-1 text-[11px] text-amber-700">
+            {poolHints.map((h, i) => (
+              <div key={i}>{h}</div>
             ))}
           </div>
         )}

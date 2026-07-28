@@ -304,8 +304,22 @@ export default function BulkCreateForm({
       // keeps running server-side; refresh in ~30s to see AI-filled fields.
       router.push("/admin");
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      setError(msg);
+      // Root cause of the old "Failed to fetch" (PB #34): a redeploy while the
+      // page was open invalidates the Server Action references → the action
+      // POST fails at the network layer (a TypeError, NOT an auth error — the
+      // admin session is a 7-day static cookie). Translate that class of
+      // failure into an actionable Chinese message instead of the raw
+      // "Failed to fetch". Cards/files/fields are NOT cleared (state stays), so
+      // the operator loses nothing but a reload.
+      const raw = e instanceof Error ? e.message : String(e);
+      const isNetwork =
+        e instanceof TypeError ||
+        /failed to fetch|networkerror|load failed|fetch failed/i.test(raw);
+      setError(
+        isNetwork
+          ? "上传失败:页面可能已过期(后台更新或网络中断),不是你的填写问题。请刷新页面后重试 —— 已选文件和已填内容都还在本页,刷新前可先记录。"
+          : raw,
+      );
     } finally {
       setBusy(false);
       setProgress(null);
