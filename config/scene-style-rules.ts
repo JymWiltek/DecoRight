@@ -106,7 +106,30 @@ export const SCENE_PROP_RULES: Record<string, ScenePropRule> = {
       "wall-visible Southeast-Asian bathroom accessories — a towel rail/rack and a small wall shelf",
     referenceItemTypes: ["bathroom_equipments"],
   },
+  // Jym: a vanity scene without a mirror reads wrong. Mirror is a MANDATORY
+  // prop (on the wall directly above the basin); towel ring / glass shelf are
+  // optional. Keyed for BOTH item_type values the catalog uses for vanities
+  // (bathroom_vanity=18, vanity=2 — verified by grep).
+  bathroom_vanity: {
+    guidance:
+      "a wall mirror mounted on the wall directly ABOVE the basin (mandatory — a vanity without a mirror looks wrong), and optionally a towel ring or a small glass shelf; keep them Southeast-Asian bathroom in style",
+    referenceItemTypes: ["bathroom_equipments"],
+  },
+  vanity: {
+    guidance:
+      "a wall mirror mounted on the wall directly ABOVE the basin (mandatory — a vanity without a mirror looks wrong), and optionally a towel ring or a small glass shelf; keep them Southeast-Asian bathroom in style",
+    referenceItemTypes: ["bathroom_equipments"],
+  },
 };
+
+/**
+ * Scene-coverage QC range (PB #33). After a scene image is generated we ask a
+ * vision model what % of the frame the product occupies; a good scene keeps the
+ * product between these bounds. Out-of-range → the image is flagged unqualified
+ * (not counted as a publishable scene) and the admin shows the number. Jym
+ * tunes these against real images. This SUPERSEDES the earlier 80/20 TODO.
+ */
+export const SCENE_COVERAGE_RANGE = { min: 30, max: 60 } as const;
 
 /** Single reader for the prop layer. null when this item_type has no rule. */
 export function resolveScenePropRule(
