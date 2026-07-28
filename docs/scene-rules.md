@@ -118,6 +118,16 @@ BATHROOM CONTEXT (mandatory): mounted on the wall, about 1550 mm above the floor
 - 指引:wall-visible Southeast-Asian bathroom accessories — a towel rail/rack and a small wall shelf
 - 参照 item_types:`bathroom_equipments`
 
+### `bathroom_vanity`
+
+- 指引:a wall mirror mounted on the wall directly ABOVE the basin (mandatory — a vanity without a mirror looks wrong), and optionally a towel ring or a small glass shelf; keep them Southeast-Asian bathroom in style
+- 参照 item_types:`bathroom_equipments`
+
+### `vanity`
+
+- 指引:a wall mirror mounted on the wall directly ABOVE the basin (mandatory — a vanity without a mirror looks wrong), and optionally a towel ring or a small glass shelf; keep them Southeast-Asian bathroom in style
+- 参照 item_types:`bathroom_equipments`
+
 ## Subtype → mounting 兜底映射(7 条)
 
 产品无显式 `attributes.mounting` 时,用 `subtype_slug` 推断 mounting。

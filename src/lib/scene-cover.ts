@@ -4,6 +4,7 @@ import sharp from "sharp";
 import {
   resolveMountingRule,
   resolveItemTypeSceneRule,
+  resolveSizeTierPhrasing,
 } from "@config/mounting-scene-rules";
 import {
   resolveScenePalettePool,
@@ -104,19 +105,23 @@ export function sceneDimensionClause(
     { label: "deep", v: dims?.width },
     { label: "tall", v: dims?.height },
   ];
-  if (!axes.some((a) => ok(a.v))) return null; // all three empty → block
+  const known = axes.filter((a) => ok(a.v)).map((a) => a.v as number);
+  if (known.length === 0) return null; // all three empty → block
   const parts = axes.map((a) =>
     ok(a.v)
       ? `${a.v} mm ${a.label}`
       : `${a.label}: infer proportionally from the product image`,
   );
+  // Relative-size phrasing keyed on the longest KNOWN edge — the mm numbers
+  // alone don't stop the model drawing a 370 mm cabinet across a whole wall.
+  const tierPhrasing = resolveSizeTierPhrasing(Math.max(...known));
   return (
     `REAL SIZE (mandatory): ${parts.join("; ")}. ` +
     `Render every axis given in mm at exactly that real-world scale relative to ` +
     `the room and to every adjacent object (walls, floor, doors, counters, props). ` +
     `For any axis marked "infer", keep it in natural proportion to the given ` +
     `axis using the product's own shape — do NOT enlarge or shrink the product; ` +
-    `its proportions against the space must read as correct.`
+    `its proportions against the space must read as correct. ${tierPhrasing}`
   );
 }
 
@@ -455,6 +460,61 @@ export async function hasQualifiedSceneCover(
   return !(await isWhiteBackgroundImage(url));
 }
 
+/**
+ * Coverage QC (PB #33) — ask the cheapest vision tier (gpt-4o-mini) what % of
+ * the frame the main product occupies. Returns 0–100. THROWS on API/parse
+ * failure; the caller catches and records "unmeasured" (QC never blocks
+ * generation). Own timeout AbortController — the same abort discipline the
+ * image call uses — so a hung request can't wedge the pipeline.
+ *
+ * Real calls happen only on Jym's live Run-AI run; dev/tests mock global.fetch.
+ */
+export async function measureSceneCoverage(imageBytes: Buffer): Promise<number> {
+  const key = process.env.OPENAI_API_KEY;
+  if (!key) throw new Error("OPENAI_API_KEY not configured");
+  const dataUri = `data:image/png;base64,${imageBytes.toString("base64")}`;
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), 60_000);
+  try {
+    const r = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+      signal: ctrl.signal,
+      body: JSON.stringify({
+        model: "gpt-4o-mini",
+        temperature: 0,
+        max_tokens: 10,
+        messages: [
+          {
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text:
+                  "This is a product catalog scene. Estimate what PERCENTAGE (0-100) of the " +
+                  "total image area is occupied by the single main product/fixture (exclude " +
+                  "props, walls, floor and background). Reply with ONLY an integer, no % sign, no words.",
+              },
+              { type: "image_url", image_url: { url: dataUri } },
+            ],
+          },
+        ],
+      }),
+    });
+    const j = (await r.json()) as {
+      choices?: { message?: { content?: string } }[];
+      error?: unknown;
+    };
+    if (!r.ok) throw new Error(JSON.stringify(j.error ?? j).slice(0, 200));
+    const txt = j.choices?.[0]?.message?.content ?? "";
+    const m = String(txt).match(/\d+(\.\d+)?/);
+    if (!m) throw new Error(`unparseable coverage reply: ${String(txt).slice(0, 40)}`);
+    return Math.max(0, Math.min(100, parseFloat(m[0])));
+  } finally {
+    clearTimeout(t);
+  }
+}
+
 /** True iff the 4 corners are light + low-saturation + consistent — a
  *  white/studio product shot, not an already-styled render. */
 export async function isWhiteBg(buf: Buffer): Promise<boolean> {
@@ -593,6 +653,18 @@ export async function maybeGenerateSceneCover(
       referenceImages,
     );
 
+    // Coverage QC (PB #33) — measure how much of the frame the product fills.
+    // A detection failure is NON-fatal: coverage stays null ("未检测"), the
+    // image is kept, generation is never blocked by its own quality check.
+    let coveragePct: number | null = null;
+    try {
+      coveragePct = await measureSceneCoverage(cover);
+    } catch (e) {
+      console.warn(
+        `scene coverage未检测: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+
     const path = `${productId}/scene-${Date.now()}.png`;
     const { error: upErr } = await supabase.storage
       .from("cutouts")
@@ -610,21 +682,25 @@ export async function maybeGenerateSceneCover(
       .eq("id", productId);
     if (tErr) throw new Error(`thumbnail update: ${tErr.message}`);
 
-    // Record which in-catalog accessories this scene referenced — the data
-    // basis for a future "other products in this scene" link (this round: only
-    // stored, never shown). Kept in attributes JSON so no migration is needed;
-    // tolerant — a record failure must never fail an otherwise-good generation.
+    // Persist attributes: the coverage-QC number (PB #33) + which in-catalog
+    // accessories this scene referenced (the data basis for a future "other
+    // products in this scene" link — this round only stored). Both live in
+    // attributes JSON so no migration is needed. One update; tolerant — a record
+    // failure must never fail an otherwise-good generation. coveragePct is
+    // ALWAYS written (a number, or null to clear a stale value from a prior
+    // regenerate → back to "未检测").
+    const nextAttributes: Record<string, unknown> = {
+      ...(product.attributes ?? {}),
+      scene_coverage_pct: coveragePct,
+    };
     if (promptResult.referenceProductIds.length > 0) {
-      const nextAttributes = {
-        ...(product.attributes ?? {}),
-        scene_reference_product_ids: promptResult.referenceProductIds,
-      };
-      const { error: aErr } = await supabase
-        .from("products")
-        .update({ attributes: nextAttributes })
-        .eq("id", productId);
-      if (aErr) console.warn(`scene reference record failed: ${aErr.message}`);
+      nextAttributes.scene_reference_product_ids = promptResult.referenceProductIds;
     }
+    const { error: aErr } = await supabase
+      .from("products")
+      .update({ attributes: nextAttributes })
+      .eq("id", productId);
+    if (aErr) console.warn(`scene attributes record failed: ${aErr.message}`);
 
     await supabase.from("product_images").insert({
       product_id: productId,

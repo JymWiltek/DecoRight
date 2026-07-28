@@ -205,6 +205,49 @@ export const SUBTYPE_IMPLIES_MOUNTING: Record<string, string> = {
   close_coupled: "floor_standing",
 };
 
+/**
+ * mounting VALUE aliases → the canonical MOUNTING_SCENE_RULES key. Some products
+ * carry a synonym in attributes.mounting that isn't itself a rule key — e.g.
+ * `wall_hung` (7 products) means the same as the canonical `wall_mounted`. Before
+ * this table those rows resolved to `unknown` and generated WITHOUT an
+ * installation constraint (a wall-hung cabinet drawn standing on the floor). All
+ * normalisation flows through resolveMountingRule (the single entry) — never
+ * inline a `=== "wall_hung"` anywhere. Add a new synonym here as one line.
+ */
+export const MOUNTING_ALIASES: Record<string, string> = {
+  wall_hung: "wall_mounted",
+};
+
+/** Longest-edge size tiers → a RELATIVE phrasing appended to the real-size
+ *  clause. Image models don't reason about millimetre numbers (a 370 mm cabinet
+ *  still got drawn filling a wall), so the mm value is kept AND translated into
+ *  "how much of the room it should occupy". Thresholds + wording Jym-editable;
+ *  `maxMm` is the inclusive upper bound of each tier (last tier = Infinity). */
+export const SCENE_SIZE_TIERS: { maxMm: number; phrasing: string }[] = [
+  {
+    maxMm: 500,
+    phrasing:
+      "This is a compact fixture — it should occupy only a small portion of the wall; most of the wall remains empty.",
+  },
+  {
+    maxMm: 1200,
+    phrasing:
+      "This is a medium-sized fixture in a normally proportioned room.",
+  },
+  {
+    maxMm: Infinity,
+    phrasing:
+      "This is a large fixture, but the room is spacious enough that it does not dominate the frame.",
+  },
+];
+
+/** The relative-size sentence for a product whose longest edge is `longestMm`.
+ *  Single reader so the tiering can't drift between callers. */
+export function resolveSizeTierPhrasing(longestMm: number): string {
+  return (SCENE_SIZE_TIERS.find((t) => longestMm <= t.maxMm) ??
+    SCENE_SIZE_TIERS[SCENE_SIZE_TIERS.length - 1]).phrasing;
+}
+
 export type MountingResolution =
   /** A rule was found — inject `constraint`. */
   | { kind: "rule"; mounting: string; source: "mounting" | "subtype"; constraint: string }
@@ -223,7 +266,10 @@ export function resolveMountingRule(
   mounting: string | null | undefined,
   subtypeSlug: string | null | undefined,
 ): MountingResolution {
-  const m = (mounting ?? "").trim();
+  const raw = (mounting ?? "").trim();
+  // Normalise synonyms (wall_hung → wall_mounted) FIRST, so an aliased value
+  // resolves to its canonical rule instead of falling through to no_rule.
+  const m = raw ? (MOUNTING_ALIASES[raw] ?? raw) : raw;
   if (m) {
     const constraint = MOUNTING_SCENE_RULES[m];
     return constraint

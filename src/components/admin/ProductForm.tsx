@@ -51,6 +51,9 @@ import ReunifyThumbnailButton from "./ReunifyThumbnailButton";
 import FitCenterButton from "./FitCenterButton";
 import AiAutofillButton from "./AiAutofillButton";
 import BrandCombobox from "./BrandCombobox";
+import SceneCoverageBadge from "./SceneCoverageBadge";
+import { isSceneCoverUrl } from "@/lib/scene-cover-url";
+import { readSceneCoveragePct } from "@/lib/scene-coverage";
 import { addBrandAction } from "@/app/admin/(dashboard)/settings/brand-actions";
 import { AutofillTextInput, AutofillTextarea } from "./AutofillTextInput";
 import DeleteButton from "./DeleteButton";
@@ -414,6 +417,16 @@ export default function ProductForm({
                   </a>
                 </div>
               )}
+          </div>
+        )}
+
+        {/* Scene-coverage QC (PB #33) — visible whenever the cover is a scene
+            image, so the operator sees the占比 number (and WHY a scene is
+            unqualified) without opening the blocked banner. */}
+        {isEdit && p && isSceneCoverUrl(p.thumbnail_url) && (
+          <div className="flex items-center gap-2 text-xs text-neutral-500">
+            <span>场景图占比质检:</span>
+            <SceneCoverageBadge pct={readSceneCoveragePct(p.attributes)} />
           </div>
         )}
 

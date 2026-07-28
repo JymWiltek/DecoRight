@@ -8,6 +8,8 @@ import { createServiceRoleClient } from "@/lib/supabase/service";
 import { resolveImageUrl, listProductTextures } from "@/lib/storage";
 import { loadKnownBrands } from "@/lib/admin/brand-normalize";
 import { providerAvailability } from "@/lib/rembg";
+import { isSceneCoverUrl } from "@/lib/scene-cover-url";
+import { sceneCoverageVerdict, readSceneCoveragePct } from "@/lib/scene-coverage";
 import { updateProduct } from "../../actions";
 
 export const dynamic = "force-dynamic";
@@ -137,6 +139,18 @@ export default async function EditProductPage({
     isMeshyErr && rawErr !== "meshy_no_cutouts"
       ? rawErr.replace(/^meshy_/, "")
       : undefined;
+  // Scene gate can fail two ways now: no qualified (non-white) cover, OR a
+  // scene cover whose coverage-QC is out of range (PB #33). Pick the accurate
+  // message with the number so the operator isn't told "white bg" for a scene
+  // that's merely over/under-sized.
+  const coverageVerdict = sceneCoverageVerdict(
+    readSceneCoveragePct(product.attributes),
+  );
+  const sceneBlockedMessage =
+    isSceneCoverUrl(product.thumbnail_url) && !coverageVerdict.publishable
+      ? `场景图占比不合格(${coverageVerdict.label},合格区间 30–60%),不进可发布场景池。重新生成(Run AI)或换一张合格场景图后再发布:`
+      : "封面还是白底图,不可发布 —— 前台「看到即买到」需要一张产品在真实场景里的合格图(非白底,人工实拍或 AI 生成皆可)。二选一补上再发:";
+
   // Translate the gate reason into a fix-this-next message that maps
   // to a button on this page. Centralized here so ProductForm stays a
   // dumb renderer.
@@ -159,8 +173,7 @@ export default async function EditProductPage({
     // scene (a photo you uploaded counts just as much as an AI cover — the only
     // disqualifier is white bg). The two fix paths render as clickable actions
     // below (see ProductForm publishBlockedReasons).
-    scene:
-      "封面还是白底图,不可发布 —— 前台「看到即买到」需要一张产品在真实场景里的合格图(非白底,人工实拍或 AI 生成皆可)。二选一补上再发:",
+    scene: sceneBlockedMessage,
     glb:
       "Click \"Generate 3D model\" (or upload a .glb) so the product has a 3D model before publishing.",
     // PB3-A — new gates.

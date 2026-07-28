@@ -1,5 +1,6 @@
 import { UploadDropzone } from "./UploadDropzone";
 import DeleteImageButton from "./DeleteImageButton";
+import ImageZoom from "./ImageZoom";
 import RunRembgButton from "./RunRembgButton";
 import UnifyImageButton from "./UnifyImageButton";
 import {
@@ -372,14 +373,17 @@ function ImageCard({
     >
       <div className="relative aspect-square overflow-hidden rounded bg-neutral-50">
         {image.display_url ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={image.display_url}
-            alt=""
-            className={`h-full w-full ${contained ? "object-contain" : "object-cover"} ${
-              image.state === "cutout_failed" ? "opacity-60" : ""
-            }`}
-          />
+          // Click-to-zoom (PB #33) — inspect the AI scene / cutout full-size.
+          <ImageZoom src={image.display_url} triggerClassName="block h-full w-full">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={image.display_url}
+              alt=""
+              className={`h-full w-full ${contained ? "object-contain" : "object-cover"} ${
+                image.state === "cutout_failed" ? "opacity-60" : ""
+              }`}
+            />
+          </ImageZoom>
         ) : (
           <div className="flex h-full items-center justify-center text-neutral-400">
             {image.state === "raw" ? "Processing…" : "No preview"}

@@ -24,6 +24,7 @@ import { applyAiImageKinds } from "@/lib/admin/spec-sheet-tagging";
 import { dispatchGlbCompression } from "@/lib/glb-compression-dispatch";
 import { dispatchSceneCover } from "@/lib/scene-cover-dispatch";
 import { hasQualifiedSceneCover } from "@/lib/scene-cover";
+import { sceneCoverageVerdict, readSceneCoveragePct } from "@/lib/scene-coverage";
 import { dispatchFbxBundle } from "@/lib/fbx-bundle-dispatch";
 import { validateFbxZipContainsFbx } from "@/lib/fbx-bundle";
 import { inferProductFields } from "@/lib/ai/infer";
@@ -778,7 +779,7 @@ async function loadPublishGateFacts(
       // PB3-A — also read fbx columns + current status. status drives the
       // transition-only gate (already-published rows aren't re-gated).
       // thumbnail_url feeds the scene gate (a /scene- thumbnail = has scene).
-      .select("room_slugs, glb_url, fbx_url, fbx_bundle_url, thumbnail_url, status, defect, defect_reason")
+      .select("room_slugs, glb_url, fbx_url, fbx_bundle_url, thumbnail_url, attributes, status, defect, defect_reason")
       .eq("id", productId)
       .maybeSingle(),
     supabase
@@ -809,7 +810,13 @@ async function loadPublishGateFacts(
     // Scene gate (Jym redefinition): qualified = the cover is NOT a white
     // background, source-blind (a real photo he uploaded counts like an AI
     // /scene- cover). One fetch+pixel check; the /scene- fast-path skips it.
-    hasScene: await hasQualifiedSceneCover(rowRes.data?.thumbnail_url),
+    // AND (PB #33) the coverage QC must be publishable — a MEASURED out-of-range
+    // scene (product fills >60% or <30% of the frame) doesn't count as a usable
+    // cover; unmeasured / in-range both pass.
+    hasScene:
+      (await hasQualifiedSceneCover(rowRes.data?.thumbnail_url)) &&
+      sceneCoverageVerdict(readSceneCoveragePct(rowRes.data?.attributes))
+        .publishable,
     defect: rowRes.data?.defect === true,
     defectReason: rowRes.data?.defect_reason ?? null,
     currentStatus: rowRes.data?.status ?? null,

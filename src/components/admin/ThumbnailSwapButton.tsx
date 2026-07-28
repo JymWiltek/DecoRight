@@ -44,6 +44,7 @@ import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { getSignedUploadUrl } from "@/app/admin/(dashboard)/products/upload-actions";
 import { setProductThumbnail } from "@/app/admin/(dashboard)/products/actions";
+import ImageZoom from "./ImageZoom";
 
 type Props = {
   productId: string;
@@ -152,38 +153,34 @@ export default function ThumbnailSwapButton({ productId, currentUrl }: Props) {
     }
   }
 
-  const tooltip = error
-    ? `Last upload failed: ${error}`
-    : busy
-      ? "Uploading…"
-      : currentUrl
-        ? "Click to swap thumbnail"
-        : "Click to upload thumbnail";
-
+  // PB #33 item 4 — click the tile to ZOOM (operators need to see the AI scene
+  // result at full size). Swap moved to an always-visible ✎ corner button (no
+  // hover — touch devices have none). When there's no thumbnail yet there's
+  // nothing to zoom, so the whole tile is the upload target, as before.
   return (
-    <div className="relative">
-      <button
-        type="button"
-        onClick={() => fileRef.current?.click()}
-        disabled={busy}
-        title={tooltip}
-        aria-label={tooltip}
-        className={`group relative h-10 w-10 overflow-hidden rounded bg-neutral-100 transition ${
-          error
-            ? "ring-2 ring-rose-400"
-            : "hover:ring-2 hover:ring-sky-400"
-        } ${busy ? "cursor-wait" : "cursor-pointer"}`}
-      >
-        {currentUrl ? (
-          // eslint-disable-next-line @next/next/no-img-element
+    <div
+      className={`relative h-10 w-10 overflow-hidden rounded bg-neutral-100 ${
+        error ? "ring-2 ring-rose-400" : ""
+      }`}
+    >
+      {currentUrl ? (
+        <ImageZoom src={currentUrl} triggerClassName="block h-full w-full">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src={currentUrl}
             alt=""
-            className={`h-full w-full object-cover transition ${
-              busy ? "opacity-40" : ""
-            }`}
+            className={`h-full w-full object-cover transition ${busy ? "opacity-40" : ""}`}
           />
-        ) : (
+        </ImageZoom>
+      ) : (
+        <button
+          type="button"
+          onClick={() => fileRef.current?.click()}
+          disabled={busy}
+          title={error ? `Last upload failed: ${error}` : "Click to upload thumbnail"}
+          aria-label="Upload thumbnail"
+          className={`h-full w-full ${busy ? "cursor-wait" : "cursor-pointer"}`}
+        >
           <span
             className={`absolute inset-0 flex items-center justify-center text-[9px] text-neutral-400 ${
               busy ? "opacity-40" : ""
@@ -191,29 +188,32 @@ export default function ThumbnailSwapButton({ productId, currentUrl }: Props) {
           >
             no img
           </span>
-        )}
+        </button>
+      )}
 
-        {/* Hover affordance — only when idle, not while uploading or
-            after an error (those have their own visual). */}
-        {!busy && !error && (
-          <span
-            aria-hidden
-            className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/45 text-white opacity-0 transition group-hover:opacity-100"
-          >
-            <span className="text-sm leading-none">✎</span>
-          </span>
-        )}
+      {/* Swap button — always visible (mobile-friendly), only when a thumbnail
+          exists (the empty tile already opens the picker on click). */}
+      {currentUrl && !busy && (
+        <button
+          type="button"
+          onClick={() => fileRef.current?.click()}
+          title={error ? `Last upload failed: ${error}` : "换图 / Swap thumbnail"}
+          aria-label="Swap thumbnail"
+          className="absolute right-0 top-0 z-10 flex h-4 w-4 items-center justify-center rounded-bl bg-black/55 text-[9px] leading-none text-white hover:bg-black/80"
+        >
+          ✎
+        </button>
+      )}
 
-        {/* Spinner during upload. CSS-only — no extra dep. */}
-        {busy && (
-          <span
-            aria-hidden
-            className="pointer-events-none absolute inset-0 flex items-center justify-center"
-          >
-            <span className="h-4 w-4 animate-spin rounded-full border-2 border-neutral-300 border-t-neutral-700" />
-          </span>
-        )}
-      </button>
+      {/* Spinner during upload. CSS-only — no extra dep. */}
+      {busy && (
+        <span
+          aria-hidden
+          className="pointer-events-none absolute inset-0 flex items-center justify-center"
+        >
+          <span className="h-4 w-4 animate-spin rounded-full border-2 border-neutral-300 border-t-neutral-700" />
+        </span>
+      )}
 
       <input
         ref={fileRef}

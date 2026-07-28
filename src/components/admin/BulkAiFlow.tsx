@@ -204,6 +204,12 @@ export default function BulkAiFlow({
                       )}
                     </span>
                   )}
+                  {genScenes && sceneTargets > 0 && (
+                    <span className="block text-xs text-neutral-500">
+                      + coverage QC: {sceneTargets} × ~$0.01–0.02 per image
+                      (vision, billed by OpenAI)
+                    </span>
+                  )}
                   {(specUnknown || sceneUnknown) && (
                     <span className="block text-xs text-amber-600">
                       Actual total is read from OpenAI usage after the run.
