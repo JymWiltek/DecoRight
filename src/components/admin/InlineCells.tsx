@@ -178,6 +178,109 @@ export function InlineTextCell({
 }
 
 // ─────────────────────────────────────────────────────────────
+// Number — L / W / H (mm) + weight_kg (PB-B data-fill cells)
+// ─────────────────────────────────────────────────────────────
+export function InlineNumberCell({
+  productId,
+  field,
+  value,
+  placeholder,
+}: {
+  productId: string;
+  field: Extract<
+    InlineField,
+    "dim_length" | "dim_width" | "dim_height" | "weight_kg"
+  >;
+  value: number | null;
+  /** Shown (amber) when empty — e.g. "L", "W", "H", "kg". */
+  placeholder?: string;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [shown, setShown] = useState<number | null>(value);
+  const [draft, setDraft] = useState(value == null ? "" : String(value));
+  const committed = useRef(false);
+  const { save, pending, error, flash, setError } = useInlineSave(productId, field);
+
+  useEffect(() => setShown(value), [value]);
+
+  function begin() {
+    setError(null);
+    setDraft(shown == null ? "" : String(shown));
+    committed.current = false;
+    setEditing(true);
+  }
+  function commit() {
+    if (committed.current) return;
+    committed.current = true;
+    setEditing(false);
+    const next = draft.trim();
+    if (next === (shown == null ? "" : String(shown))) return; // no-op
+    const prev = shown;
+    const opt = next === "" ? null : Number(next);
+    // Optimistic: show the parsed number; the server is the real validator and
+    // rolls back on reject.
+    setShown(opt != null && Number.isFinite(opt) ? opt : prev);
+    save(
+      next,
+      () => setShown(prev),
+      (stored) => {
+        const s = typeof stored === "string" ? Number(stored) : null;
+        setShown(s != null && Number.isFinite(s) ? s : null);
+      },
+    );
+  }
+  function cancel() {
+    committed.current = true;
+    setEditing(false);
+    setError(null);
+  }
+
+  const isMissing = shown == null;
+
+  if (editing) {
+    return (
+      <div>
+        <input
+          autoFocus
+          type="text"
+          inputMode="decimal"
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              commit();
+            } else if (e.key === "Escape") {
+              e.preventDefault();
+              cancel();
+            }
+          }}
+          className="w-14 rounded border border-sky-400 px-1 py-0.5 text-xs tabular-nums outline-none ring-1 ring-sky-200"
+        />
+        <ErrorLine error={error} />
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={begin}
+        title="Click to edit"
+        className={`w-12 rounded px-1 py-0.5 text-right text-xs tabular-nums transition hover:brightness-95 ${
+          isMissing ? "bg-amber-100 text-amber-700" : "text-neutral-700"
+        } ${cellTone(flash, pending)}`}
+      >
+        {isMissing ? (placeholder ?? "—") : shown}
+      </button>
+      <ErrorLine error={error} />
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
 // Brand — pick from what the catalog already carries, or add a new one
 // ─────────────────────────────────────────────────────────────
 export function InlineBrandCell({

@@ -105,8 +105,15 @@ export default function BulkAiFlow({
   }
 
   const succeeded = results.filter((r) => r.ok).length;
+  // PB-B — keep each note tied to its productId so we can name the product +
+  // link to its Edit page (a bare id slice made Jym hunt the list).
+  const nameMap = new Map(
+    (info?.products ?? []).map((p) => [p.id, { name: p.name, sku: p.sku }]),
+  );
   const warnings = results.flatMap((r) =>
-    r.ok ? r.warnings : [`${r.productId.slice(0, 8)}: ${r.error}`],
+    r.ok
+      ? r.warnings.map((text) => ({ productId: r.productId, text }))
+      : [{ productId: r.productId, text: r.error }],
   );
 
   return (
@@ -286,9 +293,25 @@ export default function BulkAiFlow({
                   Notes ({warnings.length})
                 </div>
                 <ul className="list-disc pl-4 text-amber-700">
-                  {warnings.map((w, i) => (
-                    <li key={i}>{w}</li>
-                  ))}
+                  {warnings.map((w, i) => {
+                    const meta = nameMap.get(w.productId);
+                    const label = meta
+                      ? `${meta.name}${meta.sku ? ` · ${meta.sku}` : ""}`
+                      : w.productId.slice(0, 8);
+                    return (
+                      <li key={i}>
+                        <a
+                          href={`/admin/products/${w.productId}/edit`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="font-medium text-sky-700 underline underline-offset-2 hover:text-sky-900"
+                        >
+                          {label}
+                        </a>
+                        <span className="text-amber-700">:{w.text}</span>
+                      </li>
+                    );
+                  })}
                 </ul>
               </div>
             )}

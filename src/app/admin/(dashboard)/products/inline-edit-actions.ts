@@ -41,10 +41,25 @@ export type InlineField =
   | "brand"
   | "subtype_slug"
   | "room_slugs"
-  | "styles";
+  | "styles"
+  // PB-B — numeric data-fill cells. dim_* write one axis of the dimensions_mm
+  // JSON; weight_kg is a plain column. Empty string clears the axis/value.
+  | "dim_length"
+  | "dim_width"
+  | "dim_height"
+  | "weight_kg";
 
 const TEXT_FIELDS = new Set<InlineField>(["name", "sku_id", "brand"]);
 const ARRAY_FIELDS = new Set<InlineField>(["room_slugs", "styles"]);
+const DIM_FIELDS: Record<string, "length" | "width" | "height"> = {
+  dim_length: "length",
+  dim_width: "width",
+  dim_height: "height",
+};
+// Same 10 m cap the bulk-create card + updateProduct enforce, so the list can't
+// store an absurd AR scale the /edit form would reject.
+const REAL_DIM_MAX_MM = 10_000;
+const WEIGHT_MAX_KG = 1000;
 
 export type InlineEditResult =
   /** `value` is what was ACTUALLY stored — the cell adopts it so the display
@@ -65,7 +80,9 @@ export async function saveInlineFieldAction(
 
   const isText = TEXT_FIELDS.has(field);
   const isArray = ARRAY_FIELDS.has(field);
-  if (!isText && !isArray && field !== "subtype_slug") {
+  const isDim = field in DIM_FIELDS;
+  const isNumeric = isDim || field === "weight_kg";
+  if (!isText && !isArray && !isNumeric && field !== "subtype_slug") {
     return { ok: false, error: `Field "${field}" is not inline-editable.` };
   }
   if (isArray !== Array.isArray(value)) {
@@ -73,6 +90,66 @@ export async function saveInlineFieldAction(
   }
 
   const supabase = createServiceRoleClient();
+
+  // ── PB-B numeric cells: dim_length/width/height (one axis of dimensions_mm)
+  //    + weight_kg. Reject non-numbers / out-of-range inline; empty clears.
+  if (isNumeric) {
+    const raw = (typeof value === "string" ? value : "").trim();
+    const max = field === "weight_kg" ? WEIGHT_MAX_KG : REAL_DIM_MAX_MM;
+    let parsed: number | null = null;
+    if (raw !== "") {
+      const n = Number(raw);
+      if (!Number.isFinite(n) || n <= 0 || n > max) {
+        return {
+          ok: false,
+          error: `Enter a number 1–${max}${field === "weight_kg" ? " kg" : " mm"}.`,
+        };
+      }
+      parsed = field === "weight_kg" ? n : Math.round(n);
+    }
+
+    if (isDim) {
+      const axis = DIM_FIELDS[field];
+      const { data: row } = await supabase
+        .from("products")
+        .select("dimensions_mm, attributes")
+        .eq("id", productId)
+        .maybeSingle();
+      const cur = (row?.dimensions_mm ?? {}) as Record<string, number | null>;
+      const next: Record<string, number> = {};
+      for (const a of ["length", "width", "height"] as const) {
+        const v = a === axis ? parsed : cur[a];
+        if (typeof v === "number" && Number.isFinite(v) && v > 0) next[a] = v;
+      }
+      const dimsValue = Object.keys(next).length > 0 ? next : null;
+      // PB-B provenance: a hand-typed dimension is 'manual' (error-attribution
+      // vs the AI-suggested path). Existing rows are NOT backfilled — only this
+      // write stamps the marker.
+      const attrs = {
+        ...((row?.attributes as Record<string, unknown>) ?? {}),
+        dims_source: "manual",
+      };
+      const { error } = await supabase
+        .from("products")
+        .update({ dimensions_mm: dimsValue, attributes: attrs } as never)
+        .eq("id", productId);
+      if (error) return { ok: false, error: error.message };
+      revalidatePath("/admin");
+      revalidatePath(`/product/${productId}`);
+      return { ok: true, value: parsed == null ? null : String(parsed) };
+    }
+
+    // weight_kg
+    const { error } = await supabase
+      .from("products")
+      .update({ weight_kg: parsed } as never)
+      .eq("id", productId);
+    if (error) return { ok: false, error: error.message };
+    revalidatePath("/admin");
+    revalidatePath(`/product/${productId}`);
+    return { ok: true, value: parsed == null ? null : String(parsed) };
+  }
+
   let update: Record<string, unknown>;
 
   if (isText || field === "subtype_slug") {

@@ -23,6 +23,7 @@ import {
   bulkUpdateStatusAction,
 } from "@/app/admin/(dashboard)/products/actions";
 import BulkAiFlow from "./BulkAiFlow";
+import BulkAiSuggestFlow from "./BulkAiSuggestFlow";
 
 type Props = {
   /** Total row count, shown as "N of M selected" for context. */
@@ -59,6 +60,8 @@ export default function BulkBar({ totalRows }: Props) {
   // PB3-C A — one "Run AI" panel (checkboxes inside pick specs / scenes /
   // regenerate). Replaces the earlier two-button + forced-sample flow.
   const [aiIds, setAiIds] = useState<string[] | null>(null);
+  // PB-B — batch "AI 建议尺寸/mounting" panel (suggest → review → adopt-selected).
+  const [suggestIds, setSuggestIds] = useState<string[] | null>(null);
 
   useEffect(() => {
     const formEl = document.getElementById("bulk-form") as HTMLFormElement | null;
@@ -108,6 +111,9 @@ export default function BulkBar({ totalRows }: Props) {
   return (
     <div className="fixed inset-x-0 bottom-0 z-40 border-t border-neutral-200 bg-white shadow-[0_-4px_12px_-4px_rgba(0,0,0,0.08)]">
       {aiIds && <BulkAiFlow ids={aiIds} onClose={() => setAiIds(null)} />}
+      {suggestIds && (
+        <BulkAiSuggestFlow ids={suggestIds} onClose={() => setSuggestIds(null)} />
+      )}
       <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3 px-6 py-3">
         <div className="text-sm">
           <span className="font-semibold">{count}</span>{" "}
@@ -125,6 +131,16 @@ export default function BulkBar({ totalRows }: Props) {
             className="rounded-md border border-sky-300 bg-sky-50 px-3 py-1.5 text-xs font-medium text-sky-800 transition hover:bg-sky-100"
           >
             ✨ Run AI
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              const ids = readCheckedIds();
+              if (ids.length) setSuggestIds(ids);
+            }}
+            className="rounded-md border border-violet-300 bg-violet-50 px-3 py-1.5 text-xs font-medium text-violet-800 transition hover:bg-violet-100"
+          >
+            🤖 批量 AI 建议尺寸
           </button>
           <span className="mx-1 h-5 w-px bg-neutral-200" aria-hidden />
           {STATUS_OPTIONS.map((o) => (

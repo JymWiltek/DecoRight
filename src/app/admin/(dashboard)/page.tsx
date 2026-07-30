@@ -34,7 +34,9 @@ import {
   InlineSelectCell,
   InlineMultiCell,
   InlineBrandCell,
+  InlineNumberCell,
 } from "@/components/admin/InlineCells";
+import TableScroll from "@/components/admin/TableScroll";
 // Brand picker options — the SAME list the casing gate matches against, so the
 // picker can only offer spellings the gate already considers canonical. Both
 // read the `brands` table (mig 0053) via loadKnownBrands.
@@ -722,8 +724,8 @@ export default async function AdminProductsPage({
           DO NOT render their own <form> — they call the server action
           directly via onClick to avoid invalid nested <form> HTML. */}
       <form id="bulk-form" action="">
-        <div className="overflow-hidden rounded-lg border border-neutral-200 bg-white">
-          <table className="w-full text-left text-sm">
+        <TableScroll>
+          <table className="w-full min-w-[1100px] text-left text-sm">
             <thead className="border-b border-neutral-200 bg-neutral-50 text-xs uppercase tracking-wide text-neutral-500">
               <tr>
                 <th className="w-10 px-4 py-3">
@@ -761,6 +763,9 @@ export default async function AdminProductsPage({
                 <th className="px-4 py-3">3D</th>
                 <th className="px-4 py-3">场景</th>
                 <th className="px-4 py-3">AI</th>
+                <th className="px-4 py-3" title="点格填 L / W / H (mm) 与重量,缺失标黄">
+                  L·W·H / kg
+                </th>
                 <th className="px-4 py-3">Missing</th>
                 <th className="px-4 py-3">3D / Imgs</th>
                 <th className="px-4 py-3">
@@ -989,6 +994,19 @@ export default async function AdminProductsPage({
                         );
                       })()}
                     </td>
+                    {/* PB-B — inline L/W/H (mm) + weight, next to the AI warning
+                        so Jym fills missing data in one pass. Missing cells are
+                        amber; filled clears. Save/validation via the shared
+                        saveInlineFieldAction (same rules as /edit). */}
+                    <td className="px-4 py-3 align-middle">
+                      <div className="flex items-center gap-1">
+                        <InlineNumberCell productId={p.id} field="dim_length" value={p.dimensions_mm?.length ?? null} placeholder="L" />
+                        <InlineNumberCell productId={p.id} field="dim_width" value={p.dimensions_mm?.width ?? null} placeholder="W" />
+                        <InlineNumberCell productId={p.id} field="dim_height" value={p.dimensions_mm?.height ?? null} placeholder="H" />
+                        <span className="mx-0.5 text-neutral-300">·</span>
+                        <InlineNumberCell productId={p.id} field="weight_kg" value={p.weight_kg ?? null} placeholder="kg" />
+                      </div>
+                    </td>
                     <td className="px-4 py-3 align-middle">
                       <MissingCell product={p} />
                     </td>
@@ -1126,7 +1144,7 @@ export default async function AdminProductsPage({
               )}
             </tbody>
           </table>
-        </div>
+        </TableScroll>
       </form>
 
       <BulkBar totalRows={visibleProducts.length} />

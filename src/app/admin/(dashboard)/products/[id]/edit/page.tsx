@@ -12,6 +12,7 @@ import { isSceneCoverUrl } from "@/lib/scene-cover-url";
 import { sceneCoverageVerdict, readSceneCoveragePct } from "@/lib/scene-coverage";
 import DeployStaleBanner from "@/components/admin/DeployStaleBanner";
 import { deployVersion } from "@/lib/deploy-version";
+import AiSuggestDimsButton from "@/components/admin/AiSuggestDimsButton";
 import { updateProduct } from "../../actions";
 
 export const dynamic = "force-dynamic";
@@ -206,10 +207,32 @@ export default async function EditProductPage({
   const rembgErrMsg =
     isMeshyErr || isPublishErr || isSkuErr ? undefined : sp.msg;
 
+  const dims = product.dimensions_mm;
+  const dimsIncomplete =
+    !dims ||
+    !(
+      typeof dims.length === "number" &&
+      dims.length > 0 &&
+      typeof dims.width === "number" &&
+      dims.width > 0 &&
+      typeof dims.height === "number" &&
+      dims.height > 0
+    );
+  const mountingEmpty = !(
+    product.attributes &&
+    typeof (product.attributes as Record<string, unknown>).mounting === "string" &&
+    ((product.attributes as Record<string, unknown>).mounting as string).trim() !== ""
+  );
+
   return (
     <>
       <div className="mx-auto max-w-4xl px-4">
         <DeployStaleBanner currentVersion={deployVersion()} />
+        {(dimsIncomplete || mountingEmpty) && (
+          <div className="mb-4">
+            <AiSuggestDimsButton productId={id} />
+          </div>
+        )}
       </div>
       <ProductForm
         product={product}
