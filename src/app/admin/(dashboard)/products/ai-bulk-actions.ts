@@ -285,6 +285,15 @@ export type AiPanelInfo = {
    *  panel can show how many scene generations are SKIPPED when "regenerate"
    *  is off). */
   withSceneCount: number;
+  /** PB-B — id → name + sku (+ thumbnail) for the selected products, so the
+   *  Notes/warnings can name WHICH product was skipped (and link to its Edit
+   *  page), and the AI-suggest table can show a thumbnail. */
+  products: {
+    id: string;
+    name: string;
+    sku: string | null;
+    thumbnail: string | null;
+  }[];
 };
 
 /**
@@ -317,15 +326,22 @@ export async function getAiPanelInfo(ids: string[]): Promise<AiPanelInfo> {
   ]);
 
   let withSceneCount = 0;
+  let products: AiPanelInfo["products"] = [];
   if (validIds.length) {
     const { data } = await supabase
       .from("products")
-      .select("thumbnail_url")
+      .select("id, name, sku_id, thumbnail_url")
       .in("id", validIds);
     withSceneCount = (data ?? []).filter((p) =>
       isSceneCoverUrl(p.thumbnail_url),
     ).length;
+    products = (data ?? []).map((p) => ({
+      id: p.id,
+      name: p.name,
+      sku: p.sku_id ?? null,
+      thumbnail: p.thumbnail_url ?? null,
+    }));
   }
 
-  return { specUnitUsd, sceneUnitUsd, withSceneCount };
+  return { specUnitUsd, sceneUnitUsd, withSceneCount, products };
 }
