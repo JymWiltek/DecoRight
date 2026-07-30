@@ -35,8 +35,29 @@ import ProductDraftCard, {
 } from "./ProductDraftCard";
 import { getSignedUploadUrl } from "@/app/admin/(dashboard)/products/upload-actions";
 import { createProductFromUpload } from "@/app/admin/(dashboard)/products/actions";
+import {
+  UPLOAD_TRACE_PREFIX,
+  newTraceId,
+  traceHost,
+  classifyRoute,
+  classifyError,
+  stepBannerSummary,
+  stepDetailLine,
+  type UploadTraceStep,
+} from "@/lib/upload-trace";
 
 const MAX_CARDS = 10;
+
+/** Error carrying the failed trace step, so the top-level catch can render the
+ *  precise failing step + raw error instead of a generic message (PB-A). */
+class UploadTraceError extends Error {
+  step: UploadTraceStep;
+  constructor(step: UploadTraceStep) {
+    super(step.errorMessage ?? step.note ?? step.label);
+    this.name = "UploadTraceError";
+    this.step = step;
+  }
+}
 
 type Props = {
   itemTypeOptions: TaxoOption[];
@@ -108,6 +129,11 @@ export default function BulkCreateForm({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [progress, setProgress] = useState<string | null>(null);
+  // PB-A diagnostics — the full step trace + expand toggle for the "诊断详情"
+  // panel. Populated on every submit (success or failure) so a screenshot on
+  // failure carries the raw evidence.
+  const [trace, setTrace] = useState<UploadTraceStep[]>([]);
+  const [showDetails, setShowDetails] = useState(false);
 
   function addCard() {
     if (cards.length >= MAX_CARDS) return;
@@ -150,6 +176,128 @@ export default function BulkCreateForm({
     }
     setError(null);
     setBusy(true);
+    setShowDetails(false);
+    setTrace([]);
+
+    // ── PB-A diagnostics: one traceId for the whole run; every step is timed,
+    //    logged to console ([upload-trace]) and collected for the "诊断详情"
+    //    panel. NO behavior change — pure instrumentation around the SAME
+    //    sign → PUT → create chain.
+    const traceId = newTraceId();
+    const appHost = typeof window !== "undefined" ? window.location.host : "";
+    const steps: UploadTraceStep[] = [];
+    const record = (s: UploadTraceStep) => {
+      steps.push(s);
+      if (s.ok === false) console.error(UPLOAD_TRACE_PREFIX, s);
+      else console.log(UPLOAD_TRACE_PREFIX, s);
+    };
+
+    // Sign a signed-URL (server action). Distinguishes a network-layer throw
+    // (no HTTP status) from a reached-but-rejected {ok:false}.
+    const tSign = async (
+      kind: Parameters<typeof getSignedUploadUrl>[0],
+      label: string,
+      productId: string,
+      file: File,
+    ) => {
+      const startMs = Date.now();
+      const base: UploadTraceStep = {
+        traceId, seq: steps.length + 1, step: `sign:${kind}`, label,
+        file: file.name, sizeBytes: file.size, route: "action", startMs,
+      };
+      let res: Awaited<ReturnType<typeof getSignedUploadUrl>>;
+      try {
+        res = await getSignedUploadUrl(
+          kind, productId, file.name, file.type || "application/octet-stream", traceId,
+        );
+      } catch (e) {
+        const c = classifyError(e);
+        const s: UploadTraceStep = { ...base, durationMs: Date.now() - startMs, ok: false,
+          errorName: c.name, errorMessage: c.message,
+          note: c.name === "TypeError"
+            ? "网络层失败:签名请求(action POST)未到达或未返回,无 HTTP status" : undefined };
+        record(s); throw new UploadTraceError(s);
+      }
+      if (!res.ok) {
+        const s: UploadTraceStep = { ...base, durationMs: Date.now() - startMs, ok: false,
+          errorName: "SignRejected", errorMessage: res.error,
+          note: "已到达服务端,server action 返回 ok:false(被拒)" };
+        record(s); throw new UploadTraceError(s);
+      }
+      record({ ...base, durationMs: Date.now() - startMs, ok: true });
+      return res.ticket;
+    };
+
+    // PUT bytes to the signed URL. Captures HTTP status + body, or (on a
+    // TypeError with no response) the honest "网络层未收到响应". Records the
+    // target host + route (direct-storage vs via-app-api) for the big-file
+    // evidence direction.
+    const tPut = async (
+      label: string, stepKey: string, signedUrl: string, file: File,
+    ) => {
+      const startMs = Date.now();
+      const host = traceHost(signedUrl);
+      const route = classifyRoute(host, appHost);
+      const base: UploadTraceStep = {
+        traceId, seq: steps.length + 1, step: `put:${stepKey}`, label,
+        file: file.name, sizeBytes: file.size, targetHost: host, route, startMs,
+      };
+      let res: Response;
+      try {
+        res = await fetch(signedUrl, {
+          method: "PUT",
+          headers: {
+            "Content-Type": file.type || "model/gltf-binary",
+            "x-upsert": "true",
+            "cache-control": "max-age=31536000",
+          },
+          body: file,
+        });
+      } catch (e) {
+        const c = classifyError(e);
+        const s: UploadTraceStep = { ...base, durationMs: Date.now() - startMs, ok: false,
+          errorName: c.name, errorMessage: c.message,
+          note: "网络层失败:字节 PUT 未收到响应(TypeError,无 HTTP status)" +
+            (route === "via-app-api" ? " · 该路径经自家 API,受 Vercel 4.5MB body 上限" : "") };
+        record(s); throw new UploadTraceError(s);
+      }
+      if (!res.ok) {
+        const body = (await res.text().catch(() => "")).slice(0, 400);
+        const s: UploadTraceStep = { ...base, durationMs: Date.now() - startMs, ok: false,
+          httpStatus: res.status, responseBody: body, note: `存储返回 HTTP ${res.status}` };
+        record(s); throw new UploadTraceError(s);
+      }
+      record({ ...base, durationMs: Date.now() - startMs, ok: true, httpStatus: res.status });
+    };
+
+    // createProductFromUpload (server action). Carries the traceId in the
+    // FormData so the server log correlates.
+    const tCreate = async (productId: string, fd: FormData) => {
+      const startMs = Date.now();
+      fd.set("__trace_id", traceId);
+      const base: UploadTraceStep = {
+        traceId, seq: steps.length + 1, step: "createProduct",
+        label: "写入产品记录(server action)", route: "action", startMs,
+      };
+      let res: Awaited<ReturnType<typeof createProductFromUpload>>;
+      try {
+        res = await createProductFromUpload(productId, fd);
+      } catch (e) {
+        const c = classifyError(e);
+        const s: UploadTraceStep = { ...base, durationMs: Date.now() - startMs, ok: false,
+          errorName: c.name, errorMessage: c.message,
+          note: c.name === "TypeError"
+            ? "网络层失败:写库 action POST 未到达或未返回,无 HTTP status" : undefined };
+        record(s); throw new UploadTraceError(s);
+      }
+      if (!res.ok) {
+        const s: UploadTraceStep = { ...base, durationMs: Date.now() - startMs, ok: false,
+          errorName: "CreateRejected", errorMessage: res.error, note: "已到达服务端,被拒" };
+        record(s); throw new UploadTraceError(s);
+      }
+      record({ ...base, durationMs: Date.now() - startMs, ok: true });
+    };
+
     try {
       for (let i = 0; i < submittable.length; i++) {
         const card = submittable[i];
@@ -188,18 +336,13 @@ export default function BulkCreateForm({
         //    single-edit dropzones (raw_image_entries / real_photo_entries).
         const uploaded = await Promise.all(
           card.photos.map(async (file, idx) => {
-            const ticket = await getSignedUploadUrl(
-              "raw_image",
-              productId,
-              file.name,
-              file.type,
+            const ticket = await tSign(
+              "raw_image", `请求图片签名 URL:${file.name}`, productId, file,
             );
-            if (!ticket.ok) throw new Error(`photo signed URL: ${ticket.error}`);
-            await putBytes(ticket.ticket.signedUrl, file);
-            const ext =
-              ticket.ticket.path.split(".").pop()?.toLowerCase() ?? "jpg";
+            await tPut(`上传图片 ${file.name} 到存储`, "raw_image", ticket.signedUrl, file);
+            const ext = ticket.path.split(".").pop()?.toLowerCase() ?? "jpg";
             return {
-              imageId: ticket.ticket.imageId!,
+              imageId: ticket.imageId!,
               ext,
               type: card.photoTypes[idx] ?? defaultPhotoType(idx),
             };
@@ -220,15 +363,11 @@ export default function BulkCreateForm({
 
         // ── GLB (optional) ──
         if (card.glbFile && card.glbBudget) {
-          const ticket = await getSignedUploadUrl(
-            "glb",
-            productId,
-            card.glbFile.name,
-            card.glbFile.type || "model/gltf-binary",
+          const ticket = await tSign(
+            "glb", `请求 GLB 签名 URL:${card.glbFile.name}`, productId, card.glbFile,
           );
-          if (!ticket.ok) throw new Error(`GLB signed URL: ${ticket.error}`);
-          await putBytes(ticket.ticket.signedUrl, card.glbFile);
-          fd.set("glb_path", ticket.ticket.path);
+          await tPut(`上传 ${card.glbFile.name} 到存储`, "glb", ticket.signedUrl, card.glbFile);
+          fd.set("glb_path", ticket.path);
           fd.set("glb_size_kb", String(card.glbBudget.sizeKb));
           fd.set("glb_vertex_count", String(card.glbBudget.vertexCount));
           fd.set("glb_max_texture_dim", String(card.glbBudget.maxTextureDim));
@@ -240,31 +379,21 @@ export default function BulkCreateForm({
         //    a zip contains a .fbx and skips packageFbxBundle for it.
         if (card.fbxFile) {
           if (card.fbxIsZip) {
-            const ticket = await getSignedUploadUrl(
-              "fbx_bundle",
-              productId,
-              card.fbxFile.name,
-              card.fbxFile.type || "application/zip",
+            const ticket = await tSign(
+              "fbx_bundle", `请求 FBX zip 签名 URL:${card.fbxFile.name}`, productId, card.fbxFile,
             );
-            if (!ticket.ok) {
-              throw new Error(`FBX zip signed URL: ${ticket.error}`);
-            }
-            await putBytes(ticket.ticket.signedUrl, card.fbxFile);
-            fd.set("fbx_bundle_path", ticket.ticket.path);
+            await tPut(`上传 ${card.fbxFile.name}(zip)到存储`, "fbx_bundle", ticket.signedUrl, card.fbxFile);
+            fd.set("fbx_bundle_path", ticket.path);
             fd.set(
               "fbx_bundle_size_kb",
               String(Math.round(card.fbxFile.size / 1024)),
             );
           } else {
-            const ticket = await getSignedUploadUrl(
-              "fbx",
-              productId,
-              card.fbxFile.name,
-              card.fbxFile.type || "application/octet-stream",
+            const ticket = await tSign(
+              "fbx", `请求 FBX 签名 URL:${card.fbxFile.name}`, productId, card.fbxFile,
             );
-            if (!ticket.ok) throw new Error(`FBX signed URL: ${ticket.error}`);
-            await putBytes(ticket.ticket.signedUrl, card.fbxFile);
-            fd.set("fbx_path", ticket.ticket.path);
+            await tPut(`上传 ${card.fbxFile.name} 到存储`, "fbx", ticket.signedUrl, card.fbxFile);
+            fd.set("fbx_path", ticket.path);
             fd.set("fbx_size_kb", String(Math.round(card.fbxFile.size / 1024)));
 
             // Loose texture maps → products/<id>/textures/<name>. The
@@ -273,14 +402,10 @@ export default function BulkCreateForm({
             if (card.textureFiles.length) {
               await Promise.all(
                 card.textureFiles.map(async (tf) => {
-                  const t = await getSignedUploadUrl(
-                    "texture",
-                    productId,
-                    tf.name,
-                    tf.type || "application/octet-stream",
+                  const t = await tSign(
+                    "texture", `请求贴图签名 URL:${tf.name}`, productId, tf,
                   );
-                  if (!t.ok) throw new Error(`texture signed URL: ${t.error}`);
-                  await putBytes(t.ticket.signedUrl, tf);
+                  await tPut(`上传贴图 ${tf.name} 到存储`, "texture", t.signedUrl, tf);
                 }),
               );
               fd.set("textures_changed", "1");
@@ -295,31 +420,33 @@ export default function BulkCreateForm({
         }
 
         setProgress(`Creating product ${n}…`);
-        const res = await createProductFromUpload(productId, fd);
-        if (!res.ok) throw new Error(`Product ${n}: ${res.error}`);
+        await tCreate(productId, fd);
       }
 
       // Push to /admin so the operator sees the freshly-minted drafts.
       // The async tail (AI spec parse + glb compression + fbx bundling)
       // keeps running server-side; refresh in ~30s to see AI-filled fields.
+      setTrace(steps);
       router.push("/admin");
     } catch (e) {
-      // Root cause of the old "Failed to fetch" (PB #34): a redeploy while the
-      // page was open invalidates the Server Action references → the action
-      // POST fails at the network layer (a TypeError, NOT an auth error — the
-      // admin session is a 7-day static cookie). Translate that class of
-      // failure into an actionable Chinese message instead of the raw
-      // "Failed to fetch". Cards/files/fields are NOT cleared (state stays), so
-      // the operator loses nothing but a reload.
-      const raw = e instanceof Error ? e.message : String(e);
-      const isNetwork =
-        e instanceof TypeError ||
-        /failed to fetch|networkerror|load failed|fetch failed/i.test(raw);
-      setError(
-        isNetwork
-          ? "上传失败:页面可能已过期(后台更新或网络中断),不是你的填写问题。请刷新页面后重试 —— 已选文件和已填内容都还在本页,刷新前可先记录。"
-          : raw,
-      );
+      // PB-A — NO MORE guessing (the #34 "页面可能已过期" copy was a guess,
+      // and it was wrong: "Failed to fetch" recurs on a freshly-reloaded page,
+      // which rules out both session expiry AND stale deploy). Show the EXACT
+      // failed step + raw error; the collected steps drive the "诊断详情"
+      // panel so a screenshot is enough evidence. State (files/fields) is NOT
+      // cleared. The #34 DeployStaleBanner mechanism is untouched (it lives on
+      // the page, not here).
+      setTrace(steps);
+      const failed =
+        e instanceof UploadTraceError
+          ? e.step
+          : (steps.find((s) => s.ok === false) ?? null);
+      if (failed) {
+        setError(stepBannerSummary(failed));
+      } else {
+        setError(e instanceof Error ? e.message : String(e));
+      }
+      setShowDetails(steps.length > 0);
     } finally {
       setBusy(false);
       setProgress(null);
@@ -329,8 +456,38 @@ export default function BulkCreateForm({
   return (
     <div>
       {error && (
-        <div className="mb-4 rounded-md bg-rose-50 px-4 py-2 text-sm text-rose-700">
-          {error}
+        <div className="mb-4 rounded-md border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+          <div className="font-medium">{error}</div>
+          {trace.length > 0 && (
+            <div className="mt-2">
+              <button
+                type="button"
+                onClick={() => setShowDetails((v) => !v)}
+                className="text-xs underline underline-offset-2 hover:text-rose-900"
+              >
+                {showDetails ? "收起诊断详情" : "展开诊断详情"}({trace.length} 步)
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const text = trace.map(stepDetailLine).join("\n");
+                  void navigator.clipboard?.writeText(text).catch(() => {});
+                }}
+                className="ml-3 text-xs underline underline-offset-2 hover:text-rose-900"
+              >
+                复制
+              </button>
+              {showDetails && (
+                <pre
+                  data-testid="upload-trace-panel"
+                  className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap rounded border border-rose-200 bg-white/70 p-2 text-[11px] leading-relaxed text-neutral-700"
+                >
+                  {`trace: ${trace[0]?.traceId ?? "?"}\n`}
+                  {trace.map((s) => stepDetailLine(s)).join("\n")}
+                </pre>
+              )}
+            </div>
+          )}
         </div>
       )}
       {progress && (
@@ -392,18 +549,3 @@ export default function BulkCreateForm({
   );
 }
 
-async function putBytes(signedUrl: string, file: File): Promise<void> {
-  const res = await fetch(signedUrl, {
-    method: "PUT",
-    headers: {
-      "Content-Type": file.type || "model/gltf-binary",
-      "x-upsert": "true",
-      "cache-control": "max-age=31536000",
-    },
-    body: file,
-  });
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`upload failed (${res.status}): ${text || res.statusText}`);
-  }
-}
