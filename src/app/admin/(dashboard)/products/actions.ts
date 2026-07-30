@@ -24,6 +24,7 @@ import { applyAiImageKinds } from "@/lib/admin/spec-sheet-tagging";
 import { dispatchGlbCompression } from "@/lib/glb-compression-dispatch";
 import { dispatchSceneCover } from "@/lib/scene-cover-dispatch";
 import { hasQualifiedSceneCover } from "@/lib/scene-cover";
+import { UPLOAD_TRACE_SERVER_PREFIX } from "@/lib/upload-trace";
 import { sceneCoverageVerdict, readSceneCoveragePct } from "@/lib/scene-coverage";
 import { dispatchFbxBundle } from "@/lib/fbx-bundle-dispatch";
 import { validateFbxZipContainsFbx } from "@/lib/fbx-bundle";
@@ -2117,7 +2118,26 @@ export async function createProductFromUpload(
   fd: FormData,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   await requireAdmin();
+  // PB-A diagnostics — structured arrival log correlating with the browser's
+  // [upload-trace] via the client-generated __trace_id. No behavior change.
+  const traceId = (fd.get("__trace_id") as string) || null;
+  const traceLog = (result: string, extra?: Record<string, unknown>) =>
+    console.log(
+      UPLOAD_TRACE_SERVER_PREFIX,
+      JSON.stringify({
+        tag: "create",
+        traceId,
+        productId,
+        result,
+        glbKb: fd.get("glb_size_kb"),
+        fbxKb: fd.get("fbx_size_kb") ?? fd.get("fbx_bundle_size_kb"),
+        at: new Date().toISOString(),
+        ...extra,
+      }),
+    );
+  traceLog("arrive");
   if (!UUID_RE.test(productId)) {
+    traceLog("error", { error: "invalid productId" });
     return { ok: false, error: `invalid productId: ${productId}` };
   }
 
@@ -2224,6 +2244,7 @@ export async function createProductFromUpload(
   }
   after(() => processDraftAsync({ productId, images: [] }));
 
+  traceLog("ok");
   return { ok: true };
 }
 

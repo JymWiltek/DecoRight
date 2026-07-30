@@ -35,6 +35,7 @@
 
 import { after } from "next/server";
 import { requireAdmin } from "@/lib/auth/require-admin";
+import { UPLOAD_TRACE_SERVER_PREFIX } from "@/lib/upload-trace";
 import { createServiceRoleClient } from "@/lib/supabase/service";
 import {
   createSignedRawImageUploadUrl,
@@ -123,11 +124,27 @@ export async function getSignedUploadUrl(
   filename: string,
   /** MIME type from the File object. Only required for raw_image. */
   mime: string,
+  /** PB-A — client-generated trace id so this server log correlates with the
+   *  browser's [upload-trace] steps. Optional; other callers pass nothing. */
+  traceId?: string,
 ): Promise<
   | { ok: true; ticket: SignedUploadTicket }
   | { ok: false; error: string }
 > {
   await requireAdmin();
+  // PB-A diagnostics — structured arrival log (visible in Vercel Functions
+  // logs). No behavior change.
+  console.log(
+    UPLOAD_TRACE_SERVER_PREFIX,
+    JSON.stringify({
+      tag: "sign-arrive",
+      traceId: traceId ?? null,
+      kind,
+      productId,
+      file: filename,
+      at: new Date().toISOString(),
+    }),
+  );
 
   if (!productId || productId.length < 10) {
     return { ok: false, error: "invalid product id" };
