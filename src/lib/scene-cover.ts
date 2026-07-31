@@ -8,7 +8,9 @@ import {
 } from "@config/mounting-scene-rules";
 import {
   resolveScenePalettePool,
-  resolveScenePropRule,
+  resolveScenePropSpecs,
+  pickSceneProps,
+  type SelectedProp,
 } from "@config/scene-style-rules";
 import { createServiceRoleClient } from "@/lib/supabase/service";
 import { isSceneCoverUrl } from "@/lib/scene-cover-url";
@@ -169,10 +171,11 @@ export function scenePrompt(
     `The product must be genuinely INSTALLED in the scene — sitting/standing/mounted on the surface ` +
     `with correct perspective, natural contact shadows, and fully integrated lighting and reflections. ` +
     `It must NOT look pasted-on, floating, hovering, or tilted off the surface. ` +
-    `CRITICAL: keep the product 100% identical — same shape, colour, material, proportions and details; ` +
-    `do NOT redesign, recolour or restyle it. You may add tasteful ambient props (a plant, folded towels, ` +
-    `soap) and clearly-separate companion items, but never attach anything to the product or add anything ` +
-    `that could be mistaken as part of it. Photorealistic, the product is the hero, clean minimal composition.`
+    `CRITICAL: keep the product 100% identical — reproduce its shape and silhouette EXACTLY as in the ` +
+    `reference image; do NOT change its design, structure, proportions or styling; same colour, material and ` +
+    `every detail. Do NOT redesign, recolour or restyle it. You may add tasteful ambient props (a plant, ` +
+    `folded towels, soap) and clearly-separate companion items, but never attach anything to the product or ` +
+    `add anything that could be mistaken as part of it. Photorealistic, the product is the hero, clean minimal composition.`
   );
 }
 
@@ -186,12 +189,13 @@ export type ScenePromptResult =
    *  operator-facing skip message. */
   | { ok: false; reason: string };
 
-/** Pre-resolved SEA prop info for buildScenePromptForProduct. `guidance` is the
- *  config text; `referenceProductIds` are the catalog accessories found by the
- *  caller's DB lookup (empty ⇒ text-only, graceful degrade). */
+/** Pre-resolved prop selection for buildScenePromptForProduct — the OUTPUT of
+ *  pickSceneProps (probability + reference gating already applied by the
+ *  caller). Each selected prop is backed by a REAL catalog reference product
+ *  (iron law: no ref ⇒ the prop was already dropped, never text-only). May be
+ *  empty (a clean zero-prop scene is valid). */
 export type SceneProps = {
-  guidance: string;
-  referenceProductIds: string[];
+  props: SelectedProp[];
 };
 
 /**
@@ -255,17 +259,25 @@ export function buildScenePromptForProduct(
     product.name,
   );
 
-  // ④ SEA background props (appended after #28's三段). References that the
-  // catalog actually stocks were resolved by the caller; when empty the段
-  // degrades to text guidance only.
-  const referenceProductIds = sceneProps?.referenceProductIds ?? [];
-  const propsClause = sceneProps
-    ? `BACKGROUND PROPS (secondary): the scene should include ${sceneProps.guidance}. ` +
-      (referenceProductIds.length > 0
-        ? "Model the shape and style of these background accessories on the ATTACHED reference product photos — same type and family, no need to copy them exactly. "
-        : "") +
-      "These accessories are strictly SECONDARY and SMALL: the product is the hero and dominates the frame — the props must not overlap, cover, touch or upstage it."
-    : null;
+  // ④ Background props (appended after #28's三段). IRON LAW: the caller already
+  // dropped any prop with no real catalog reference AND rolled probability, so
+  // `props` is exactly what to draw (possibly EMPTY = clean scene, no clause).
+  // Every listed prop has a reference product image attached by the caller.
+  const selectedProps = sceneProps?.props ?? [];
+  const referenceProductIds = selectedProps.map((p) => p.referenceProductId);
+  const propsClause =
+    selectedProps.length > 0
+      ? `BACKGROUND PROPS (secondary): the scene may also include ${selectedProps
+          .map((p) => p.label)
+          .join("; ")}. Model each accessory on the ATTACHED reference product ` +
+        `photos — same type and family (these are real products we sell). Include ` +
+        `at MOST ONE of each accessory type — never two towel racks, two holders, etc. ` +
+        `These accessories are strictly SECONDARY and SMALL: the product is the hero ` +
+        `and dominates the frame — props must not overlap, cover, touch or upstage it. ` +
+        `EVERY item in the scene (the product AND every prop) must rest on a real ` +
+        `support surface — placed on a counter/floor or fixed to wall hardware — ` +
+        `nothing floats, hovers or is stuck to a blank wall.`
+      : null;
 
   const tone = classify(product.colors ?? [], product.name);
   const prompt = scenePrompt(
@@ -461,6 +473,58 @@ export async function hasQualifiedSceneCover(
 }
 
 /**
+ * PB — "does this image look like a spec sheet / document?" (single detector,
+ * same family + discipline as isWhiteBackgroundImage). PURE pixel heuristic,
+ * ZERO AI: a spec sheet is a light background densely covered by small dark
+ * text/lines → very HIGH edge density on a bright field. A product photo has far
+ * fewer, larger edges. CONSERVATIVE by design — only a clear document trips it;
+ * anything ambiguous returns false (leave it to the operator). On fetch/decode
+ * failure returns false (never mis-demote a real photo on a transient error).
+ */
+export async function isDocumentLikeImage(
+  url: string | null | undefined,
+): Promise<boolean> {
+  if (!url) return false;
+  try {
+    const buf = Buffer.from(await (await fetch(url)).arrayBuffer());
+    return await isDocumentLikeBuffer(buf);
+  } catch {
+    return false;
+  }
+}
+
+/** Pixel core for isDocumentLikeImage — grayscale edge-density on a bright field. */
+export async function isDocumentLikeBuffer(buf: Buffer): Promise<boolean> {
+  const N = 160;
+  const { data, info } = await sharp(buf, { failOn: "none" })
+    .flatten({ background: "#ffffff" })
+    .grayscale()
+    .resize(N, N, { fit: "fill" })
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+  const ch = info.channels;
+  const g = (x: number, y: number) => data[(y * N + x) * ch];
+  let sum = 0;
+  let edges = 0;
+  const total = N * N;
+  for (let y = 0; y < N; y++) {
+    for (let x = 0; x < N; x++) {
+      const v = g(x, y);
+      sum += v;
+      // horizontal + vertical neighbour gradient — a hard transition = an edge.
+      const rx = x + 1 < N ? g(x + 1, y) : v;
+      const by = y + 1 < N ? g(x, y + 1) : v;
+      if (Math.abs(v - rx) > 45 || Math.abs(v - by) > 45) edges++;
+    }
+  }
+  const brightness = sum / total; // 0..255
+  const edgeRatio = edges / total;
+  // Light field (paper) + very dense edges (text/lines). Thresholds tuned to be
+  // conservative — a photo of a product rarely exceeds ~0.10 edge ratio.
+  return brightness > 175 && edgeRatio > 0.18;
+}
+
+/**
  * Coverage QC (PB #33) — ask the cheapest vision tier (gpt-4o-mini) what % of
  * the frame the main product occupies. Returns 0–100. THROWS on API/parse
  * failure; the caller catches and records "unmeasured" (QC never blocks
@@ -606,16 +670,20 @@ export async function maybeGenerateSceneCover(
   // regenerate, so the stored image stays put.
   const seed = force ? `${productId}:${Date.now()}` : productId;
 
-  // SEA background props (config) + catalog references. The id lookup is one
-  // small query; the reference IMAGE bytes are fetched later, only for a
-  // product that actually generates.
-  const propRule = resolveScenePropRule(product.item_type);
-  const refProducts = propRule
-    ? await findSceneReferenceProducts(supabase, propRule.referenceItemTypes)
-    : [];
-  const sceneProps = propRule
-    ? { guidance: propRule.guidance, referenceProductIds: refProducts.map((r) => r.id) }
-    : null;
+  // Background props — IRON LAW resolution. Per prop type, look up REAL catalog
+  // references (white-bg products); pickSceneProps then keeps only props that
+  // (a) have a reference AND (b) win their seeded probability roll. No ref ⇒ the
+  // prop is dropped (no text-only fallback). Result may be empty (clean scene).
+  const specs = resolveScenePropSpecs(product.item_type);
+  const refUrlById = new Map<string, string>();
+  const refsByType: Record<string, string[]> = {};
+  for (const t of [...new Set(specs.map((s) => s.referenceItemType))]) {
+    const found = await findSceneReferenceProducts(supabase, [t]);
+    refsByType[t] = found.map((r) => r.id);
+    for (const r of found) refUrlById.set(r.id, r.url);
+  }
+  const selectedProps = pickSceneProps(specs, seed, refsByType);
+  const sceneProps: SceneProps = { props: selectedProps };
 
   // Prompt pre-flight — ONE entry (buildScenePromptForProduct) resolves
   // mounting + real size + item_type placement + props and assembles the
@@ -635,12 +703,15 @@ export async function maybeGenerateSceneCover(
   await setStatus("pending");
   try {
     const mountNote = promptResult.note;
-    // Fetch the reference accessory shots now (generatable product). A failed
-    // fetch is skipped — the props段 degrades to text-only, never fatal.
+    // Fetch the reference photos for the SELECTED props only (each has a real
+    // catalog reference product). A failed fetch just drops that one reference —
+    // never fatal.
     const fetched = await Promise.all(
-      refProducts.map(async (r) => {
+      selectedProps.map(async (p) => {
+        const url = refUrlById.get(p.referenceProductId);
+        if (!url) return null;
         try {
-          return Buffer.from(await (await fetch(r.url)).arrayBuffer());
+          return Buffer.from(await (await fetch(url)).arrayBuffer());
         } catch {
           return null;
         }

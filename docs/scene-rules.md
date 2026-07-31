@@ -36,7 +36,7 @@ INSTALLATION (mandatory): the product is recessed INTO the wall or into cabinetr
 
 INSTALLATION (mandatory): the product is fitted into the internal angle where TWO WALLS MEET, touching both wall faces, with empty space below it. It must not be placed on a table, counter, shelf or any other furniture.
 
-## ② Item_type 摆位规则(4 条)
+## ② Item_type 摆位规则(5 条)
 
 键 = `products.item_type` 的真实值。**无条目的类别不注入、不报错** —— 机制对所有类别就绪,规则内容按 Jym 的节奏逐类补,不预造。
 
@@ -57,6 +57,10 @@ BATHROOM CONTEXT (mandatory): mounted on the wall within arm's reach of a toilet
 ### `towel_shelf`
 
 BATHROOM CONTEXT (mandatory): mounted on the wall, about 1550 mm above the floor, and by default DRAPED with a folded towel. PREFERRED (not required): a wall near the shower area or beside the washbasin. FORBIDDEN: do NOT stand it on a countertop or on the floor; do NOT render a bedroom / hallway wooden-shelf look; do NOT pile it with clutter as if it were a general storage rack.
+
+### `faucet`
+
+PLACEMENT (mandatory): a faucet ONLY makes sense over a basin/sink that catches its water. There MUST be a wash basin or sink DIRECTLY BELOW the spout, with the spout about 250 mm above the basin rim. For a WALL-MOUNTED faucet the basin sits on a counter/vanity below the projecting spout; for a DECK-MOUNTED faucet the faucet rises from the counter or the basin's own rim with the bowl right below/behind it. Bathroom or kitchen context. FORBIDDEN: do NOT show the faucet on a bare wall with nothing beneath it; do NOT leave the area under the spout empty with no basin/sink; do NOT render it on the floor or as a decorative object with no water-catching fixture.
 
 ## ③ 背景色调池(材质 → 色调池,每次从池随机抽一个)
 
@@ -104,29 +108,38 @@ BATHROOM CONTEXT (mandatory): mounted on the wall, about 1550 mm above the floor
 - a sleek dark kitchen with charcoal cabinetry, a cooktop directly below and moody low-key lighting
 - a minimalist kitchen with white cabinets, a concrete counter, a cooktop directly below and clean cool daylight
 
-## ④ 东南亚背景道具层(item_type → 道具)
+## ④ 背景道具层(item_type → 道具,铁律版)
 
-卫生间场景注入真实东南亚配件指引;若库内有对应 `referenceItemTypes` 的已上传产品,取其白底图喂给模型作风格参照(所引用产品 id 会被记录,作未来「场景中的其他产品」链接的数据基础)。库内无对应配件 → 降级纯文字,不报错。道具永远是配角,不抢镜、不遮挡主产品。
+**铁律(反转 #29):「See it, buy it」—— 场景里出现买不到的道具比空墙更糟。** 每类道具只有在库内存在该类配件产品**且有白底图**时才注入,并喂其白底图作风格参照;**库内没有该配件 → 该道具完全移除(不再有纯文字降级)**。每类道具还按**概率独立抽签**(按产品 id 稳定,Regenerate 换种子换组合),同类最多一次,**允许抽出零道具的干净空场景**。通用约束:所有物品必须有真实支撑面接触(置台面/挂墙面五金),禁止悬空漂浮。
 
 ### `toilet`
 
-- 指引:wall-visible Southeast-Asian bathroom accessories — a bidet spray hose on the wall beside the toilet, a wall-mounted toilet-paper holder, and a towel rail/rack
-- 参照 item_types:`bathroom_equipments`
+- `spray`(概率 60%,参照 `bathroom_equipments`):a bidet spray hose mounted on the wall beside the toilet
+- `paper_holder`(概率 50%,参照 `bathroom_equipments`):a wall-mounted toilet-paper holder with a paper roll on it
+- `towel`(概率 30%,参照 `bathroom_equipments`):a towel rail or rack on the wall holding a folded towel
 
 ### `basin`
 
-- 指引:wall-visible Southeast-Asian bathroom accessories — a towel rail/rack and a small wall shelf
-- 参照 item_types:`bathroom_equipments`
+- `towel`(概率 30%,参照 `bathroom_equipments`):a towel rail or rack on the wall holding a folded towel
+- `shelf`(概率 30%,参照 `bathroom_equipments`):a small wall shelf beside the basin
 
 ### `bathroom_vanity`
 
-- 指引:a wall mirror mounted on the wall directly ABOVE the basin (mandatory — a vanity without a mirror looks wrong), and optionally a towel ring or a small glass shelf; keep them Southeast-Asian bathroom in style
-- 参照 item_types:`bathroom_equipments`
+- `mirror`(概率 90%,参照 `mirror`):a wall mirror mounted on the wall directly above the basin
+- `towel_ring`(概率 30%,参照 `bathroom_equipments`):a towel ring on the wall with a hand towel
 
 ### `vanity`
 
-- 指引:a wall mirror mounted on the wall directly ABOVE the basin (mandatory — a vanity without a mirror looks wrong), and optionally a towel ring or a small glass shelf; keep them Southeast-Asian bathroom in style
-- 参照 item_types:`bathroom_equipments`
+- `mirror`(概率 90%,参照 `mirror`):a wall mirror mounted on the wall directly above the basin
+- `towel_ring`(概率 30%,参照 `bathroom_equipments`):a towel ring on the wall with a hand towel
+
+### `faucet`
+
+- `basin`(概率 100%,参照 `basin`):a wash basin or sink sitting directly below the faucet spout to catch its water
+
+### 流程裁定:异形/非常规几何产品
+
+安全扶手等异形/非常规几何产品的 AI 场景图**不强求** —— AI 常画歪。**实拍场景图优先**(#32 起实拍场景照与 AI 场景图同权过发布闸,人工上传一张真实场景照即可)。
 
 ## Subtype → mounting 兜底映射(7 条)
 
