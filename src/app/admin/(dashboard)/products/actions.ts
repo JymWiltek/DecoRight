@@ -23,7 +23,7 @@ import {
 import { applyAiImageKinds } from "@/lib/admin/spec-sheet-tagging";
 import { dispatchGlbCompression } from "@/lib/glb-compression-dispatch";
 import { dispatchSceneCover } from "@/lib/scene-cover-dispatch";
-import { hasQualifiedSceneCover } from "@/lib/scene-cover";
+import { hasQualifiedSceneCover, isDocumentLikeImage } from "@/lib/scene-cover";
 import { UPLOAD_TRACE_SERVER_PREFIX } from "@/lib/upload-trace";
 import { sceneCoverageVerdict, readSceneCoveragePct } from "@/lib/scene-coverage";
 import { dispatchFbxBundle } from "@/lib/fbx-bundle-dispatch";
@@ -382,11 +382,13 @@ async function attachStagedRawImages(
   // unified PNG ("如果有 unified → 显示 unified").
   let newPrimaryThumbUrl: string | null = null;
 
-  const ids: string[] = [];
+  // Pass 1 — copy each raw → public, and pixel-detect spec sheets (PB, zero AI).
+  // A spec sheet must NOT become Primary and must NOT show on the storefront
+  // (it's AI-read material, not a product photo); Primary goes to the first
+  // NON-document image. Uncertain images are treated as normal (conservative).
+  const staged: { imageId: string; ext: string; publicUrl: string; isDoc: boolean }[] = [];
   for (const e of entries) {
     const rawPath = `${productId}/${e.imageId}.${e.ext}`;
-    // Copy raw → public cutouts bucket so the card/thumbnail resolve
-    // to a public CDN URL (a private raw path wouldn't render).
     let publicUrl: string;
     try {
       publicUrl = await copyRawToCutouts(rawPath, productId, e.imageId);
@@ -394,6 +396,24 @@ async function attachStagedRawImages(
       const msg = err instanceof Error ? err.message : String(err);
       return { ok: false, error: `copy ${e.imageId}: ${msg}` };
     }
+    staged.push({
+      imageId: e.imageId,
+      ext: e.ext,
+      publicUrl,
+      isDoc: await isDocumentLikeImage(publicUrl),
+    });
+  }
+
+  // Pick Primary: first NON-document image (only when the product has none yet —
+  // never overrides a Primary the operator already set). If EVERY upload is a
+  // document (rare), fall back to the first so the product still gets a cover.
+  const primaryId = primaryAssigned
+    ? null
+    : ((staged.find((s) => !s.isDoc) ?? staged[0])?.imageId ?? null);
+
+  const ids: string[] = [];
+  for (const s of staged) {
+    const rawPath = `${productId}/${s.imageId}.${s.ext}`;
     const row: {
       id: string;
       product_id: string;
@@ -403,25 +423,29 @@ async function attachStagedRawImages(
       image_kind: "cutout";
       skip_cutout: true;
       is_primary?: boolean;
+      show_on_storefront?: boolean;
     } = {
-      id: e.imageId,
+      id: s.imageId,
       product_id: productId,
       state: "cutout_approved",
       raw_image_url: rawPath,
-      cutout_image_url: publicUrl,
+      cutout_image_url: s.publicUrl,
       image_kind: "cutout",
       skip_cutout: true,
     };
-    if (!primaryAssigned) {
+    // Spec sheet: keep feed_to_ai (default true — it IS the AI's raw material),
+    // but hide from the storefront.
+    if (s.isDoc) row.show_on_storefront = false;
+    if (s.imageId === primaryId) {
       row.is_primary = true;
       primaryAssigned = true;
-      newPrimaryThumbUrl = publicUrl;
+      newPrimaryThumbUrl = s.publicUrl;
     }
     const { error } = await supabase
       .from("product_images")
       .upsert(row, { onConflict: "id" });
     if (error) return { ok: false, error: error.message };
-    ids.push(e.imageId);
+    ids.push(s.imageId);
   }
 
   // Point the card at the raw copy if one of these uploads just became

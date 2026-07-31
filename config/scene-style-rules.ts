@@ -86,41 +86,100 @@ export function resolveScenePalettePool(
   return SCENE_PALETTE_POOLS[tone] ?? SCENE_PALETTE_POOLS.warm;
 }
 
-/** Background-prop layer, by item_type. `guidance` is the text always injected;
- *  `referenceItemTypes` are the catalog item_types whose real products we feed
- *  as a style reference when we have them. Jym-editable. */
-export type ScenePropRule = {
-  guidance: string;
-  /** Catalog item_types to pull real accessory products from as references. */
-  referenceItemTypes: string[];
+/**
+ * Background-prop layer, by item_type. IRON LAW (Jym, PB — reversal of #29):
+ * "See it, buy it" — a prop the customer can't actually buy is WORSE than an
+ * empty wall. So each prop is injected ONLY when the catalog has a real
+ * accessory of `referenceItemType` WITH a white-bg photo to feed as a style
+ * reference. No reference ⇒ the prop is dropped entirely. There is NO text-only
+ * fallback (the old "just draw a towel rack" path is deleted — that produced the
+ * invented, unbuyable props).
+ *
+ * Each prop is ALSO rolled independently by `probability` (seeded per product),
+ * so scenes vary: some props, some none, never a full-house every time, and
+ * never two of the same type. A zero-prop clean scene is a valid outcome.
+ */
+export type ScenePropSpec = {
+  /** stable key — dedup + seed salt so the roll is reproducible per product. */
+  key: string;
+  /** prompt phrase for this single prop. */
+  label: string;
+  /** independent chance (0..1) this prop appears. Jym-editable. */
+  probability: number;
+  /** catalog item_type that must have a white-bg product for this prop to be
+   *  drawn (and whose photo is fed as the reference). */
+  referenceItemType: string;
 };
 
-export const SCENE_PROP_RULES: Record<string, ScenePropRule> = {
-  toilet: {
-    guidance:
-      "wall-visible Southeast-Asian bathroom accessories — a bidet spray hose on the wall beside the toilet, a wall-mounted toilet-paper holder, and a towel rail/rack",
-    referenceItemTypes: ["bathroom_equipments"],
-  },
-  basin: {
-    guidance:
-      "wall-visible Southeast-Asian bathroom accessories — a towel rail/rack and a small wall shelf",
-    referenceItemTypes: ["bathroom_equipments"],
-  },
-  // Jym: a vanity scene without a mirror reads wrong. Mirror is a MANDATORY
-  // prop (on the wall directly above the basin); towel ring / glass shelf are
-  // optional. Keyed for BOTH item_type values the catalog uses for vanities
-  // (bathroom_vanity=18, vanity=2 — verified by grep).
-  bathroom_vanity: {
-    guidance:
-      "a wall mirror mounted on the wall directly ABOVE the basin (mandatory — a vanity without a mirror looks wrong), and optionally a towel ring or a small glass shelf; keep them Southeast-Asian bathroom in style",
-    referenceItemTypes: ["bathroom_equipments"],
-  },
-  vanity: {
-    guidance:
-      "a wall mirror mounted on the wall directly ABOVE the basin (mandatory — a vanity without a mirror looks wrong), and optionally a towel ring or a small glass shelf; keep them Southeast-Asian bathroom in style",
-    referenceItemTypes: ["bathroom_equipments"],
-  },
+export const SCENE_PROP_RULES: Record<string, ScenePropSpec[]> = {
+  toilet: [
+    { key: "spray", label: "a bidet spray hose mounted on the wall beside the toilet", probability: 0.6, referenceItemType: "bathroom_equipments" },
+    { key: "paper_holder", label: "a wall-mounted toilet-paper holder with a paper roll on it", probability: 0.5, referenceItemType: "bathroom_equipments" },
+    { key: "towel", label: "a towel rail or rack on the wall holding a folded towel", probability: 0.3, referenceItemType: "bathroom_equipments" },
+  ],
+  basin: [
+    { key: "towel", label: "a towel rail or rack on the wall holding a folded towel", probability: 0.3, referenceItemType: "bathroom_equipments" },
+    { key: "shelf", label: "a small wall shelf beside the basin", probability: 0.3, referenceItemType: "bathroom_equipments" },
+  ],
+  // vanity keeps a mirror — but under the SAME iron law: it appears only when a
+  // real mirror product (item_type 'mirror') has a white-bg photo. No mirror
+  // product ⇒ no invented mirror. Keyed for both vanity item_type values.
+  bathroom_vanity: [
+    { key: "mirror", label: "a wall mirror mounted on the wall directly above the basin", probability: 0.9, referenceItemType: "mirror" },
+    { key: "towel_ring", label: "a towel ring on the wall with a hand towel", probability: 0.3, referenceItemType: "bathroom_equipments" },
+  ],
+  vanity: [
+    { key: "mirror", label: "a wall mirror mounted on the wall directly above the basin", probability: 0.9, referenceItemType: "mirror" },
+    { key: "towel_ring", label: "a towel ring on the wall with a hand towel", probability: 0.3, referenceItemType: "bathroom_equipments" },
+  ],
+  // faucet (PB): the water-catching basin below the spout is a "prop" so it's
+  // referenced from a REAL basin product when one exists. Always attempted
+  // (prob 1) — a faucet scene without a basin is exactly the空墙 bug.
+  faucet: [
+    { key: "basin", label: "a wash basin or sink sitting directly below the faucet spout to catch its water", probability: 1.0, referenceItemType: "basin" },
+  ],
 };
+
+/** Deterministic [0,1) from a string — for seeded, reproducible prop rolls. */
+function hashUnit(s: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return ((h >>> 0) % 100000) / 100000;
+}
+
+export type SelectedProp = { key: string; label: string; referenceProductId: string };
+
+/**
+ * THE single prop resolver (pure — dry-run testable). For each spec: roll the
+ * seeded probability AND require a real reference (`refsByType[referenceItemType]`
+ * non-empty) — either fails ⇒ the prop is dropped (iron law: no ref, no prop;
+ * no text-only fallback). Selected props each get a reference product id
+ * (rotated by seed). Result may be EMPTY (a clean, zero-prop scene is valid).
+ */
+export function pickSceneProps(
+  specs: ScenePropSpec[],
+  seed: string,
+  refsByType: Record<string, string[]>,
+): SelectedProp[] {
+  const out: SelectedProp[] = [];
+  const usedKeys = new Set<string>();
+  for (const spec of specs) {
+    if (usedKeys.has(spec.key)) continue; // never two of the same type
+    const refs = refsByType[spec.referenceItemType] ?? [];
+    if (refs.length === 0) continue; // NO reference ⇒ drop the prop
+    if (hashUnit(`${seed}:${spec.key}`) >= spec.probability) continue; // roll
+    usedKeys.add(spec.key);
+    out.push({
+      key: spec.key,
+      label: spec.label,
+      referenceProductId: refs[Math.floor(hashUnit(`${seed}:ref:${spec.key}`) * refs.length)],
+    });
+  }
+  return out;
+}
 
 /**
  * Scene-coverage QC range (PB #33). After a scene image is generated we ask a
@@ -131,10 +190,10 @@ export const SCENE_PROP_RULES: Record<string, ScenePropRule> = {
  */
 export const SCENE_COVERAGE_RANGE = { min: 30, max: 60 } as const;
 
-/** Single reader for the prop layer. null when this item_type has no rule. */
-export function resolveScenePropRule(
+/** Single reader for the prop layer. [] when this item_type has no prop specs. */
+export function resolveScenePropSpecs(
   itemType: string | null | undefined,
-): ScenePropRule | null {
+): ScenePropSpec[] {
   const t = (itemType ?? "").trim();
-  return (t && SCENE_PROP_RULES[t]) || null;
+  return (t && SCENE_PROP_RULES[t]) || [];
 }

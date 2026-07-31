@@ -97,21 +97,33 @@ L.push("");
 for (const s of KITCHEN_SCENES) L.push(`- ${s}`);
 L.push("");
 
-L.push(`## ④ 东南亚背景道具层(item_type → 道具)`);
+L.push(`## ④ 背景道具层(item_type → 道具,铁律版)`);
 L.push("");
 L.push(
-  "卫生间场景注入真实东南亚配件指引;若库内有对应 `referenceItemTypes` 的已上传产品," +
-    "取其白底图喂给模型作风格参照(所引用产品 id 会被记录,作未来「场景中的其他产品」链接的数据基础)。" +
-    "库内无对应配件 → 降级纯文字,不报错。道具永远是配角,不抢镜、不遮挡主产品。",
+  "**铁律(反转 #29):「See it, buy it」—— 场景里出现买不到的道具比空墙更糟。** " +
+    "每类道具只有在库内存在该类配件产品**且有白底图**时才注入,并喂其白底图作风格参照;" +
+    "**库内没有该配件 → 该道具完全移除(不再有纯文字降级)**。每类道具还按**概率独立抽签**" +
+    "(按产品 id 稳定,Regenerate 换种子换组合),同类最多一次,**允许抽出零道具的干净空场景**。" +
+    "通用约束:所有物品必须有真实支撑面接触(置台面/挂墙面五金),禁止悬空漂浮。",
 );
 L.push("");
-for (const [it, rule] of Object.entries(SCENE_PROP_RULES)) {
+for (const [it, specs] of Object.entries(SCENE_PROP_RULES)) {
   L.push(`### \`${it}\``);
   L.push("");
-  L.push(`- 指引:${rule.guidance}`);
-  L.push(`- 参照 item_types:${rule.referenceItemTypes.map((t) => `\`${t}\``).join(", ")}`);
+  for (const s of specs) {
+    L.push(
+      `- \`${s.key}\`(概率 ${Math.round(s.probability * 100)}%,参照 \`${s.referenceItemType}\`):${s.label}`,
+    );
+  }
   L.push("");
 }
+L.push("### 流程裁定:异形/非常规几何产品");
+L.push("");
+L.push(
+  "安全扶手等异形/非常规几何产品的 AI 场景图**不强求** —— AI 常画歪。**实拍场景图优先**" +
+    "(#32 起实拍场景照与 AI 场景图同权过发布闸,人工上传一张真实场景照即可)。",
+);
+L.push("");
 
 L.push(
   `## Subtype → mounting 兜底映射(${Object.keys(SUBTYPE_IMPLIES_MOUNTING).length} 条)`,

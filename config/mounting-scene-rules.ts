@@ -99,6 +99,7 @@ export const MOUNTING_HEIGHT_MM = {
   urinal: 600,
   paper_holder: 700, // Jym's 650–750 mm range, mid-point
   towel_shelf: 1550, // Jym's 1500–1600 mm range, mid-point
+  faucet_above_basin_mm: 250, // spout above basin rim (Jym's 200–300 range)
 } as const;
 
 export const ITEM_TYPE_SCENE_RULES: Record<string, string> = {
@@ -150,6 +151,24 @@ export const ITEM_TYPE_SCENE_RULES: Record<string, string> = {
     "FORBIDDEN: do NOT stand it on a countertop or on the floor; do NOT render a " +
     "bedroom / hallway wooden-shelf look; do NOT pile it with clutter as if it " +
     "were a general storage rack.",
+
+  // faucet is a real item_type (32 products — grep). ONE rule covers both
+  // wall-mounted and deck-mounted (the MOUNTING layer already sets body support:
+  // wall-mounted = fixed to wall / deck-mounted = through the deck). What the
+  // item_type rule adds is the water-catching basin — the #3 bug was a
+  // wall-mounted faucet on a bare wall with nothing beneath it. A real basin is
+  // also fed as a reference prop (see faucet in SCENE_PROP_RULES).
+  faucet:
+    "PLACEMENT (mandatory): a faucet ONLY makes sense over a basin/sink that " +
+    "catches its water. There MUST be a wash basin or sink DIRECTLY BELOW the " +
+    `spout, with the spout about ${MOUNTING_HEIGHT_MM.faucet_above_basin_mm} mm ` +
+    "above the basin rim. For a WALL-MOUNTED faucet the basin sits on a counter/" +
+    "vanity below the projecting spout; for a DECK-MOUNTED faucet the faucet " +
+    "rises from the counter or the basin's own rim with the bowl right below/" +
+    "behind it. Bathroom or kitchen context. " +
+    "FORBIDDEN: do NOT show the faucet on a bare wall with nothing beneath it; do " +
+    "NOT leave the area under the spout empty with no basin/sink; do NOT render " +
+    "it on the floor or as a decorative object with no water-catching fixture.",
 };
 
 /**
