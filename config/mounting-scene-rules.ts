@@ -152,23 +152,59 @@ export const ITEM_TYPE_SCENE_RULES: Record<string, string> = {
     "bedroom / hallway wooden-shelf look; do NOT pile it with clutter as if it " +
     "were a general storage rack.",
 
-  // faucet is a real item_type (32 products — grep). ONE rule covers both
-  // wall-mounted and deck-mounted (the MOUNTING layer already sets body support:
-  // wall-mounted = fixed to wall / deck-mounted = through the deck). What the
-  // item_type rule adds is the water-catching basin — the #3 bug was a
-  // wall-mounted faucet on a bare wall with nothing beneath it. A real basin is
-  // also fed as a reference prop (see faucet in SCENE_PROP_RULES).
-  faucet:
-    "PLACEMENT (mandatory): a faucet ONLY makes sense over a basin/sink that " +
-    "catches its water. There MUST be a wash basin or sink DIRECTLY BELOW the " +
-    `spout, with the spout about ${MOUNTING_HEIGHT_MM.faucet_above_basin_mm} mm ` +
-    "above the basin rim. For a WALL-MOUNTED faucet the basin sits on a counter/" +
-    "vanity below the projecting spout; for a DECK-MOUNTED faucet the faucet " +
-    "rises from the counter or the basin's own rim with the bowl right below/" +
-    "behind it. Bathroom or kitchen context. " +
-    "FORBIDDEN: do NOT show the faucet on a bare wall with nothing beneath it; do " +
-    "NOT leave the area under the spout empty with no basin/sink; do NOT render " +
-    "it on the floor or as a decorative object with no water-catching fixture.",
+  // faucet is NOT in this map — its rule is UNCONDITIONAL + kitchen/bathroom
+  // split, resolved via FAUCET_RULES + faucetKind() (see below and
+  // resolveItemTypeSceneRule). A faucet with no/unknown mounting still gets the
+  // basin iron law (the mounting resolver isn't consulted for the basin rule).
+};
+
+/**
+ * faucet basin/sink IRON LAW + kitchen/bathroom split (PB — after #37 still let
+ * a deck faucet render with no basin). A faucet NEVER has a "no basin needed"
+ * scene: the water-catching fixture below the spout is UNCONDITIONAL. Two
+ * variants differ only in WHAT catches the water + the room:
+ *   kitchen faucet → a stainless-steel kitchen SINK, kitchen counter context
+ *   basin faucet (default) → a ceramic BASIN, bathroom context
+ * The split is by NAME (precise tokens, #33 discipline — no fuzzy guessing).
+ */
+export const FAUCET_KITCHEN_TOKENS = [
+  "kitchen",
+  "sink",
+  "pull-out",
+  "pull out",
+  "pullout",
+  "厨房",
+] as const;
+
+/** kitchen vs basin faucet, by name. Default = basin (bathroom). */
+export function faucetKind(name: string | null | undefined): "kitchen" | "basin" {
+  const n = (name ?? "").toLowerCase();
+  return FAUCET_KITCHEN_TOKENS.some((t) => n.includes(t)) ? "kitchen" : "basin";
+}
+
+const FAUCET_IRON_LAW =
+  "PLACEMENT (mandatory, IRON LAW — no exceptions): a faucet ALWAYS pours into a " +
+  "fixture that catches the water. There MUST be one DIRECTLY BELOW the spout, " +
+  `with the spout about ${MOUNTING_HEIGHT_MM.faucet_above_basin_mm} mm above its ` +
+  "rim. When mounting is known this stacks with the mounting rule (wall-mounted = " +
+  "basin on a counter below the projecting spout; deck-mounted = faucet rising " +
+  "from the counter or the fixture's own rim). " +
+  "FORBIDDEN under ALL circumstances: do NOT place the faucet on a bare wall, an " +
+  "empty counter, the floor, or as a standalone decorative object; the area " +
+  "directly under the spout must NEVER be empty — a catching fixture is always present.";
+
+export const FAUCET_RULES: Record<"kitchen" | "basin", string> = {
+  kitchen:
+    FAUCET_IRON_LAW +
+    " CATCHING FIXTURE (mandatory): a STAINLESS-STEEL KITCHEN SINK (single or " +
+    "double bowl) set into a kitchen countertop. KITCHEN context — kitchen " +
+    "cabinetry/counter, not a bathroom. FORBIDDEN: do NOT use a ceramic bathroom " +
+    "basin or a bathroom setting for a kitchen faucet.",
+  basin:
+    FAUCET_IRON_LAW +
+    " CATCHING FIXTURE (mandatory): a CERAMIC WASH BASIN on a vanity/counter. " +
+    "BATHROOM context. FORBIDDEN: do NOT use a stainless-steel kitchen sink or a " +
+    "kitchen setting for a basin faucet.",
 };
 
 /**
@@ -198,6 +234,8 @@ export function resolveItemTypeSceneRule(
   name?: string | null | undefined,
 ): string | null {
   const t = (itemType ?? "").trim();
+  // faucet: UNCONDITIONAL basin iron law, kitchen/bathroom split by name.
+  if (t === "faucet") return FAUCET_RULES[faucetKind(name)];
   if (t && ITEM_TYPE_SCENE_RULES[t]) return ITEM_TYPE_SCENE_RULES[t];
   const n = (name ?? "").trim();
   if (n) {

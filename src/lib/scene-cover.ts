@@ -5,6 +5,7 @@ import {
   resolveMountingRule,
   resolveItemTypeSceneRule,
   resolveSizeTierPhrasing,
+  faucetKind,
 } from "@config/mounting-scene-rules";
 import {
   resolveScenePalettePool,
@@ -229,7 +230,12 @@ export function buildScenePromptForProduct(
           | undefined)
       : null;
   const mount = resolveMountingRule(mountingValue, product.subtype_slug);
-  if (mount.kind === "unknown") {
+  // faucet exception (PB): the basin/sink iron law makes a faucet scene sensible
+  // WITHOUT a mounting value, so an unknown-mounting faucet is NOT blocked —
+  // the item_type rule below (FAUCET_RULES) supplies the placement. Every other
+  // item_type still blocks on unknown mounting (that safety is unchanged).
+  const isFaucet = (product.item_type ?? "").trim() === "faucet";
+  if (mount.kind === "unknown" && !isFaucet) {
     return {
       ok: false,
       reason:
@@ -685,12 +691,38 @@ export async function maybeGenerateSceneCover(
   const selectedProps = pickSceneProps(specs, seed, refsByType);
   const sceneProps: SceneProps = { props: selectedProps };
 
+  // faucet basin/sink reference (PB): the catching fixture is a MANDATORY support
+  // written into the faucet item_type rule text (drawn even with no reference —
+  // the "no ref ⇒ no prop" iron law does NOT apply). If the catalog HAS a real
+  // matching fixture (kitchen → sink / basin → basin), feed its photo as a style
+  // reference and record it. Separate from pickSceneProps (untouched).
+  let faucetRefId: string | null = null;
+  if ((product.item_type ?? "").trim() === "faucet") {
+    const refType = faucetKind(product.name) === "kitchen" ? "sink" : "basin";
+    const found = await findSceneReferenceProducts(supabase, [refType]);
+    if (found.length > 0) {
+      faucetRefId = found[0].id;
+      refUrlById.set(found[0].id, found[0].url);
+    }
+  }
+
   // Prompt pre-flight — ONE entry (buildScenePromptForProduct) resolves
   // mounting + real size + item_type placement + props and assembles the
   // prompt, OR blocks. Runs BEFORE the source image is fetched, so a product
   // missing mounting/dimensions is rejected cheaply and can never guess.
   const promptResult = buildScenePromptForProduct(product, seed, sceneProps);
   if (!promptResult.ok) return skip(promptResult.reason);
+
+  // Only tell the model to "model on the ATTACHED reference" when one is really
+  // attached; append it for the faucet fixture reference.
+  const finalPrompt = faucetRefId
+    ? promptResult.prompt +
+      " The wash basin/sink below the faucet — model it on the ATTACHED reference product photo (a real fixture we sell)."
+    : promptResult.prompt;
+  const allRefIds = [
+    ...promptResult.referenceProductIds,
+    ...(faucetRefId ? [faucetRefId] : []),
+  ];
 
   const srcUrl =
     rows.find((r) => r.is_primary && r.cutout_image_url)?.cutout_image_url ??
@@ -703,12 +735,11 @@ export async function maybeGenerateSceneCover(
   await setStatus("pending");
   try {
     const mountNote = promptResult.note;
-    // Fetch the reference photos for the SELECTED props only (each has a real
-    // catalog reference product). A failed fetch just drops that one reference —
-    // never fatal.
+    // Fetch the reference photos for the selected props AND the faucet fixture.
+    // A failed fetch just drops that one reference — never fatal.
     const fetched = await Promise.all(
-      selectedProps.map(async (p) => {
-        const url = refUrlById.get(p.referenceProductId);
+      allRefIds.map(async (id) => {
+        const url = refUrlById.get(id);
         if (!url) return null;
         try {
           return Buffer.from(await (await fetch(url)).arrayBuffer());
@@ -720,7 +751,7 @@ export async function maybeGenerateSceneCover(
     const referenceImages = fetched.filter((b) => b != null) as Buffer[];
     const cover = await buildSceneCoverPng(
       srcBytes,
-      promptResult.prompt,
+      finalPrompt,
       referenceImages,
     );
 
@@ -764,8 +795,8 @@ export async function maybeGenerateSceneCover(
       ...(product.attributes ?? {}),
       scene_coverage_pct: coveragePct,
     };
-    if (promptResult.referenceProductIds.length > 0) {
-      nextAttributes.scene_reference_product_ids = promptResult.referenceProductIds;
+    if (allRefIds.length > 0) {
+      nextAttributes.scene_reference_product_ids = allRefIds;
     }
     const { error: aErr } = await supabase
       .from("products")
