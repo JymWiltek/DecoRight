@@ -38,7 +38,7 @@ const GLB_ACCEPT = ".glb,model/gltf-binary,application/octet-stream";
 // .zip (model.fbx + textures/), same as the single-product edit page.
 const FBX_ACCEPT = ".fbx,.zip,application/octet-stream,application/zip";
 const PHOTO_MAX_MB = 8;
-const GLB_MAX_MB = 60;
+const GLB_MAX_MB = 300;
 // Wave 9 — FBX original for paid designer downloads. 100MB cap is
 // the same Wave 9 admin edit page uses; the models bucket was bumped
 // to 120MB in mig 0042 so this fits with headroom.
@@ -1085,10 +1085,11 @@ export default function ProductDraftCard({
           Recommended Tripo/Meshy settings + Wave 9 explanation. */}
       <div className="mb-2 rounded bg-neutral-50 px-2 py-1.5 text-[10px] leading-tight text-neutral-600">
         <strong className="text-neutral-700">Recommended Tripo/Meshy:</strong>{" "}
-        HD Texture ON, PBR OFF, Polycount 300K-500K. The .glb is
-        auto-compressed to AR-ready ~3 MB on Save; the .fbx is preserved
-        bit-exact for paid designer downloads. Fill real dimensions so
-        the storefront AR shows true size.
+        HD Texture ON, PBR OFF, Polycount 300K-500K. Large .glb files
+        (up to 300 MB) are auto-compressed to an AR-standard ~3 MB file
+        on Save; the .fbx is preserved bit-exact for paid designer
+        downloads. Fill real dimensions so the storefront AR shows true
+        size.
       </div>
 
       {/* GLB */}

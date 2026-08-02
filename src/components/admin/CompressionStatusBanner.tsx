@@ -153,19 +153,28 @@ export default function CompressionStatusBanner({ productId, initial }: Props) {
       snap.compressedSizeKb != null && snap.originalSizeKb
         ? Math.round(100 - (snap.compressedSizeKb / snap.originalSizeKb) * 100)
         : null;
+    // Explicit before → after so the operator can SEE the system worked:
+    // "62.0 MB → 2.8 MB · −92%". Falls back gracefully if either size is
+    // missing (older rows written before both columns were populated).
+    const compressedLabel =
+      snap.compressedSizeKb != null
+        ? `${(snap.compressedSizeKb / 1024).toFixed(1)} MB`
+        : "ready";
+    const beforeAfter =
+      snap.originalSizeKb != null && snap.compressedSizeKb != null
+        ? `${(snap.originalSizeKb / 1024).toFixed(1)} MB → ${compressedLabel}`
+        : compressedLabel;
     return (
       <Banner tone="green">
         <CheckIcon />
         <div className="flex-1">
           <div className="font-semibold">
-            ✓ Compressed:{" "}
-            {snap.compressedSizeKb != null
-              ? `${(snap.compressedSizeKb / 1024).toFixed(2)} MB`
-              : "ready"}
+            ✓ Compressed: {beforeAfter}
             {ratioPct != null ? ` · −${ratioPct}%` : ""}
           </div>
           <div className="text-xs opacity-80">
-            Storefront AR uses this file. Original .glb is preserved.
+            Storefront AR uses this file. Original .glb is preserved for
+            paid designer downloads.
           </div>
         </div>
       </Banner>
@@ -191,7 +200,9 @@ export default function CompressionStatusBanner({ productId, initial }: Props) {
             {isRetrying ? "Retrying…" : "Retry"}
           </button>
           <span className="text-[10px] opacity-60">
-            Storefront falls back to the original .glb while this is failing.
+            While this is failing the storefront shows the product photo,
+            NOT a 3D model — the raw original is never served. Fix the
+            model (lower polycount) and Retry.
           </span>
         </div>
         {retryError && (

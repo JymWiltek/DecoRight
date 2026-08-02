@@ -396,8 +396,9 @@ export default function FileDropzone({
             </div>
             {kind === "glb" && (
               <div className="mt-1 text-xs text-neutral-400">
-                Wave 9 auto-compresses to AR-ready ~3 MB on Save. No
-                pre-upload compression needed.
+                Large files (up to 300 MB) are auto-compressed to an
+                AR-standard ~3 MB file on Save. No pre-upload compression
+                needed.
               </div>
             )}
           </>
