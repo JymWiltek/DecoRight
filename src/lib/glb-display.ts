@@ -92,6 +92,12 @@ export function glbUrlForGallery(p: GlbBudgetFields): string | null {
   if (p.glb_compressed_url && p.compression_status === "done") {
     return p.glb_compressed_url;
   }
+  // Compression FAILED or was REJECTED by the 15 MB exit gate: never
+  // serve the raw high-quality original (now up to 300 MB) to consumers.
+  // The gallery shows its styled-thumbnail fallback instead. (原文件不
+  // 入消费者侧.) Only an explicit 'failed' is blocked — legacy products
+  // (status NULL, no Wave 9 compression) still render their glb_url below.
+  if (p.compression_status === "failed") return null;
   if (!p.glb_url) return null;
   // NULL metadata = legacy product. Render. Don't penalize old uploads.
   if (

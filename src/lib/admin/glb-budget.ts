@@ -39,6 +39,20 @@ export const MAX_DECODED_VERTICES = 500_000;
 export const MAX_TEXTURE_DIMENSION = 2048;
 export const MAX_DECODED_RAM_MB = 120;
 
+/**
+ * EXIT gate (Jym-tunable). After the server-side Draco + webp + 2K-texture
+ * pass, the produced AR .glb must be at or under this many MB — otherwise
+ * it is REJECTED (compression_status='failed', never uploaded, never
+ * served to the storefront). A compressed output still this large means
+ * geometry / texture the safe pipeline can't tame (Draco doesn't reduce
+ * vertex COUNT and we deliberately never simplify — that breaks Tripo/Meshy
+ * topology), so the operator must fix the model upstream (lower polycount)
+ * rather than ship a too-heavy 4G asset. This is the new home of the
+ * consumer-load red line: we widened the ENTRY gate to 300 MB and moved
+ * the guard here, to the OUTPUT. Enforced in lib/glb-compression.
+ */
+export const MAX_COMPRESSED_OUTPUT_MB = 15;
+
 /** Decoded-budget facts persisted to products columns and read by
  *  the storefront SSR gate. The `exceeded` flags are still computed
  *  (legacy products without Wave 9 compression metadata use them in

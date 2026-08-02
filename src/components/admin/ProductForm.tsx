@@ -511,11 +511,11 @@ export default function ProductForm({
           title="3D models"
           hint="Three separate slots — each optional. Box 1 = the web/AR model (auto-compressed). Box 2 = the editable original for paid designer downloads. Box 3 = loose texture maps, ONLY needed when Box 2 is a bare .fbx. Recommended Tripo/Meshy: HD Texture ON, PBR OFF, Polycount 300K-500K. Set real dimensions in Price & dimensions so AR shows true size."
         >
-          <Field label="Box 1 · .glb — the web + AR model (auto-compressed to ~3 MB on Save)">
+          <Field label="Box 1 · .glb — the web + AR model (large files up to 300 MB are auto-compressed to an AR-standard ~3 MB file on Save)">
             <FileDropzone
               kind="glb"
               accept=".glb,model/gltf-binary"
-              maxFileMb={60}
+              maxFileMb={300}
               productId={p?.id ?? null}
               currentUrl={p?.glb_url ?? null}
               currentMeta={p?.glb_size_kb != null ? `${p.glb_size_kb} KB` : null}
