@@ -36,7 +36,7 @@ INSTALLATION (mandatory): the product is recessed INTO the wall or into cabinetr
 
 INSTALLATION (mandatory): the product is fitted into the internal angle where TWO WALLS MEET, touching both wall faces, with empty space below it. It must not be placed on a table, counter, shelf or any other furniture.
 
-## ② Item_type 摆位规则(5 条)
+## ② Item_type 摆位规则(4 条)
 
 键 = `products.item_type` 的真实值。**无条目的类别不注入、不报错** —— 机制对所有类别就绪,规则内容按 Jym 的节奏逐类补,不预造。
 
@@ -58,9 +58,17 @@ BATHROOM CONTEXT (mandatory): mounted on the wall within arm's reach of a toilet
 
 BATHROOM CONTEXT (mandatory): mounted on the wall, about 1550 mm above the floor, and by default DRAPED with a folded towel. PREFERRED (not required): a wall near the shower area or beside the washbasin. FORBIDDEN: do NOT stand it on a countertop or on the floor; do NOT render a bedroom / hallway wooden-shelf look; do NOT pile it with clutter as if it were a general storage rack.
 
-### `faucet`
+### `faucet`(无条件盆承接铁律 + 厨房/浴室分流)
 
-PLACEMENT (mandatory): a faucet ONLY makes sense over a basin/sink that catches its water. There MUST be a wash basin or sink DIRECTLY BELOW the spout, with the spout about 250 mm above the basin rim. For a WALL-MOUNTED faucet the basin sits on a counter/vanity below the projecting spout; for a DECK-MOUNTED faucet the faucet rises from the counter or the basin's own rim with the bowl right below/behind it. Bathroom or kitchen context. FORBIDDEN: do NOT show the faucet on a bare wall with nothing beneath it; do NOT leave the area under the spout empty with no basin/sink; do NOT render it on the floor or as a decorative object with no water-catching fixture.
+faucet 不在上面的 map —— 盆承接是**无条件铁律**(不依赖 mounting 命中,mounting 为空也生效),并按**产品名**分流:命中 `kitchen` / `sink` / `pull-out` / `pull out` / `pullout` / `厨房` → kitchen(不锈钢厨房水槽 + 厨房语境);否则 → basin(陶瓷台盆 + 浴室语境)。承接盆是主产品的**物理承接**,库内无参照也必须画(不适用「无参照不画」道具铁律);有参照则喂图 + 记 `scene_reference_product_ids`。
+
+#### `faucet · kitchen`
+
+PLACEMENT (mandatory, IRON LAW — no exceptions): a faucet ALWAYS pours into a fixture that catches the water. There MUST be one DIRECTLY BELOW the spout, with the spout about 250 mm above its rim. When mounting is known this stacks with the mounting rule (wall-mounted = basin on a counter below the projecting spout; deck-mounted = faucet rising from the counter or the fixture's own rim). FORBIDDEN under ALL circumstances: do NOT place the faucet on a bare wall, an empty counter, the floor, or as a standalone decorative object; the area directly under the spout must NEVER be empty — a catching fixture is always present. CATCHING FIXTURE (mandatory): a STAINLESS-STEEL KITCHEN SINK (single or double bowl) set into a kitchen countertop. KITCHEN context — kitchen cabinetry/counter, not a bathroom. FORBIDDEN: do NOT use a ceramic bathroom basin or a bathroom setting for a kitchen faucet.
+
+#### `faucet · basin`
+
+PLACEMENT (mandatory, IRON LAW — no exceptions): a faucet ALWAYS pours into a fixture that catches the water. There MUST be one DIRECTLY BELOW the spout, with the spout about 250 mm above its rim. When mounting is known this stacks with the mounting rule (wall-mounted = basin on a counter below the projecting spout; deck-mounted = faucet rising from the counter or the fixture's own rim). FORBIDDEN under ALL circumstances: do NOT place the faucet on a bare wall, an empty counter, the floor, or as a standalone decorative object; the area directly under the spout must NEVER be empty — a catching fixture is always present. CATCHING FIXTURE (mandatory): a CERAMIC WASH BASIN on a vanity/counter. BATHROOM context. FORBIDDEN: do NOT use a stainless-steel kitchen sink or a kitchen setting for a basin faucet.
 
 ## ③ 背景色调池(材质 → 色调池,每次从池随机抽一个)
 
@@ -132,10 +140,6 @@ PLACEMENT (mandatory): a faucet ONLY makes sense over a basin/sink that catches 
 
 - `mirror`(概率 90%,参照 `mirror`):a wall mirror mounted on the wall directly above the basin
 - `towel_ring`(概率 30%,参照 `bathroom_equipments`):a towel ring on the wall with a hand towel
-
-### `faucet`
-
-- `basin`(概率 100%,参照 `basin`):a wash basin or sink sitting directly below the faucet spout to catch its water
 
 ### 流程裁定:异形/非常规几何产品
 

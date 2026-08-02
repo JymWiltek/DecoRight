@@ -132,12 +132,12 @@ export const SCENE_PROP_RULES: Record<string, ScenePropSpec[]> = {
     { key: "mirror", label: "a wall mirror mounted on the wall directly above the basin", probability: 0.9, referenceItemType: "mirror" },
     { key: "towel_ring", label: "a towel ring on the wall with a hand towel", probability: 0.3, referenceItemType: "bathroom_equipments" },
   ],
-  // faucet (PB): the water-catching basin below the spout is a "prop" so it's
-  // referenced from a REAL basin product when one exists. Always attempted
-  // (prob 1) — a faucet scene without a basin is exactly the空墙 bug.
-  faucet: [
-    { key: "basin", label: "a wash basin or sink sitting directly below the faucet spout to catch its water", probability: 1.0, referenceItemType: "basin" },
-  ],
+  // NOTE: faucet has NO prop spec here. Its water-catching basin/sink is the
+  // product's PHYSICAL SUPPORT, not a decorative prop — it is written into the
+  // UNCONDITIONAL faucet item_type rule (FAUCET_RULES in mounting-scene-rules)
+  // and drawn even when the catalog has no reference (the "no ref ⇒ no prop"
+  // iron law does NOT apply to a mandatory support fixture). The optional
+  // reference IMAGE is resolved separately in maybeGenerateSceneCover.
 };
 
 /** Deterministic [0,1) from a string — for seeded, reproducible prop rolls. */

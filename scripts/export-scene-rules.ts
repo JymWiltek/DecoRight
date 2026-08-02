@@ -12,6 +12,8 @@ import {
   MOUNTING_SCENE_RULES,
   ITEM_TYPE_SCENE_RULES,
   SUBTYPE_IMPLIES_MOUNTING,
+  FAUCET_RULES,
+  FAUCET_KITCHEN_TOKENS,
 } from "../config/mounting-scene-rules";
 import {
   SCENE_PALETTE_POOLS,
@@ -72,6 +74,23 @@ for (const [k, v] of Object.entries(ITEM_TYPE_SCENE_RULES)) {
   L.push(`### \`${k}\``);
   L.push("");
   L.push(v);
+  L.push("");
+}
+
+L.push("### `faucet`(无条件盆承接铁律 + 厨房/浴室分流)");
+L.push("");
+L.push(
+  "faucet 不在上面的 map —— 盆承接是**无条件铁律**(不依赖 mounting 命中,mounting 为空也生效)," +
+    "并按**产品名**分流:命中 " +
+    FAUCET_KITCHEN_TOKENS.map((t) => `\`${t}\``).join(" / ") +
+    " → kitchen(不锈钢厨房水槽 + 厨房语境);否则 → basin(陶瓷台盆 + 浴室语境)。承接盆是主产品的**物理承接**," +
+    "库内无参照也必须画(不适用「无参照不画」道具铁律);有参照则喂图 + 记 `scene_reference_product_ids`。",
+);
+L.push("");
+for (const kind of ["kitchen", "basin"] as const) {
+  L.push(`#### \`faucet · ${kind}\``);
+  L.push("");
+  L.push(FAUCET_RULES[kind]);
   L.push("");
 }
 
