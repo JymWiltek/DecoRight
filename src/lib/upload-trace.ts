@@ -39,6 +39,10 @@ export type UploadTraceStep = {
   errorMessage?: string;
   /** honest note when there is NO HTTP status (network layer / TypeError). */
   note?: string;
+  /** how many automatic retries the byte PUT consumed before this outcome
+   *  (network-layer jitter only). Undefined/0 = clean first-try. Surfaced
+   *  as `retry=N` in the detail line — Jym-visible, non-intrusive. */
+  retries?: number;
 };
 
 export function newTraceId(): string {
@@ -96,12 +100,82 @@ export function stepBannerSummary(s: UploadTraceStep): string {
   return `第 ${s.seq} 步:${s.label}${size} 失败 —— ${cause}`;
 }
 
+/**
+ * Byte-PUT auto-retry (PB). #35's instrumentation caught the real culprit:
+ * a lone 45.6 MB GLB whose PUT died at the NETWORK LAYER in 23 ms (TypeError,
+ * no HTTP status, connection never established) mid-batch — while both a
+ * 53 MB and a 61 MB GLB in the SAME run succeeded. That is transient network
+ * jitter, not a structural bug (the structural ones were fixed in earlier
+ * rounds), so the fix is retry, not more forensics.
+ *
+ * Retry policy: at most 2 retries (3 attempts total), waiting these ms
+ * before each retry. Retries happen within seconds, far inside Supabase's
+ * signed-upload-URL validity (~2 h), so the same URL is safely reused — no
+ * re-sign needed.
+ */
+export const PUT_RETRY_DELAYS_MS = [1000, 3000] as const;
+
+/**
+ * The outcome of ONE byte-PUT attempt, classified for the retry decision:
+ *   - "ok"            → done.
+ *   - "http-error"    → the server RESPONDED with 4xx/5xx (413, expired
+ *                       signature, permission). STRUCTURAL — never retried;
+ *                       retrying would only mask it.
+ *   - "network-error" → fetch() itself rejected: TypeError / "Failed to
+ *                       fetch", no HTTP response. Transient — this is the
+ *                       only case we retry.
+ */
+export type PutAttemptResult =
+  | { kind: "ok"; status: number }
+  | { kind: "http-error"; status: number; body: string }
+  | { kind: "network-error"; error: unknown };
+
+/**
+ * Run a byte-PUT with automatic retry on NETWORK-LAYER failures only.
+ * `attempt()` performs one PUT and returns a classified PutAttemptResult
+ * (it must catch its own fetch rejection and return "network-error" rather
+ * than throwing). "ok" and "http-error" short-circuit immediately; only
+ * "network-error" retries, up to `delaysMs.length` times, sleeping the
+ * matching delay before each. Returns the final result plus how many
+ * retries were consumed. `sleep` is injectable so tests run instantly.
+ */
+export async function putWithNetworkRetry(
+  attempt: () => Promise<PutAttemptResult>,
+  opts?: {
+    delaysMs?: readonly number[];
+    sleep?: (ms: number) => Promise<void>;
+  },
+): Promise<{ result: PutAttemptResult; retries: number }> {
+  const delays = opts?.delaysMs ?? PUT_RETRY_DELAYS_MS;
+  const sleep =
+    opts?.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  let retries = 0;
+  for (;;) {
+    const result = await attempt();
+    if (result.kind !== "network-error") return { result, retries };
+    if (retries >= delays.length) return { result, retries }; // budget spent
+    await sleep(delays[retries]);
+    retries++;
+  }
+}
+
+/** Failure note after the retry budget is exhausted — carries the
+ *  "已自动重试 N 次" line the operator sees, and the via-app-api caveat. */
+export function putRetryExhaustedNote(routeViaAppApi: boolean): string {
+  return (
+    `网络层失败:字节 PUT 未收到响应(TypeError,无 HTTP status)—— ` +
+    `已自动重试 ${PUT_RETRY_DELAYS_MS.length} 次仍失败,请检查网络后重传` +
+    (routeViaAppApi ? " · 该路径经自家 API,受 Vercel 4.5MB body 上限" : "")
+  );
+}
+
 /** Raw, copyable one-liner per step for the "诊断详情" panel. */
 export function stepDetailLine(s: UploadTraceStep): string {
   const parts = [
     `#${s.seq}`,
     s.ok === false ? "✗" : s.ok ? "✓" : "…",
     s.step,
+    s.retries ? `retry=${s.retries}` : "",
     s.file ? `${s.file} ${mb(s.sizeBytes)}` : "",
     s.route ? `route=${s.route}` : "",
     s.targetHost ? `host=${s.targetHost}` : "",

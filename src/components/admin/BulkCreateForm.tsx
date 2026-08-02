@@ -43,6 +43,8 @@ import {
   classifyError,
   stepBannerSummary,
   stepDetailLine,
+  putWithNetworkRetry,
+  putRetryExhaustedNote,
   type UploadTraceStep,
 } from "@/lib/upload-trace";
 
@@ -242,32 +244,50 @@ export default function BulkCreateForm({
         traceId, seq: steps.length + 1, step: `put:${stepKey}`, label,
         file: file.name, sizeBytes: file.size, targetHost: host, route, startMs,
       };
-      let res: Response;
-      try {
-        res = await fetch(signedUrl, {
-          method: "PUT",
-          headers: {
-            "Content-Type": file.type || "model/gltf-binary",
-            "x-upsert": "true",
-            "cache-control": "max-age=31536000",
-          },
-          body: file,
-        });
-      } catch (e) {
-        const c = classifyError(e);
+      // ONE PUT attempt, classified for the retry decision. A rejected
+      // fetch (TypeError / no response) → "network-error" (retry-able);
+      // an HTTP 4xx/5xx → "http-error" (structural, never retried). The
+      // signed URL is reused across retries — they fire within seconds,
+      // well inside the ~2 h token validity, so no re-sign is needed.
+      const attempt = async () => {
+        try {
+          const res = await fetch(signedUrl, {
+            method: "PUT",
+            headers: {
+              "Content-Type": file.type || "model/gltf-binary",
+              "x-upsert": "true",
+              "cache-control": "max-age=31536000",
+            },
+            body: file,
+          });
+          if (!res.ok) {
+            const body = (await res.text().catch(() => "")).slice(0, 400);
+            return { kind: "http-error" as const, status: res.status, body };
+          }
+          return { kind: "ok" as const, status: res.status };
+        } catch (e) {
+          return { kind: "network-error" as const, error: e };
+        }
+      };
+
+      const { result, retries } = await putWithNetworkRetry(attempt);
+
+      if (result.kind === "network-error") {
+        const c = classifyError(result.error);
         const s: UploadTraceStep = { ...base, durationMs: Date.now() - startMs, ok: false,
-          errorName: c.name, errorMessage: c.message,
-          note: "网络层失败:字节 PUT 未收到响应(TypeError,无 HTTP status)" +
-            (route === "via-app-api" ? " · 该路径经自家 API,受 Vercel 4.5MB body 上限" : "") };
+          retries, errorName: c.name, errorMessage: c.message,
+          note: putRetryExhaustedNote(route === "via-app-api") };
         record(s); throw new UploadTraceError(s);
       }
-      if (!res.ok) {
-        const body = (await res.text().catch(() => "")).slice(0, 400);
+      if (result.kind === "http-error") {
         const s: UploadTraceStep = { ...base, durationMs: Date.now() - startMs, ok: false,
-          httpStatus: res.status, responseBody: body, note: `存储返回 HTTP ${res.status}` };
+          retries: retries || undefined,
+          httpStatus: result.status, responseBody: result.body,
+          note: `存储返回 HTTP ${result.status}` };
         record(s); throw new UploadTraceError(s);
       }
-      record({ ...base, durationMs: Date.now() - startMs, ok: true, httpStatus: res.status });
+      record({ ...base, durationMs: Date.now() - startMs, ok: true,
+        retries: retries || undefined, httpStatus: result.status });
     };
 
     // createProductFromUpload (server action). Carries the traceId in the
