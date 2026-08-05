@@ -6,6 +6,8 @@ import { createServiceRoleClient } from "@/lib/supabase/service";
 import { runRembgForImage } from "@/lib/rembg/pipeline";
 import type { RemBgProviderId } from "@/lib/rembg";
 import { copyRawToCutouts } from "@/lib/storage";
+import { MANUAL_PROVENANCE_CHOICES } from "@/lib/admin/image-provenance";
+import type { ImageProvenance } from "@/lib/supabase/types";
 
 /**
  * Image pipeline (post-migration 0010 auto-cutout; post direct-upload
@@ -769,4 +771,46 @@ export async function setImageToggle(fd: FormData): Promise<void> {
   // reflect immediately without waiting for ISR.
   revalidatePath(`/product/${img.product_id}`);
   redirect(withQuery(base, "toggled", field));
+}
+
+/**
+ * Layer 3 — a human sets an image's provenance. Records provenance_by='manual',
+ * the TOP authority: no automatic layer (auto_rule / auto_ai) may overwrite it
+ * afterwards (see canAutoWriteProvenance). Pure annotation — not wired into any
+ * publish gate.
+ */
+export async function setImageProvenance(fd: FormData): Promise<void> {
+  const imageId = fd.get("imageId")?.toString();
+  const value = fd.get("value")?.toString();
+  const returnTo = safeReturnTo(fd);
+
+  if (!imageId || !value) {
+    redirect(withQuery(returnTo ?? "/admin", "err", "missing_arg"));
+  }
+  if (!MANUAL_PROVENANCE_CHOICES.includes(value as ImageProvenance)) {
+    redirect(withQuery(returnTo ?? "/admin", "err", "bad_value"));
+  }
+
+  const supabase = createServiceRoleClient();
+  const { data: img, error: readErr } = await supabase
+    .from("product_images")
+    .select("id,product_id")
+    .eq("id", imageId)
+    .single();
+  if (readErr || !img) {
+    redirect(withQuery(returnTo ?? "/admin", "err", "not_found"));
+  }
+
+  const base = returnTo ?? `/admin/products/${img.product_id}/edit`;
+  const { error: updErr } = await supabase
+    .from("product_images")
+    .update({ provenance: value as ImageProvenance, provenance_by: "manual" })
+    .eq("id", imageId);
+  if (updErr) {
+    redirect(withQuery(withQuery(base, "err", "db"), "msg", updErr.message));
+  }
+
+  revalidatePath(`/admin/products/${img.product_id}/edit`);
+  revalidatePath(`/product/${img.product_id}`);
+  redirect(withQuery(base, "provenance", value));
 }

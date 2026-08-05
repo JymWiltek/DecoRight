@@ -19,7 +19,7 @@ import {
   readArViews,
   incrementArViews,
 } from "@/lib/ar-quota";
-import type { ProductRow } from "@/lib/supabase/types";
+import type { ProductRow, ImageProvenance } from "@/lib/supabase/types";
 
 // PB3-B item 3 — layout signal. Which CTA is primary is a device form-factor
 // decision, so it reads the viewport's pointer type, NOT model-viewer's
@@ -57,6 +57,9 @@ type Props = {
    *  by upload time. Server-resolved to public-or-signed URLs already.
    *  Empty array → gallery falls back to its empty-state placeholder. */
   galleryUrls: string[];
+  /** Mig 0055 — per-slide provenance, aligned 1:1 with galleryUrls
+   *  (drives the storefront 「实拍图」badge). */
+  galleryProvenance?: (ImageProvenance | null)[];
   /** Sprint 1 C2 — whether the current visitor is a logged-in designer.
    *  Drives the FBX button (login CTA vs credit-deduct download). */
   designerLoggedIn: boolean;
@@ -84,6 +87,7 @@ export default function ProductDetail({
   colors,
   regionLabels,
   galleryUrls,
+  galleryProvenance,
   designerLoggedIn,
   whereToBuy,
   isVerifiedRealProduct,
@@ -274,6 +278,7 @@ export default function ProductDetail({
         // URL — only the in-page 3D viewer is gated.
         glbUrl={modelSrc}
         galleryUrls={galleryUrls}
+        galleryProvenance={galleryProvenance}
         primaryThumbnailUrl={product.thumbnail_url}
         overrideColorHex={overrideColorHex}
         // Wave 9 — pipe real dimensions through so ModelViewer can

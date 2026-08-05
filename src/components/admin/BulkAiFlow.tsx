@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import {
   runSpecParseAndApply,
   runSceneGenForProduct,
+  runProvenanceClassifyForProduct,
   getAiPanelInfo,
   type BulkAiOutcome,
   type AiPanelInfo,
@@ -38,6 +39,7 @@ export default function BulkAiFlow({
   const [readSpecs, setReadSpecs] = useState(true);
   const [genScenes, setGenScenes] = useState(false);
   const [regenScenes, setRegenScenes] = useState(false);
+  const [identifyPhotos, setIdentifyPhotos] = useState(false);
 
   const [phase, setPhase] = useState<Phase>("config");
   const [done, setDone] = useState(0);
@@ -66,7 +68,12 @@ export default function BulkAiFlow({
     genScenes && info?.sceneUnitUsd != null
       ? info.sceneUnitUsd * sceneTargets
       : 0;
-  const estKnown = specEst + sceneEst;
+  // Provenance is an UPPER BOUND: only non-scene / non-white images reach the
+  // paid classifier; layer 1 resolves the rest for free.
+  const provCandidates = info?.provenanceCandidateCount ?? 0;
+  const provEst =
+    identifyPhotos && info != null ? provCandidates * info.provenanceUnitUsd : 0;
+  const estKnown = specEst + sceneEst + provEst;
   const specUnknown = readSpecs && info != null && info.specUnitUsd == null;
   const sceneUnknown = genScenes && info != null && info.sceneUnitUsd == null;
 
@@ -76,7 +83,7 @@ export default function BulkAiFlow({
   };
 
   async function run() {
-    if (!readSpecs && !genScenes) return;
+    if (!readSpecs && !genScenes && !identifyPhotos) return;
     setPhase("running");
     for (let i = 0; i < ids.length; i++) {
       if (abortRef.current) break;
@@ -88,6 +95,11 @@ export default function BulkAiFlow({
       }
       if (genScenes && !abortRef.current) {
         const o = await runSceneGenForProduct(id, regenScenes);
+        record(o);
+        if (!o.ok && o.code === "quota") return stop();
+      }
+      if (identifyPhotos && !abortRef.current) {
+        const o = await runProvenanceClassifyForProduct(id);
         record(o);
         if (!o.ok && o.code === "quota") return stop();
       }
@@ -182,6 +194,24 @@ export default function BulkAiFlow({
                   </span>
                 </span>
               </label>
+              <label className="flex items-start gap-2 rounded-md border border-neutral-200 p-2.5 text-sm">
+                <input
+                  type="checkbox"
+                  checked={identifyPhotos}
+                  onChange={(e) => setIdentifyPhotos(e.target.checked)}
+                  className="mt-0.5"
+                />
+                <span>
+                  <span className="font-medium">识别实拍照 · Identify real photos</span>{" "}
+                  <span className="rounded bg-sky-100 px-1 text-[10px] text-sky-800">cheap</span>
+                  <span className="block text-xs text-neutral-500">
+                    Labels each image: scene / product shot (free rules) → real
+                    photo (AI, ~${info?.provenanceUnitUsd?.toFixed(2) ?? "0.01"}/img)
+                    for the storefront 「实拍图」badge. Skips already-labeled &amp;
+                    manually-set images.
+                  </span>
+                </span>
+              </label>
             </div>
 
             {/* Live estimate. */}
@@ -217,6 +247,13 @@ export default function BulkAiFlow({
                       (vision, billed by OpenAI)
                     </span>
                   )}
+                  {identifyPhotos && (
+                    <span className="block text-xs text-neutral-500">
+                      real-photo ID: ≤{provCandidates} ×{" "}
+                      ${info.provenanceUnitUsd.toFixed(2)} (upper bound — scene /
+                      white-bg images are free)
+                    </span>
+                  )}
                   {(specUnknown || sceneUnknown) && (
                     <span className="block text-xs text-amber-600">
                       Actual total is read from OpenAI usage after the run.
@@ -233,7 +270,7 @@ export default function BulkAiFlow({
               <button
                 type="button"
                 onClick={run}
-                disabled={!readSpecs && !genScenes}
+                disabled={!readSpecs && !genScenes && !identifyPhotos}
                 className={btnPrimary}
               >
                 Run
@@ -246,7 +283,7 @@ export default function BulkAiFlow({
           <>
             <div className="mb-2 text-sm">
               Processing {done}/{total}
-              {readSpecs && (
+              {(readSpecs || identifyPhotos) && (
                 <> · real spend <strong>${costUsd.toFixed(4)}</strong></>
               )}
             </div>

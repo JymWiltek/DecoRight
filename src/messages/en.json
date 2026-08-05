@@ -79,6 +79,7 @@
     "galleryViewMain": "View main thumbnail",
     "galleryViewModel": "View 3D model",
     "galleryViewScene": "View scene photo {n}",
+    "realPhotoBadge": "Real photo",
     "gallerySceneAlt": "{name} — scene",
     "itemType": "Item",
     "room": "Room",

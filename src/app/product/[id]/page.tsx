@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { getLocale, getTranslations } from "next-intl/server";
 import type { Metadata, ResolvingMetadata } from "next";
 import type { Locale } from "@/i18n/config";
+import type { ImageProvenance } from "@/lib/supabase/types";
 import SiteHeader from "@/components/SiteHeader";
 import ProductDetail from "@/components/ProductDetail";
 import { type WhereToBuyChannel } from "@/components/WhereToBuy";
@@ -106,7 +107,10 @@ export default async function ProductPage({ params }: PageProps) {
     getLocale() as Promise<Locale>,
     supabase
       .from("product_images")
-      .select("id,raw_image_url,cutout_image_url,state,show_on_storefront,is_primary_thumbnail,created_at")
+      // select("*") (not an explicit column list) so this consumer-facing query
+      // keeps working even if it deploys BEFORE mig 0055 runs — `provenance`
+      // is simply undefined then (→ no badge), never a "column not found" 500.
+      .select("*")
       .eq("product_id", id)
       .eq("state", "cutout_approved")
       .eq("show_on_storefront", true)
@@ -133,9 +137,13 @@ export default async function ProductPage({ params }: PageProps) {
   // fall back to a signed URL of the raw upload for rows without a
   // cutout (real photos, spec sheets the operator chose to show).
   const galleryUrls: string[] = [];
+  // Mig 0055 — provenance aligned 1:1 with galleryUrls (drives the 「实拍图」
+  // badge). The primary-thumbnail slide keeps its own row's provenance.
+  const galleryProvenance: (ImageProvenance | null)[] = [];
   for (const img of galleryResp.data ?? []) {
     if (img.is_primary_thumbnail && product.thumbnail_url) {
       galleryUrls.push(product.thumbnail_url);
+      galleryProvenance.push(img.provenance ?? null);
       continue;
     }
     // Resolve to a browser-openable URL via the shared resolver: some
@@ -146,7 +154,10 @@ export default async function ProductPage({ params }: PageProps) {
     // never emits a bare path. Same function the admin thumbnails + AI feed
     // use, so all three resolve identically.
     const url = await resolveImageUrl(img);
-    if (url) galleryUrls.push(url);
+    if (url) {
+      galleryUrls.push(url);
+      galleryProvenance.push(img.provenance ?? null);
+    }
   }
 
   const itemTypeLabels = labelMap(taxonomy.itemTypes, locale);
@@ -255,6 +266,7 @@ export default async function ProductPage({ params }: PageProps) {
           colors={colorOptions}
           regionLabels={regionLabelList}
           galleryUrls={galleryUrls}
+          galleryProvenance={galleryProvenance}
           designerLoggedIn={designerLoggedIn}
           whereToBuy={whereToBuy}
           isVerifiedRealProduct={product.is_verified_real_product}
