@@ -9,9 +9,21 @@ import {
   removeBackgroundForImage,
   retryFailedImage,
   setImageToggle,
+  setImageProvenance,
 } from "@/app/admin/(dashboard)/products/[id]/edit/image-actions";
 import ImageToggleCheckbox from "./ImageToggleCheckbox";
-import type { ImageErrorKind, ImageKind, ImageState } from "@/lib/supabase/types";
+import ProvenanceSelect from "./ProvenanceSelect";
+import {
+  PROVENANCE_LABELS,
+  MANUAL_PROVENANCE_CHOICES,
+} from "@/lib/admin/image-provenance";
+import type {
+  ImageErrorKind,
+  ImageKind,
+  ImageState,
+  ImageProvenance,
+  ImageProvenanceBy,
+} from "@/lib/supabase/types";
 import type { ProductRembgUsage } from "@/lib/admin/products";
 
 /**
@@ -87,6 +99,9 @@ type ImageWithPreview = {
    *  'bbox_too_small' when rembg likely ate a low-contrast edge. */
   bbox_ratio: number | null;
   cutout_warning: string | null;
+  /** Mig 0055 — sourcing label + who set it (three-layer pipeline). */
+  provenance: ImageProvenance | null;
+  provenance_by: ImageProvenanceBy | null;
   created_at: string;
   /** Shared-resolver output (@/lib/storage resolveImageUrl): a
    *  browser-openable URL — public http cutout, else short-lived signed
@@ -882,6 +897,45 @@ function ImageToggleRow({
         checked={image.feed_to_ai}
         returnTo={returnTo}
       />
+      <ProvenanceRow image={image} returnTo={returnTo} />
+    </div>
+  );
+}
+
+/** Layer 3 — the human "change provenance" control on the image card. Shows
+ *  the current label + who set it, and a select that records provenance_by=
+ *  'manual' (never overwritten by an auto layer). Pure annotation. */
+function ProvenanceRow({
+  image,
+  returnTo,
+}: {
+  image: ImageWithPreview;
+  returnTo: string;
+}) {
+  const formId = `prov-${image.id}`;
+  const byLabel: Record<ImageProvenanceBy, string> = {
+    auto_rule: "规则",
+    auto_ai: "AI",
+    manual: "人工",
+  };
+  const by = image.provenance_by ? `（${byLabel[image.provenance_by]}）` : "";
+  return (
+    <div className="flex items-baseline gap-1.5 text-[11px]">
+      <span className="font-medium text-neutral-700">来源</span>
+      <span className="text-neutral-400">
+        {PROVENANCE_LABELS[image.provenance ?? "unknown"]}
+        {by}
+      </span>
+      <form id={formId} action={setImageProvenance} className="contents">
+        <input type="hidden" name="imageId" value={image.id} />
+        <input type="hidden" name="returnTo" value={returnTo} />
+        <ProvenanceSelect
+          formId={formId}
+          current={image.provenance}
+          choices={MANUAL_PROVENANCE_CHOICES}
+          labels={PROVENANCE_LABELS}
+        />
+      </form>
     </div>
   );
 }

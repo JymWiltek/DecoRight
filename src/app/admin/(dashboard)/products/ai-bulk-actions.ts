@@ -15,8 +15,15 @@ import {
   nameConflictMessage,
   NAME_CONFLICT_KEY,
 } from "@config/name-conflict-rules";
-import { maybeGenerateSceneCover } from "@/lib/scene-cover";
+import { maybeGenerateSceneCover, isWhiteBackgroundImage } from "@/lib/scene-cover";
 import { isSceneCoverUrl } from "@/lib/scene-cover-url";
+import {
+  classifyProvenanceRule,
+  canAutoWriteProvenance,
+  PROVENANCE_UNIT_USD_EST,
+} from "@/lib/admin/image-provenance";
+import { classifyPhotoProvenance } from "@/lib/ai/classify-photo";
+import type { ImageProvenanceBy } from "@/lib/supabase/types";
 import { runSpecParseV2 } from "./actions";
 
 /**
@@ -272,6 +279,80 @@ export async function runSceneGenForProduct(
   }
 }
 
+/**
+ * Layer 1+2 image PROVENANCE classification for ONE product. Layer 1
+ * (deterministic, free): a /scene- image → ai_scene, a white-bg image →
+ * product_shot, both with provenance_by='auto_rule'. Whatever is left is a
+ * layer-2 candidate → the gpt-4o-mini classifier (paid) → real_photo /
+ * product_shot with provenance_by='auto_ai'. A human's call (provenance_by=
+ * 'manual') is NEVER touched; already-classified images are skipped (idempotent,
+ * no re-spend). Reports the real per-call cost (0 under AI_SUGGEST_MOCK).
+ */
+export async function runProvenanceClassifyForProduct(
+  productId: string,
+): Promise<BulkAiOutcome> {
+  await requireAdmin();
+  if (!UUID_RE.test(productId)) {
+    return { ok: false, productId, code: "error", error: "invalid id" };
+  }
+  const supabase = createServiceRoleClient();
+  const mock = process.env.AI_SUGGEST_MOCK === "1";
+
+  const [{ data: prod }, { data: imgs }] = await Promise.all([
+    supabase.from("products").select("name").eq("id", productId).maybeSingle(),
+    supabase
+      .from("product_images")
+      .select("id, raw_image_url, cutout_image_url, provenance, provenance_by")
+      .eq("product_id", productId),
+  ]);
+  const name = prod?.name ?? "";
+
+  const filled: string[] = [];
+  let costUsd = 0;
+  for (const img of imgs ?? []) {
+    // Layer 3 wins: never overwrite a human's call. Already-classified rows are
+    // left alone so a re-run neither re-spends nor churns.
+    if (!canAutoWriteProvenance(img.provenance_by)) continue;
+    if (img.provenance != null) continue;
+    const url = img.cutout_image_url ?? img.raw_image_url;
+    if (!url) continue;
+
+    // Layer 1 — deterministic, free.
+    let cls = await classifyProvenanceRule(url, isWhiteBackgroundImage);
+    let by: ImageProvenanceBy = "auto_rule";
+
+    // Layer 2 — the only paid step, for the leftover candidates.
+    if (cls == null) {
+      try {
+        cls = await classifyPhotoProvenance({ imageUrl: url, name });
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        return {
+          ok: false,
+          productId,
+          code: isQuotaError(msg) ? "quota" : "error",
+          error: msg,
+        };
+      }
+      by = "auto_ai";
+      if (!mock) costUsd += PROVENANCE_UNIT_USD_EST;
+    }
+
+    const { error } = await supabase
+      .from("product_images")
+      .update({ provenance: cls, provenance_by: by })
+      .eq("id", img.id);
+    if (error) {
+      return { ok: false, productId, code: "error", error: error.message };
+    }
+    filled.push(cls);
+  }
+
+  revalidatePath(`/admin/products/${productId}/edit`);
+  revalidatePath(`/product/${productId}`);
+  return { ok: true, productId, filled, warnings: [], costUsd };
+}
+
 export type AiPanelInfo = {
   /** Most-recent actual per-call cost for a spec parse (USD), or null if
    *  there's no history yet. Drives the live estimate — read from real usage,
@@ -285,6 +366,11 @@ export type AiPanelInfo = {
    *  panel can show how many scene generations are SKIPPED when "regenerate"
    *  is off). */
   withSceneCount: number;
+  /** PB — layer-2 upper bound: unclassified images across the selection that
+   *  could reach the paid AI classifier (scene + white-bg ones resolve for free
+   *  in layer 1, so actual spend is ≤ this). Paired with the per-image figure. */
+  provenanceCandidateCount: number;
+  provenanceUnitUsd: number;
   /** PB-B — id → name + sku (+ thumbnail) for the selected products, so the
    *  Notes/warnings can name WHICH product was skipped (and link to its Edit
    *  page), and the AI-suggest table can show a thumbnail. */
@@ -327,11 +413,21 @@ export async function getAiPanelInfo(ids: string[]): Promise<AiPanelInfo> {
 
   let withSceneCount = 0;
   let products: AiPanelInfo["products"] = [];
+  let provenanceCandidateCount = 0;
   if (validIds.length) {
-    const { data } = await supabase
-      .from("products")
-      .select("id, name, sku_id, thumbnail_url")
-      .in("id", validIds);
+    const [{ data }, { count }] = await Promise.all([
+      supabase
+        .from("products")
+        .select("id, name, sku_id, thumbnail_url")
+        .in("id", validIds),
+      // Upper-bound AI candidates: every still-unclassified image. Cheap count,
+      // no pixel fetch — layer 1 will resolve the scene/white ones for free.
+      supabase
+        .from("product_images")
+        .select("id", { count: "exact", head: true })
+        .in("product_id", validIds)
+        .is("provenance", null),
+    ]);
     withSceneCount = (data ?? []).filter((p) =>
       isSceneCoverUrl(p.thumbnail_url),
     ).length;
@@ -341,7 +437,15 @@ export async function getAiPanelInfo(ids: string[]): Promise<AiPanelInfo> {
       sku: p.sku_id ?? null,
       thumbnail: p.thumbnail_url ?? null,
     }));
+    provenanceCandidateCount = count ?? 0;
   }
 
-  return { specUnitUsd, sceneUnitUsd, withSceneCount, products };
+  return {
+    specUnitUsd,
+    sceneUnitUsd,
+    withSceneCount,
+    products,
+    provenanceCandidateCount,
+    provenanceUnitUsd: PROVENANCE_UNIT_USD_EST,
+  };
 }

@@ -326,6 +326,13 @@ export type ProductImageRow = {
    *  write it. 'operator' = a human's call, never touched by AI. 'ai' = set
    *  by the classifier. */
   image_kind_source: "operator" | "ai" | null;
+  /** Mig 0055 — consumer-facing sourcing label (orthogonal to image_kind).
+   *  NULL = unclassified (layer-2 AI candidate). Drives the "实拍图" badge. */
+  provenance: ImageProvenance | null;
+  /** Mig 0055 — who set `provenance`: 'auto_rule' (layer 1, deterministic),
+   *  'auto_ai' (layer 2, batch vision), 'manual' (layer 3, human — never
+   *  overwritten by an auto layer). */
+  provenance_by: ImageProvenanceBy | null;
   is_primary: boolean;
   /** Mig 0038 — operator-toggled "include this image in the
    *  storefront product-page gallery". Default true. */
@@ -387,7 +394,18 @@ export type ProductImageInsert = {
   last_error_kind?: ImageErrorKind | null;
   skip_cutout?: boolean;
   sort_order?: number;
+  /** Mig 0055. */
+  provenance?: ImageProvenance | null;
+  /** Mig 0055. */
+  provenance_by?: ImageProvenanceBy | null;
 };
+
+/** Mig 0055 — per-image sourcing label for the storefront "实拍图" badge.
+ *  Orthogonal to ImageKind; the shared 'real_photo' word is coincidental. */
+export type ImageProvenance = "ai_scene" | "product_shot" | "real_photo";
+/** Mig 0055 — which layer decided `provenance`. 'manual' is top authority and
+ *  is never overwritten by an automatic layer. */
+export type ImageProvenanceBy = "auto_rule" | "auto_ai" | "manual";
 
 export type ProductImageUpdate = Partial<
   Omit<ProductImageRow, "id" | "product_id" | "created_at">

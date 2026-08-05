@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Image from "next/image";
 import { useTranslations } from "next-intl";
+import type { ImageProvenance } from "@/lib/supabase/types";
 import ModelViewer from "./ModelViewer";
 import ModelViewerErrorBoundary from "./ModelViewerErrorBoundary";
 import ModelFallback from "./ModelFallback";
@@ -38,7 +39,7 @@ import ModelFallback from "./ModelFallback";
 
 type Slide =
   | { kind: "model"; glbUrl: string; alt: string; poster: string | null }
-  | { kind: "image"; url: string };
+  | { kind: "image"; url: string; provenance: ImageProvenance | null };
 
 type Props = {
   productName: string;
@@ -46,6 +47,9 @@ type Props = {
    *  (primary thumbnail first, then by upload time). Already
    *  resolved to public-or-signed URLs server-side. */
   galleryUrls: string[];
+  /** Mig 0055 — per-slide provenance, aligned 1:1 with galleryUrls. A
+   *  'real_photo' slide shows the 「实拍图」badge; others show none. */
+  galleryProvenance?: (ImageProvenance | null)[];
   /** Optional .glb URL — slot 1 when present. */
   glbUrl: string | null;
   /** products.thumbnail_url (unified.png) — used as the model-viewer
@@ -75,6 +79,7 @@ type Props = {
 export default function ProductGallery({
   productName,
   galleryUrls,
+  galleryProvenance,
   glbUrl,
   primaryThumbnailUrl,
   overrideColorHex,
@@ -100,10 +105,10 @@ export default function ProductGallery({
       poster: primaryThumbnailUrl,
     });
   }
-  for (const u of galleryUrls) {
-    if (failed.has(u)) continue;
-    slides.push({ kind: "image", url: u });
-  }
+  galleryUrls.forEach((u, i) => {
+    if (failed.has(u)) return;
+    slides.push({ kind: "image", url: u, provenance: galleryProvenance?.[i] ?? null });
+  });
 
   const [active, setActive] = useState(0);
 
@@ -172,6 +177,14 @@ export default function ProductGallery({
               onError={() => markFailed(current.url)}
               className="object-contain p-3"
             />
+            {/* Mig 0055 — "📷 real photo" badge: a light top-left pill,
+                consumer-confidence signal, only on real_photo slides. AI
+                scenes carry NO badge (field kept for future disclosure). */}
+            {current.provenance === "real_photo" && (
+              <div className="absolute left-2 top-2 rounded-full bg-black/60 px-2 py-0.5 text-[10px] font-medium text-white">
+                📷 {t("realPhotoBadge")}
+              </div>
+            )}
           </div>
         )}
         {/* Tiny slide indicator top-right so the visitor knows there
