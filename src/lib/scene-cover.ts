@@ -479,6 +479,37 @@ export async function hasQualifiedSceneCover(
 }
 
 /**
+ * Widened publish-gate scene test (Jym): the product has a usable scene if ANY
+ * of these image URLs qualifies — an AI /scene- cover (white-free by
+ * construction) or any non-white-background photo. The ALL-IMAGES counterpart
+ * to hasQualifiedSceneCover, built for Jym's standard combo: a white-bg cover
+ * (the storefront card wants it) with the real scene PHOTO sitting at slide
+ * 2/3. Same single white-bg detector (isWhiteBackgroundImage) — no new
+ * classifier, the qualification rule is #32 unchanged.
+ *
+ * Cost-shaped for the authoritative publish moment: a cheap no-fetch /scene-
+ * pass runs first; then a pixel pass that SHORT-CIRCUITS on the first
+ * non-white image — so a product with a real photo usually costs one fetch,
+ * and only an all-white product pays to fetch every image. `isWhite` is
+ * injectable purely so the gate logic is unit-testable without live fetches;
+ * production always uses isWhiteBackgroundImage.
+ */
+export async function hasQualifiedSceneAmongImages(
+  urls: (string | null | undefined)[],
+  isWhite: (url: string) => Promise<boolean> = isWhiteBackgroundImage,
+): Promise<boolean> {
+  const candidates = urls.filter((u): u is string => !!u);
+  // Cheap pass: an AI /scene- URL is white-free by construction — no fetch.
+  for (const u of candidates) if (isSceneCoverUrl(u)) return true;
+  // Pixel pass: first non-white photo wins; stop there.
+  for (const u of candidates) {
+    if (isSceneCoverUrl(u)) continue;
+    if (!(await isWhite(u))) return true;
+  }
+  return false;
+}
+
+/**
  * PB — "does this image look like a spec sheet / document?" (single detector,
  * same family + discipline as isWhiteBackgroundImage). PURE pixel heuristic,
  * ZERO AI: a spec sheet is a light background densely covered by small dark

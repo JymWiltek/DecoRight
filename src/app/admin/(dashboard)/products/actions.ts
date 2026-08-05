@@ -23,7 +23,11 @@ import {
 import { applyAiImageKinds } from "@/lib/admin/spec-sheet-tagging";
 import { dispatchGlbCompression } from "@/lib/glb-compression-dispatch";
 import { dispatchSceneCover } from "@/lib/scene-cover-dispatch";
-import { hasQualifiedSceneCover, isDocumentLikeImage } from "@/lib/scene-cover";
+import {
+  hasQualifiedSceneCover,
+  hasQualifiedSceneAmongImages,
+  isDocumentLikeImage,
+} from "@/lib/scene-cover";
 import { UPLOAD_TRACE_SERVER_PREFIX } from "@/lib/upload-trace";
 import { sceneCoverageVerdict, readSceneCoveragePct } from "@/lib/scene-coverage";
 import { dispatchFbxBundle } from "@/lib/fbx-bundle-dispatch";
@@ -798,7 +802,7 @@ async function loadPublishGateFacts(
   productId: string,
 ): Promise<PublishGateInput & { currentStatus: ProductStatus | null }> {
   const supabase = createServiceRoleClient();
-  const [rowRes, cutCountRes, supCountRes] = await Promise.all([
+  const [rowRes, cutCountRes, supCountRes, sceneImgRes] = await Promise.all([
     supabase
       .from("products")
       // PB3-A — also read fbx columns + current status. status drives the
@@ -825,23 +829,45 @@ async function loadPublishGateFacts(
       .from("product_suppliers")
       .select("id", { count: "exact", head: true })
       .eq("product_id", productId),
+    // Scene gate widening (Jym) — the NON-cover images the storefront gallery
+    // actually shows, so a real scene photo at slide 2/3 counts. SAME filter
+    // as the product page's gallery query (cutout_approved · shown · not a
+    // spec sheet) so "gate accepts" == "storefront displays". The cover row
+    // (is_primary_thumbnail) is EXCLUDED — it's judged by the #32+#33 cover
+    // path below, so this widening never bypasses the coverage-QC block.
+    supabase
+      .from("product_images")
+      .select("raw_image_url, cutout_image_url")
+      .eq("product_id", productId)
+      .eq("state", PUBLISHABLE_PHOTO_STATE)
+      .eq("show_on_storefront", true)
+      .neq("image_kind", "spec_sheet")
+      .neq("is_primary_thumbnail", true),
   ]);
+  // Cover path (#32 white-bg + #33 coverage QC) — UNCHANGED.
+  const coverPublishable =
+    (await hasQualifiedSceneCover(rowRes.data?.thumbnail_url)) &&
+    sceneCoverageVerdict(readSceneCoveragePct(rowRes.data?.attributes))
+      .publishable;
+  // Widening: any non-cover displayable image that is a qualified scene. Only
+  // reached when the cover doesn't already pass, so a cover-scene product pays
+  // zero extra image fetches (|| short-circuit).
+  const nonCoverSceneUrls = (sceneImgRes.data ?? []).map(
+    (r) => r.cutout_image_url ?? r.raw_image_url,
+  );
   return {
     rooms: rowRes.data?.room_slugs ?? [],
     glbUrl: rowRes.data?.glb_url ?? null,
     fbxUrl: rowRes.data?.fbx_url ?? rowRes.data?.fbx_bundle_url ?? null,
     cutoutApprovedCount: cutCountRes.count ?? 0,
     supplierCount: supCountRes.count ?? 0,
-    // Scene gate (Jym redefinition): qualified = the cover is NOT a white
-    // background, source-blind (a real photo he uploaded counts like an AI
-    // /scene- cover). One fetch+pixel check; the /scene- fast-path skips it.
-    // AND (PB #33) the coverage QC must be publishable — a MEASURED out-of-range
-    // scene (product fills >60% or <30% of the frame) doesn't count as a usable
-    // cover; unmeasured / in-range both pass.
+    // Scene gate (Jym redefinition, widened to ALL images): qualified = the
+    // COVER passes the #32+#33 test, OR ANY non-cover storefront image is a
+    // qualified scene (non-white / /scene-, source-blind). Any single scene
+    // image anywhere in the product → pass, no exceptions the other way (all
+    // white → blocked, hard gate).
     hasScene:
-      (await hasQualifiedSceneCover(rowRes.data?.thumbnail_url)) &&
-      sceneCoverageVerdict(readSceneCoveragePct(rowRes.data?.attributes))
-        .publishable,
+      coverPublishable || (await hasQualifiedSceneAmongImages(nonCoverSceneUrls)),
     defect: rowRes.data?.defect === true,
     defectReason: rowRes.data?.defect_reason ?? null,
     currentStatus: rowRes.data?.status ?? null,
@@ -1037,13 +1063,14 @@ export async function updateProduct(id: string, fd: FormData): Promise<void> {
         supplierCount: formHasSuppliers
           ? parseSupplierIdsFromForm(fd).length
           : facts.supplierCount,
-        // A manual thumbnail uploaded THIS save overrides the stale DB value
-        // (mirrors glb/fbx above); scene covers themselves are generated
-        // async after commit, so otherwise the DB thumbnail is authoritative.
-        // Same source-blind non-white qualifier as loadPublishGateFacts.
-        hasScene: updates.thumbnail_url
-          ? await hasQualifiedSceneCover(updates.thumbnail_url)
-          : facts.hasScene,
+        // A manual thumbnail uploaded THIS save is an EXTRA pass path (the DB
+        // thumbnail facts read is stale for it); OR the widened facts.hasScene
+        // (any non-cover storefront image is already a qualified scene). So a
+        // just-uploaded scene cover OR an existing real scene photo both pass.
+        hasScene:
+          (updates.thumbnail_url
+            ? await hasQualifiedSceneCover(updates.thumbnail_url)
+            : false) || facts.hasScene,
       });
       if (!gate.ok) {
         redirect(
@@ -1245,6 +1272,10 @@ export async function setProductItemTypeAction(fd: FormData): Promise<void> {
 
 // ─── Bulk operations ─────────────────────────────────────────────
 
+// Cap on how many skipped-product ids ride back in the redirect URL as
+// deep-links (keeps the URL bounded on huge batches; the count stays exact).
+const SKIPPED_DEEPLINK_CAP = 30;
+
 export async function bulkUpdateStatusAction(fd: FormData): Promise<void> {
   const ids = fd.getAll("ids").map((x) => x.toString()).filter(Boolean);
   const next = pickOne(str(fd, "status"), PRODUCT_STATUSES) as
@@ -1270,6 +1301,9 @@ export async function bulkUpdateStatusAction(fd: FormData): Promise<void> {
   // and the failure mode obvious if a single row's query throws.
   let targetIds = ids;
   let blockedCount = 0;
+  // The ids that failed a gate — carried back so the dashboard can name each
+  // skipped product (name+SKU) and deep-link it, not just show a count.
+  const blockedIds: string[] = [];
   let firstBlockedReasons: PublishGateReason[] | null = null;
   // The operator-written defect_reason of the first defect-blocked row, so the
   // toast can say WHY it's flagged instead of a generic "missing something".
@@ -1289,6 +1323,7 @@ export async function bulkUpdateStatusAction(fd: FormData): Promise<void> {
         passed.push(id);
       } else {
         blockedCount++;
+        blockedIds.push(id);
         if (!firstBlockedReasons) firstBlockedReasons = result.reasons;
         if (!firstDefectReason && result.reasons.includes("defect")) {
           firstDefectReason = facts.defectReason ?? "";
@@ -1333,6 +1368,11 @@ export async function bulkUpdateStatusAction(fd: FormData): Promise<void> {
     qs.set("blocked", String(blockedCount));
     if (firstBlockedReasons?.length) {
       qs.set("reason", firstBlockedReasons.join(","));
+    }
+    // Skipped ids (capped) → dashboard lists each blocked product as a
+    // name+SKU deep-link. #36 Notes-定位 pattern reused.
+    if (blockedIds.length) {
+      qs.set("skipped", blockedIds.slice(0, SKIPPED_DEEPLINK_CAP).join(","));
     }
   }
   redirect(`/admin?${qs.toString()}`);
