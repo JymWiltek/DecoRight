@@ -396,24 +396,25 @@ export default function ProductForm({
                       : `Error (${errCode})`}
             </div>
             {errMsg && <div className="mt-1 text-xs">{errMsg}</div>}
-            {/* Scene gate — two clickable fix paths so the operator doesn't
-                have to hunt: mark an existing image as the cover (in-page
-                jump to the Images section), or generate one via Bulk AI on
-                the list filtered to this product. */}
+            {/* Scene gate (widened to all images) — two clickable fix paths so
+                the operator doesn't have to hunt: generate an AI scene via Bulk
+                AI on the list filtered to this product, or upload a real photo
+                (in-page jump to the Images section — ANY non-white image now
+                clears the gate). All-white is a hard block: no skip option. */}
             {errCode === "publish_blocked" &&
               publishBlockedReasons?.includes("scene") && (
                 <div className="mt-2 flex flex-wrap gap-2">
-                  <a
-                    href="#ch-images"
-                    className="rounded-md border border-rose-300 bg-white px-2.5 py-1 text-xs font-medium text-rose-700 transition hover:bg-rose-100"
-                  >
-                    标记已有图片为场景图 ↑
-                  </a>
                   <a
                     href={`/admin?q=${encodeURIComponent(p?.name ?? "")}`}
                     className="rounded-md border border-rose-300 bg-white px-2.5 py-1 text-xs font-medium text-rose-700 transition hover:bg-rose-100"
                   >
                     生成场景图（Run AI）→
+                  </a>
+                  <a
+                    href="#ch-images"
+                    className="rounded-md border border-rose-300 bg-white px-2.5 py-1 text-xs font-medium text-rose-700 transition hover:bg-rose-100"
+                  >
+                    上传实拍图 ↑
                   </a>
                 </div>
               )}

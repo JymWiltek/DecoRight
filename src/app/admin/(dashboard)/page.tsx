@@ -250,6 +250,10 @@ type SearchParams = Promise<{
   /** Set alongside reason=defect — the operator-written defect_reason of the
    *  blocked row, so the toast names WHY rather than just "defective". */
   defect_reason?: string;
+  /** Comma-separated ids of products a bulk Publish skipped (capped). The
+   *  toast lists each by name+SKU as a deep-link to its Edit page so the
+   *  operator jumps straight to the blocked product (#36 Notes-定位 reuse). */
+  skipped?: string;
   /** "1" = include empty drafts in the listing (overrides the default
    *  hide). Empty drafts = status='draft' AND no images AND no rooms,
    *  the orphan rows the /admin/products/new auto-create flow leaves
@@ -618,6 +622,40 @@ export default async function AdminProductsPage({
                 {blocked} skipped ({reasonLabel})
               </span>
             )}
+            {blocked > 0 &&
+              (() => {
+                // Name each skipped product (name · SKU) as a deep-link to its
+                // Edit page so the operator jumps straight to the fix — instead
+                // of only a count. Ids come capped from the action; map to the
+                // already-loaded rows for name+SKU (unknown ids fall back to id).
+                const ids = (sp.skipped ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+                if (ids.length === 0) return null;
+                const byId = new Map(products.map((p) => [p.id, p]));
+                return (
+                  <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1 text-xs">
+                    {ids.map((id) => {
+                      const p = byId.get(id);
+                      const label = p
+                        ? `${p.name || "(untitled)"}${p.sku_id ? ` · ${p.sku_id}` : ""}`
+                        : id.slice(0, 8);
+                      return (
+                        <a
+                          key={id}
+                          href={`/admin/products/${id}/edit`}
+                          className="text-amber-800 underline decoration-amber-400 underline-offset-2 hover:text-amber-900"
+                        >
+                          {label} →
+                        </a>
+                      );
+                    })}
+                    {blocked > ids.length && (
+                      <span className="text-amber-700">
+                        +{blocked - ids.length} more
+                      </span>
+                    )}
+                  </div>
+                );
+              })()}
           </div>
         );
       })()}
