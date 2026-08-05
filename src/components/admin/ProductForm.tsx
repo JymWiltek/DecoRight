@@ -40,6 +40,7 @@ import type {
 } from "@/lib/supabase/types";
 import type { Taxonomy } from "@/lib/taxonomy";
 import PillGrid from "./PillGrid";
+import StorageStatusBanner from "./StorageStatusBanner";
 import SubtypePicker from "./SubtypePicker";
 import RoomsPicker from "./RoomsPicker";
 import RegionsPicker from "./RegionsPicker";
@@ -377,6 +378,8 @@ export default function ProductForm({
             <SubmitButtons isEdit={isEdit} busy={busy} />
           </div>
         </header>
+
+        <StorageStatusBanner />
 
         {meshyBanner}
 

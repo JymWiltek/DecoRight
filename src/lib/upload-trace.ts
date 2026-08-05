@@ -108,12 +108,45 @@ export function stepBannerSummary(s: UploadTraceStep): string {
  * jitter, not a structural bug (the structural ones were fixed in earlier
  * rounds), so the fix is retry, not more forensics.
  *
- * Retry policy: at most 2 retries (3 attempts total), waiting these ms
- * before each retry. Retries happen within seconds, far inside Supabase's
- * signed-upload-URL validity (~2 h), so the same URL is safely reused — no
- * re-sign needed.
+ * Retry policy (PB, revised): 2 retries, waiting 2 s then 15 s. The old
+ * 1 s / 3 s burned all three attempts inside a single multi-second outage —
+ * Jym's environment drops the path to Supabase for seconds-to-tens-of-seconds
+ * at a time, so short blind retries were useless. The 15 s slot is also
+ * CONNECTIVITY-GATED: before the second retry we probe the storage host and,
+ * if it's still down, WAIT for it to recover (capped) instead of firing into a
+ * dead window. If it never recovers within the cap, we stop and hand off to the
+ * operator's one-click "re-upload failed files" path. Signed upload URLs are
+ * valid ~2 h, so reusing the same URL across these waits is safe.
  */
-export const PUT_RETRY_DELAYS_MS = [1000, 3000] as const;
+export const PUT_RETRY_DELAYS_MS = [2000, 15000] as const;
+
+/** How long the pre-second-retry connectivity gate waits for the storage host
+ *  to come back before giving up to the refill path, and how often it re-probes. */
+export const PUT_CONNECTIVITY_WAIT_CAP_MS = 60_000;
+export const PUT_CONNECTIVITY_POLL_MS = 2_500;
+
+/**
+ * Poll `probe` until it returns true or `capMs` elapses. Used to hold a retry
+ * until connectivity actually returns rather than blindly firing into an
+ * ongoing outage. Returns true if it recovered, false on timeout. `sleep` is
+ * injectable for tests.
+ */
+export async function waitForConnectivity(
+  probe: () => Promise<boolean>,
+  opts?: { capMs?: number; pollMs?: number; sleep?: (ms: number) => Promise<void> },
+): Promise<boolean> {
+  const capMs = opts?.capMs ?? PUT_CONNECTIVITY_WAIT_CAP_MS;
+  const pollMs = opts?.pollMs ?? PUT_CONNECTIVITY_POLL_MS;
+  const sleep =
+    opts?.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  let waited = 0;
+  for (;;) {
+    if (await probe()) return true;
+    if (waited >= capMs) return false;
+    await sleep(pollMs);
+    waited += pollMs;
+  }
+}
 
 /**
  * The outcome of ONE byte-PUT attempt, classified for the retry decision:
@@ -136,16 +169,27 @@ export type PutAttemptResult =
  * (it must catch its own fetch rejection and return "network-error" rather
  * than throwing). "ok" and "http-error" short-circuit immediately; only
  * "network-error" retries, up to `delaysMs.length` times, sleeping the
- * matching delay before each. Returns the final result plus how many
- * retries were consumed. `sleep` is injectable so tests run instantly.
+ * matching delay before each.
+ *
+ * Connectivity gate: when a `probe` is supplied, the step BEFORE the final
+ * retry waits for the probe to go green (up to the cap) instead of firing into
+ * a still-dead window. If connectivity never returns, the retry is abandoned
+ * and `gaveUpWaiting` is set so the caller can route to the one-click refill.
+ *
+ * `sleep` is injectable so tests run instantly. Returns the final result, how
+ * many retries were consumed, and whether it gave up waiting on connectivity.
  */
 export async function putWithNetworkRetry(
   attempt: () => Promise<PutAttemptResult>,
   opts?: {
     delaysMs?: readonly number[];
     sleep?: (ms: number) => Promise<void>;
+    /** Reachability check for the storage host (probeStorageReachable). */
+    probe?: () => Promise<boolean>;
+    connectivityCapMs?: number;
+    connectivityPollMs?: number;
   },
-): Promise<{ result: PutAttemptResult; retries: number }> {
+): Promise<{ result: PutAttemptResult; retries: number; gaveUpWaiting?: boolean }> {
   const delays = opts?.delaysMs ?? PUT_RETRY_DELAYS_MS;
   const sleep =
     opts?.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
@@ -155,6 +199,16 @@ export async function putWithNetworkRetry(
     if (result.kind !== "network-error") return { result, retries };
     if (retries >= delays.length) return { result, retries }; // budget spent
     await sleep(delays[retries]);
+    // Before the FINAL retry, gate on connectivity: don't fire into an ongoing
+    // outage (that's exactly how the old 1s/3s policy wasted every attempt).
+    if (opts?.probe && retries === delays.length - 1) {
+      const recovered = await waitForConnectivity(opts.probe, {
+        capMs: opts.connectivityCapMs,
+        pollMs: opts.connectivityPollMs,
+        sleep,
+      });
+      if (!recovered) return { result, retries, gaveUpWaiting: true };
+    }
     retries++;
   }
 }
