@@ -26,7 +26,7 @@
  * (orphaned storage objects are cheap — same trade-off as before).
  */
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import ProductDraftCard, {
   type DraftCardState,
@@ -47,6 +47,14 @@ import {
   putRetryExhaustedNote,
   type UploadTraceStep,
 } from "@/lib/upload-trace";
+import { probeStorageReachable } from "@/lib/admin/storage-probe";
+import {
+  initCardUpload,
+  countPendingFiles,
+  buildCardFd,
+  type CardUpload,
+} from "@/lib/admin/bulk-upload-state";
+import StorageStatusBanner from "./StorageStatusBanner";
 
 const MAX_CARDS = 10;
 
@@ -136,6 +144,11 @@ export default function BulkCreateForm({
   // failure carries the raw evidence.
   const [trace, setTrace] = useState<UploadTraceStep[]>([]);
   const [showDetails, setShowDetails] = useState(false);
+  // Per-card upload progress (survives partial failure) + the cards whose files
+  // died, driving the "重传失败的 N 个文件" button. The ref holds the mutable
+  // working state; failedCardIds is the render-visible summary.
+  const uploadsRef = useRef<Map<string, CardUpload>>(new Map());
+  const [failedCardIds, setFailedCardIds] = useState<string[]>([]);
 
   function addCard() {
     if (cards.length >= MAX_CARDS) return;
@@ -176,10 +189,27 @@ export default function BulkCreateForm({
       );
       return;
     }
+    // Fresh batch — reset per-card upload progress + trace.
+    uploadsRef.current.clear();
+    setFailedCardIds([]);
+    setTrace([]);
+    await runUpload(submittable);
+  }
+
+  /** Re-run ONLY the cards whose files died — reusing each card's productId and
+   *  skipping its already-uploaded files (the one-click 重传失败的文件 path). */
+  async function refill() {
+    const failedCards = submittable.filter((c) =>
+      failedCardIds.includes(c.cardId),
+    );
+    if (failedCards.length === 0) return;
+    await runUpload(failedCards);
+  }
+
+  async function runUpload(cardsToProcess: DraftCardState[]) {
     setError(null);
     setBusy(true);
     setShowDetails(false);
-    setTrace([]);
 
     // ── PB-A diagnostics: one traceId for the whole run; every step is timed,
     //    logged to console ([upload-trace]) and collected for the "诊断详情"
@@ -270,13 +300,20 @@ export default function BulkCreateForm({
         }
       };
 
-      const { result, retries } = await putWithNetworkRetry(attempt);
+      // Pass the storage probe so the final retry waits for connectivity to
+      // return instead of firing into an ongoing outage (see putWithNetworkRetry).
+      const { result, retries, gaveUpWaiting } = await putWithNetworkRetry(
+        attempt,
+        { probe: probeStorageReachable },
+      );
 
       if (result.kind === "network-error") {
         const c = classifyError(result.error);
         const s: UploadTraceStep = { ...base, durationMs: Date.now() - startMs, ok: false,
           retries, errorName: c.name, errorMessage: c.message,
-          note: putRetryExhaustedNote(route === "via-app-api") };
+          note: gaveUpWaiting
+            ? "网络层失败:等待存储恢复超时,失败文件已保留 —— 请点「重传失败的文件」"
+            : putRetryExhaustedNote(route === "via-app-api") };
         record(s); throw new UploadTraceError(s);
       }
       if (result.kind === "http-error") {
@@ -318,166 +355,145 @@ export default function BulkCreateForm({
       record({ ...base, durationMs: Date.now() - startMs, ok: true });
     };
 
-    try {
-      for (let i = 0; i < submittable.length; i++) {
-        const card = submittable[i];
-        const n = `${i + 1}/${submittable.length}`;
-        setProgress(`Uploading product ${n}…`);
-        const productId = crypto.randomUUID();
-        const fd = new FormData();
-
-        // ── Scalars: category (item_type) + subtype + rooms + dims ──
-        if (card.itemType) fd.set("item_type", card.itemType);
-        if (card.subtypeSlug) fd.set("subtype_slug", card.subtypeSlug);
-        for (const r of card.roomSlugs) fd.append("room_slugs", r);
-        const dims = card.realDimensions;
-        if (dims.length != null) fd.set("dim_length", String(dims.length));
-        if (dims.width != null) fd.set("dim_width", String(dims.width));
-        if (dims.height != null) fd.set("dim_height", String(dims.height));
-        // Mig 0048 — bulk supplier links: same product_suppliers_json field
-        // single-edit emits, with channel defaults (in-stock, no price).
-        if (card.supplierIds.length > 0) {
-          fd.set(
-            "product_suppliers_json",
-            JSON.stringify(
-              card.supplierIds.map((supplier_id) => ({
-                supplier_id,
-                price_myr: null,
-                stock_status: "in_stock",
-                buy_url: null,
-                store_address: null,
-                is_exclusive: false,
-              })),
-            ),
-          );
-        }
-
-        // ── Photos: split into product vs reference, mirroring the
-        //    single-edit dropzones (raw_image_entries / real_photo_entries).
-        const uploaded = await Promise.all(
-          card.photos.map(async (file, idx) => {
-            const ticket = await tSign(
-              "raw_image", `请求图片签名 URL:${file.name}`, productId, file,
-            );
-            await tPut(`上传图片 ${file.name} 到存储`, "raw_image", ticket.signedUrl, file);
-            const ext = ticket.path.split(".").pop()?.toLowerCase() ?? "jpg";
-            return {
-              imageId: ticket.imageId!,
-              ext,
-              type: card.photoTypes[idx] ?? defaultPhotoType(idx),
-            };
-          }),
+    // Upload every not-yet-done file in a card, updating `up` in place. Throws
+    // on the first failure; the per-card catch below keeps the batch going and
+    // preserves what already succeeded, so a refill re-sends only the dead files.
+    const uploadCardFiles = async (card: DraftCardState, up: CardUpload) => {
+      for (let idx = 0; idx < card.photos.length; idx++) {
+        if (up.photos[idx]) continue; // already uploaded — skip on refill
+        const file = card.photos[idx];
+        const ticket = await tSign(
+          "raw_image", `请求图片签名 URL:${file.name}`, up.productId, file,
         );
-        const rawEntries = uploaded
-          .filter((u) => u.type === "product")
-          .map(({ imageId, ext }) => ({ imageId, ext }));
-        const realEntries = uploaded
-          .filter((u) => u.type === "reference")
-          .map(({ imageId, ext }) => ({ imageId, ext }));
-        if (rawEntries.length) {
-          fd.set("raw_image_entries", JSON.stringify(rawEntries));
-        }
-        if (realEntries.length) {
-          fd.set("real_photo_entries", JSON.stringify(realEntries));
-        }
+        await tPut(`上传图片 ${file.name} 到存储`, "raw_image", ticket.signedUrl, file);
+        const ext = ticket.path.split(".").pop()?.toLowerCase() ?? "jpg";
+        up.photos[idx] = {
+          imageId: ticket.imageId!,
+          ext,
+          type: card.photoTypes[idx] ?? defaultPhotoType(idx),
+        };
+      }
 
-        // ── GLB (optional) ──
-        if (card.glbFile && card.glbBudget) {
-          const ticket = await tSign(
-            "glb", `请求 GLB 签名 URL:${card.glbFile.name}`, productId, card.glbFile,
-          );
-          await tPut(`上传 ${card.glbFile.name} 到存储`, "glb", ticket.signedUrl, card.glbFile);
-          fd.set("glb_path", ticket.path);
-          fd.set("glb_size_kb", String(card.glbBudget.sizeKb));
-          fd.set("glb_vertex_count", String(card.glbBudget.vertexCount));
-          fd.set("glb_max_texture_dim", String(card.glbBudget.maxTextureDim));
-          fd.set("glb_decoded_ram_mb", String(card.glbBudget.decodedRamMb));
+      if (card.glbFile && card.glbBudget && !up.glbPath) {
+        const ticket = await tSign(
+          "glb", `请求 GLB 签名 URL:${card.glbFile.name}`, up.productId, card.glbFile,
+        );
+        await tPut(`上传 ${card.glbFile.name} 到存储`, "glb", ticket.signedUrl, card.glbFile);
+        up.glbPath = ticket.path;
+      }
+
+      // FBX (optional): bare .fbx + loose textures, OR a pre-packaged .zip.
+      if (card.fbxFile && !up.fbxPath) {
+        const kind: "fbx_bundle" | "fbx" = card.fbxIsZip ? "fbx_bundle" : "fbx";
+        const signLabel = card.fbxIsZip
+          ? `请求 FBX zip 签名 URL:${card.fbxFile.name}`
+          : `请求 FBX 签名 URL:${card.fbxFile.name}`;
+        const putLabel = card.fbxIsZip
+          ? `上传 ${card.fbxFile.name}(zip)到存储`
+          : `上传 ${card.fbxFile.name} 到存储`;
+        const ticket = await tSign(kind, signLabel, up.productId, card.fbxFile);
+        await tPut(putLabel, kind, ticket.signedUrl, card.fbxFile);
+        up.fbxPath = ticket.path;
+      } else if (!card.fbxFile && card.textureFiles.length) {
+        // Textures without an FBX make no sense — surface it (caught per-card).
+        throw new Error("add the .fbx before its texture maps (or clear the textures).");
+      }
+
+      // Loose texture maps (bare-fbx path only) → products/<id>/textures/<name>.
+      if (card.fbxFile && !card.fbxIsZip) {
+        for (let idx = 0; idx < card.textureFiles.length; idx++) {
+          if (up.textures[idx]) continue;
+          const tf = card.textureFiles[idx];
+          const t = await tSign("texture", `请求贴图签名 URL:${tf.name}`, up.productId, tf);
+          await tPut(`上传贴图 ${tf.name} 到存储`, "texture", t.signedUrl, tf);
+          up.textures[idx] = true;
         }
+      }
+    };
 
-        // ── FBX (optional): bare .fbx + loose textures, OR a pre-packaged
-        //    .zip. The two are mutually exclusive — the server validates
-        //    a zip contains a .fbx and skips packageFbxBundle for it.
-        if (card.fbxFile) {
-          if (card.fbxIsZip) {
-            const ticket = await tSign(
-              "fbx_bundle", `请求 FBX zip 签名 URL:${card.fbxFile.name}`, productId, card.fbxFile,
-            );
-            await tPut(`上传 ${card.fbxFile.name}(zip)到存储`, "fbx_bundle", ticket.signedUrl, card.fbxFile);
-            fd.set("fbx_bundle_path", ticket.path);
-            fd.set(
-              "fbx_bundle_size_kb",
-              String(Math.round(card.fbxFile.size / 1024)),
-            );
-          } else {
-            const ticket = await tSign(
-              "fbx", `请求 FBX 签名 URL:${card.fbxFile.name}`, productId, card.fbxFile,
-            );
-            await tPut(`上传 ${card.fbxFile.name} 到存储`, "fbx", ticket.signedUrl, card.fbxFile);
-            fd.set("fbx_path", ticket.path);
-            fd.set("fbx_size_kb", String(Math.round(card.fbxFile.size / 1024)));
-
-            // Loose texture maps → products/<id>/textures/<name>. The
-            // server's shouldDispatchFbxBundle picks up textures_changed
-            // and folds them into the zip alongside the .fbx.
-            if (card.textureFiles.length) {
-              await Promise.all(
-                card.textureFiles.map(async (tf) => {
-                  const t = await tSign(
-                    "texture", `请求贴图签名 URL:${tf.name}`, productId, tf,
-                  );
-                  await tPut(`上传贴图 ${tf.name} 到存储`, "texture", t.signedUrl, tf);
-                }),
-              );
-              fd.set("textures_changed", "1");
-            }
+    // Per-card, FAILURE-TOLERANT: one card's dead file no longer aborts the
+    // whole batch. Successful cards are created; a failed card keeps its files +
+    // productId so refill() re-sends ONLY its dead files and completes the SAME
+    // row (no duplicate). Files/fields are never cleared on failure.
+    let firstFailStep: UploadTraceStep | null = null;
+    let firstFailMsg: string | null = null;
+    try {
+      for (let i = 0; i < cardsToProcess.length; i++) {
+        const card = cardsToProcess[i];
+        const n = `${i + 1}/${cardsToProcess.length}`;
+        setProgress(`Uploading product ${n}…`);
+        let up = uploadsRef.current.get(card.cardId);
+        if (!up) {
+          up = initCardUpload(card);
+          uploadsRef.current.set(card.cardId, up);
+        }
+        try {
+          await uploadCardFiles(card, up);
+          setProgress(`Creating product ${n}…`);
+          await tCreate(up.productId, buildCardFd(card, up));
+          up.status = "done";
+        } catch (e) {
+          up.status = "failed";
+          if (e instanceof UploadTraceError) {
+            if (!firstFailStep) firstFailStep = e.step;
+          } else if (e instanceof Error && !firstFailMsg) {
+            firstFailMsg = e.message;
           }
-        } else if (card.textureFiles.length) {
-          // Textures without an FBX make no sense for a new product —
-          // surface it instead of silently dropping the uploads.
-          throw new Error(
-            `Product ${n}: add the .fbx before its texture maps (or clear the textures).`,
-          );
         }
-
-        setProgress(`Creating product ${n}…`);
-        await tCreate(productId, fd);
       }
-
-      // Push to /admin so the operator sees the freshly-minted drafts.
-      // The async tail (AI spec parse + glb compression + fbx bundling)
-      // keeps running server-side; refresh in ~30s to see AI-filled fields.
-      setTrace(steps);
-      router.push("/admin");
-    } catch (e) {
-      // PB-A — NO MORE guessing (the #34 "页面可能已过期" copy was a guess,
-      // and it was wrong: "Failed to fetch" recurs on a freshly-reloaded page,
-      // which rules out both session expiry AND stale deploy). Show the EXACT
-      // failed step + raw error; the collected steps drive the "诊断详情"
-      // panel so a screenshot is enough evidence. State (files/fields) is NOT
-      // cleared. The #34 DeployStaleBanner mechanism is untouched (it lives on
-      // the page, not here).
-      setTrace(steps);
-      const failed =
-        e instanceof UploadTraceError
-          ? e.step
-          : (steps.find((s) => s.ok === false) ?? null);
-      if (failed) {
-        setError(stepBannerSummary(failed));
-      } else {
-        setError(e instanceof Error ? e.message : String(e));
-      }
-      setShowDetails(steps.length > 0);
     } finally {
+      // APPEND the trace so a refill's resign+retry shows alongside the original
+      // failure. The #34 DeployStaleBanner mechanism (on the page) is untouched.
+      setTrace((prev) => [...prev, ...steps]);
       setBusy(false);
       setProgress(null);
     }
+
+    // Which submittable cards are STILL failed (a refill clears the recovered).
+    const stillFailed = submittable
+      .filter((c) => uploadsRef.current.get(c.cardId)?.status === "failed")
+      .map((c) => c.cardId);
+    setFailedCardIds(stillFailed);
+    if (stillFailed.length === 0) {
+      // Every started product is now created (across the initial run + refills).
+      // The async tail (AI spec parse + glb compression + fbx bundling) keeps
+      // running server-side; the list refreshes in ~30s with AI-filled fields.
+      router.push("/admin");
+    } else {
+      setError(
+        firstFailStep
+          ? stepBannerSummary(firstFailStep)
+          : firstFailMsg ?? "部分产品的文件上传失败,请点「重传失败的文件」。",
+      );
+      setShowDetails(steps.length > 0);
+    }
   }
+
+  // How many dead files across the still-failed cards — the "N" in the button.
+  const failedFileCount = failedCardIds.reduce((sum, id) => {
+    const card = cards.find((c) => c.cardId === id);
+    const up = uploadsRef.current.get(id);
+    return sum + (card && up ? countPendingFiles(card, up) : 0);
+  }, 0);
 
   return (
     <div>
+      <StorageStatusBanner />
       {error && (
         <div className="mb-4 rounded-md border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
           <div className="font-medium">{error}</div>
+          {failedCardIds.length > 0 && (
+            <button
+              type="button"
+              onClick={refill}
+              disabled={busy}
+              className="mt-2 rounded-md border border-rose-400 bg-white px-3 py-1.5 text-sm font-semibold text-rose-700 transition hover:bg-rose-100 disabled:opacity-50"
+            >
+              {busy
+                ? "重传中…"
+                : `重传失败的 ${failedFileCount} 个文件（${failedCardIds.length} 个产品）`}
+            </button>
+          )}
           {trace.length > 0 && (
             <div className="mt-2">
               <button
