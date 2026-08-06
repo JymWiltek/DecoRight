@@ -54,6 +54,7 @@ import { invalidatePublishedCountsCache } from "@/lib/products";
 import { runRembgForImage } from "@/lib/rembg/pipeline";
 import {
   checkPublishGates,
+  publishAudit,
   PUBLISHABLE_PHOTO_STATE,
   PUBLISHABLE_PHOTO_KIND,
   type PublishGateInput,
@@ -1077,6 +1078,9 @@ export async function updateProduct(id: string, fd: FormData): Promise<void> {
           `/admin/products/${id}/edit?err=publish_blocked&reason=${gate.reasons.join(",")}`,
         );
       }
+      // Publish audit (mig 0056): this is the draft→published transition via a
+      // human Save/Publish click — stamp who/when.
+      Object.assign(updates, publishAudit("manual"));
     }
   }
 
@@ -1192,11 +1196,15 @@ export async function setProductStatusAction(fd: FormData): Promise<void> {
   // gates the published transition here too. Without this, anyone
   // who knew the action's name could POST a published flip on a
   // GLB-less row and skip the redesigned Publish flow entirely.
+  // Whether this is a genuine draft→published transition (drives the publish
+  // audit stamp — an already-published row re-published is a no-op, not stamped).
+  let publishTransition = false;
   if (next === "published") {
     const facts = await loadPublishGateFacts(id);
     // PB3-A 既往不咎: only gate the draft→published transition. Flipping an
     // already-published row to published is a no-op and never re-gated.
     if (facts.currentStatus !== "published") {
+      publishTransition = true;
       const gate = checkPublishGates(facts);
       if (!gate.ok) {
         redirect(
@@ -1207,9 +1215,13 @@ export async function setProductStatusAction(fd: FormData): Promise<void> {
   }
 
   const supabase = createServiceRoleClient();
+  // Publish audit (mig 0056) on the transition only.
+  const patch = publishTransition
+    ? { status: next, ...publishAudit("manual") }
+    : { status: next };
   const { error } = await supabase
     .from("products")
-    .update({ status: next })
+    .update(patch)
     .eq("id", id);
   if (error) {
     redirect(
@@ -1308,6 +1320,9 @@ export async function bulkUpdateStatusAction(fd: FormData): Promise<void> {
   // The operator-written defect_reason of the first defect-blocked row, so the
   // toast can say WHY it's flagged instead of a generic "missing something".
   let firstDefectReason: string | null = null;
+  // The subset of `passed` that is a genuine draft→published transition (an
+  // already-published row is a no-op) — only these get the publish audit stamp.
+  const newlyPublishedIds: string[] = [];
   if (next === "published") {
     const passed: string[] = [];
     for (const id of ids) {
@@ -1321,6 +1336,7 @@ export async function bulkUpdateStatusAction(fd: FormData): Promise<void> {
       const result = checkPublishGates(facts);
       if (result.ok) {
         passed.push(id);
+        newlyPublishedIds.push(id);
       } else {
         blockedCount++;
         blockedIds.push(id);
@@ -1355,6 +1371,16 @@ export async function bulkUpdateStatusAction(fd: FormData): Promise<void> {
     .in("id", targetIds);
   if (error) {
     redirect(`/admin?err=bulk&msg=${encodeURIComponent(error.message)}`);
+  }
+  // Publish audit (mig 0056): stamp ONLY the genuine draft→published
+  // transitions from THIS bulk click (already-published rows keep their
+  // original published_at). Separate write so the status update above is
+  // untouched.
+  if (next === "published" && newlyPublishedIds.length > 0) {
+    await supabase
+      .from("products")
+      .update(publishAudit("bulk"))
+      .in("id", newlyPublishedIds);
   }
   revalidatePath("/admin");
   revalidatePath("/");
@@ -3166,19 +3192,21 @@ export async function processDraftAsync(d: BulkCreateDraft): Promise<void> {
     return;
   }
 
-  // ── Confidence-gated auto-publish ───────────────────────────────
-  // Required to even attempt: name + item_type + 1+ rooms (Wave 7
-  // spec's "minimum publishable" set). Without these the storefront
-  // surfaces wouldn't make sense.
+  // ── Publish-READINESS annotation (NOT publishing) ───────────────
+  // Auto-publish was REMOVED after the 2026-08-05 incident (products went live
+  // with no human click). This tail now ONLY fills data + records what still
+  // blocks publishing; it NEVER flips status. Going live is ALWAYS a human
+  // click in the admin — no exceptions, no switch. The blocks below just
+  // annotate missing_fields so the admin's "Ready to publish" view is accurate.
+  //
+  // Minimum-publishable set (Wave 7): name + item_type + 1+ rooms.
   const hasMinimum =
     !!updates.name && !!updates.item_type && (updates.room_slugs?.length ?? 0) > 0;
-  // ANY low-confidence field disqualifies — operator should see it
-  // first.
+  // ANY low-confidence field is surfaced so the operator reviews it first.
   const anyLow = Object.values(confidences).some((c) => c === "low");
 
   if (!hasMinimum || anyLow) {
-    // Persist a reason on missing_fields so the list explains why we
-    // didn't auto-publish.
+    // Persist a reason on missing_fields so the list explains what's not ready.
     const reasons = [...missing];
     if (anyLow) {
       for (const [k, c] of Object.entries(confidences)) {
@@ -3193,9 +3221,10 @@ export async function processDraftAsync(d: BulkCreateDraft): Promise<void> {
     return;
   }
 
-  // Publish gates: rooms + cutout + glb + fbx + retailer (PB3-A). This
-  // AI auto-publish path is a draft→published transition too, so it goes
-  // through the SAME gate as manual/bulk Publish — no drift.
+  // Publish READINESS gate (rooms + cutout + glb + fbx + retailer + scene).
+  // We run the SAME gate as manual/bulk Publish ONLY to annotate missing_fields
+  // with publish_gate_* reasons — we do NOT publish. Whether the gate passes or
+  // fails, the row STAYS draft; publishing is a human click.
   const facts = await loadPublishGateFacts(d.productId);
   // Fresh values from this run override stale DB reads where possible.
   const gate = checkPublishGates({
@@ -3207,6 +3236,7 @@ export async function processDraftAsync(d: BulkCreateDraft): Promise<void> {
     hasScene: facts.hasScene,
   });
   if (!gate.ok) {
+    // Record what still blocks publishing so the admin sees it (still draft).
     await supabase
       .from("products")
       .update({
@@ -3218,17 +3248,8 @@ export async function processDraftAsync(d: BulkCreateDraft): Promise<void> {
         ],
       })
       .eq("id", d.productId);
-    revalidatePath("/admin");
-    return;
   }
-
-  // All green — flip to published.
-  await supabase
-    .from("products")
-    .update({ status: "published" })
-    .eq("id", d.productId);
-  invalidatePublishedCountsCache();
+  // Gate clean → the product is READY TO PUBLISH, but it stays draft until a
+  // human clicks Publish. NO status write, NO storefront revalidation here.
   revalidatePath("/admin");
-  revalidatePath("/");
-  revalidatePath(`/product/${d.productId}`);
 }
