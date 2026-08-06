@@ -111,27 +111,31 @@ export type ScenePropSpec = {
   referenceItemType: string;
 };
 
+/**
+ * Optional props for a vanity/basin scene (PB). The mirror + faucet are NOT here
+ * — they are MANDATORY, written into VANITY_BASIN_RULE (drawn even with no
+ * reference); their optional reference IMAGES resolve in maybeGenerateSceneCover.
+ * These three are the secondary, ROLLED props under the iron law: each is drawn
+ * only when the catalog has a bathroom_equipments white-bg reference AND it wins
+ * its 30% roll. Shared across all three vanity/basin item_types.
+ */
+const VANITY_BASIN_PROPS: ScenePropSpec[] = [
+  { key: "towel_ring", label: "a towel ring on the wall with a hand towel", probability: 0.3, referenceItemType: "bathroom_equipments" },
+  { key: "glass_shelf", label: "a small glass shelf on the wall beside the basin", probability: 0.3, referenceItemType: "bathroom_equipments" },
+  { key: "rack", label: "a towel rack or rail on the wall holding a folded towel", probability: 0.3, referenceItemType: "bathroom_equipments" },
+];
+
 export const SCENE_PROP_RULES: Record<string, ScenePropSpec[]> = {
   toilet: [
     { key: "spray", label: "a bidet spray hose mounted on the wall beside the toilet", probability: 0.6, referenceItemType: "bathroom_equipments" },
     { key: "paper_holder", label: "a wall-mounted toilet-paper holder with a paper roll on it", probability: 0.5, referenceItemType: "bathroom_equipments" },
     { key: "towel", label: "a towel rail or rack on the wall holding a folded towel", probability: 0.3, referenceItemType: "bathroom_equipments" },
   ],
-  basin: [
-    { key: "towel", label: "a towel rail or rack on the wall holding a folded towel", probability: 0.3, referenceItemType: "bathroom_equipments" },
-    { key: "shelf", label: "a small wall shelf beside the basin", probability: 0.3, referenceItemType: "bathroom_equipments" },
-  ],
-  // vanity keeps a mirror — but under the SAME iron law: it appears only when a
-  // real mirror product (item_type 'mirror') has a white-bg photo. No mirror
-  // product ⇒ no invented mirror. Keyed for both vanity item_type values.
-  bathroom_vanity: [
-    { key: "mirror", label: "a wall mirror mounted on the wall directly above the basin", probability: 0.9, referenceItemType: "mirror" },
-    { key: "towel_ring", label: "a towel ring on the wall with a hand towel", probability: 0.3, referenceItemType: "bathroom_equipments" },
-  ],
-  vanity: [
-    { key: "mirror", label: "a wall mirror mounted on the wall directly above the basin", probability: 0.9, referenceItemType: "mirror" },
-    { key: "towel_ring", label: "a towel ring on the wall with a hand towel", probability: 0.3, referenceItemType: "bathroom_equipments" },
-  ],
+  // vanity/basin — the mirror moved OUT of this pool to a MANDATORY rule
+  // (VANITY_BASIN_RULE); what's left are the 30% optional accessories.
+  basin: VANITY_BASIN_PROPS,
+  bathroom_vanity: VANITY_BASIN_PROPS,
+  vanity: VANITY_BASIN_PROPS,
   // NOTE: faucet has NO prop spec here. Its water-catching basin/sink is the
   // product's PHYSICAL SUPPORT, not a decorative prop — it is written into the
   // UNCONDITIONAL faucet item_type rule (FAUCET_RULES in mounting-scene-rules)

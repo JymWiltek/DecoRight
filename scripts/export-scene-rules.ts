@@ -14,6 +14,7 @@ import {
   SUBTYPE_IMPLIES_MOUNTING,
   FAUCET_RULES,
   FAUCET_KITCHEN_TOKENS,
+  structuralIntegrityRule,
 } from "../config/mounting-scene-rules";
 import {
   SCENE_PALETTE_POOLS,
@@ -91,6 +92,24 @@ for (const kind of ["kitchen", "basin"] as const) {
   L.push(`#### \`faucet · ${kind}\``);
   L.push("");
   L.push(FAUCET_RULES[kind]);
+  L.push("");
+}
+
+L.push("### 主产品结构约束(无条件,全类别)");
+L.push("");
+L.push(
+  "`structuralIntegrityRule(mounting)` 由 `buildScenePromptForProduct` **无条件注入每一张**场景 prompt" +
+    "(三张 vanity 图暴露的台面脱节悬浮 / 挂墙柜画成四腿落地柜)。基线永远生效;挂墙/落地细则随 mounting 叠加。",
+);
+L.push("");
+for (const [label, m] of [
+  ["基线(mounting 未知)", null],
+  ["wall_mounted(挂墙:无腿、下方悬空)", "wall_mounted"],
+  ["floor_standing(落地:触地)", "floor_standing"],
+] as const) {
+  L.push(`#### ${label}`);
+  L.push("");
+  L.push(structuralIntegrityRule(m));
   L.push("");
 }
 
