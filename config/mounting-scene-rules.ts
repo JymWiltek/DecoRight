@@ -102,6 +102,29 @@ export const MOUNTING_HEIGHT_MM = {
   faucet_above_basin_mm: 250, // spout above basin rim (Jym's 200–300 range)
 } as const;
 
+/** item_types that render as a bathroom wash-basin / vanity scene — the faucet
+ *  + mirror are MANDATORY for all three (see VANITY_BASIN_RULE). grep-confirmed
+ *  real item_types: bathroom_vanity, vanity, basin. */
+export const VANITY_BASIN_TYPES = new Set(["bathroom_vanity", "vanity", "basin"]);
+
+/**
+ * vanity/basin scene rule (PB — three vanity scenes came back with a bare basin
+ * and no faucet, and an empty wall above). A wash-basin scene ALWAYS needs a
+ * faucet (functional) and a mirror above it.
+ */
+const VANITY_BASIN_RULE =
+  "BASIN SCENE (mandatory): a real bathroom wash-basin / vanity. " +
+  "FAUCET (mandatory, FUNCTIONAL — the ONE exception to the 'no reference ⇒ don't " +
+  "draw' iron law): the basin MUST have a water faucet / mixer tap, positioned " +
+  `correctly over the bowl with the spout about ${MOUNTING_HEIGHT_MM.faucet_above_basin_mm} ` +
+  "mm above the basin rim. A faucet MUST still be drawn even when no faucet " +
+  "reference photo is attached — it is functionally required. " +
+  "MIRROR (mandatory): a mirror on the WALL DIRECTLY ABOVE the basin. Prefer the " +
+  "ATTACHED mirror reference photo when one is provided; otherwise draw a plain " +
+  "framed wall mirror. " +
+  "FORBIDDEN: do NOT render a bare basin with NO faucet; do NOT leave the wall " +
+  "directly above the basin EMPTY with no mirror.";
+
 export const ITEM_TYPE_SCENE_RULES: Record<string, string> = {
   toilet:
     "PLACEMENT (mandatory): the toilet's BACK — its cistern/tank and rear face " +
@@ -152,11 +175,48 @@ export const ITEM_TYPE_SCENE_RULES: Record<string, string> = {
     "bedroom / hallway wooden-shelf look; do NOT pile it with clutter as if it " +
     "were a general storage rack.",
 
+  // vanity/basin — all three real item_types share the mandatory-faucet +
+  // mandatory-mirror rule. The reference IMAGES (a real faucet / mirror we sell)
+  // are resolved separately in maybeGenerateSceneCover; the text here draws them
+  // even with no reference.
+  bathroom_vanity: VANITY_BASIN_RULE,
+  vanity: VANITY_BASIN_RULE,
+  basin: VANITY_BASIN_RULE,
+
   // faucet is NOT in this map — its rule is UNCONDITIONAL + kitchen/bathroom
   // split, resolved via FAUCET_RULES + faucetKind() (see below and
   // resolveItemTypeSceneRule). A faucet with no/unknown mounting still gets the
   // basin iron law (the mounting resolver isn't consulted for the basin rule).
 };
+
+/**
+ * Structural-integrity clause injected into EVERY scene prompt (all item_types,
+ * UNCONDITIONAL — the vanity scenes showed a detached floating countertop and a
+ * wall-hung vanity drawn as a 4-leg floor cabinet). `mounting` = the canonical
+ * MOUNTING_SCENE_RULES key (wall_mounted / floor_standing / …) or null when
+ * mounting is unknown (then only the base connected/supported rule applies).
+ */
+export function structuralIntegrityRule(mounting: string | null): string {
+  const wall = mounting === "wall_mounted";
+  const floor = mounting === "floor_standing";
+  return (
+    "STRUCTURAL INTEGRITY (mandatory, applies to EVERY product): all parts of the " +
+    "product are structurally CONNECTED and physically supported — a countertop / " +
+    "top and its cabinet / base / frame are ONE joined piece, never separated; " +
+    "nothing is detached and no part floats or hovers in mid-air. " +
+    (wall
+      ? "This product is WALL-MOUNTED: it is fixed FLUSH to the wall and the space " +
+        "directly BELOW it is EMPTY — it has NO legs and NO feet, and nothing of it " +
+        "touches the floor. "
+      : "") +
+    (floor
+      ? "This product is FLOOR-STANDING: its base rests firmly ON the floor, in full " +
+        "contact with it. "
+      : "") +
+    "FORBIDDEN: no part may be disconnected, floating, hovering, or drawn standing " +
+    "on legs it does not have."
+  );
+}
 
 /**
  * faucet basin/sink IRON LAW + kitchen/bathroom split (PB — after #37 still let

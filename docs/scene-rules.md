@@ -36,7 +36,7 @@ INSTALLATION (mandatory): the product is recessed INTO the wall or into cabinetr
 
 INSTALLATION (mandatory): the product is fitted into the internal angle where TWO WALLS MEET, touching both wall faces, with empty space below it. It must not be placed on a table, counter, shelf or any other furniture.
 
-## ② Item_type 摆位规则(4 条)
+## ② Item_type 摆位规则(7 条)
 
 键 = `products.item_type` 的真实值。**无条目的类别不注入、不报错** —— 机制对所有类别就绪,规则内容按 Jym 的节奏逐类补,不预造。
 
@@ -58,6 +58,18 @@ BATHROOM CONTEXT (mandatory): mounted on the wall within arm's reach of a toilet
 
 BATHROOM CONTEXT (mandatory): mounted on the wall, about 1550 mm above the floor, and by default DRAPED with a folded towel. PREFERRED (not required): a wall near the shower area or beside the washbasin. FORBIDDEN: do NOT stand it on a countertop or on the floor; do NOT render a bedroom / hallway wooden-shelf look; do NOT pile it with clutter as if it were a general storage rack.
 
+### `bathroom_vanity`
+
+BASIN SCENE (mandatory): a real bathroom wash-basin / vanity. FAUCET (mandatory, FUNCTIONAL — the ONE exception to the 'no reference ⇒ don't draw' iron law): the basin MUST have a water faucet / mixer tap, positioned correctly over the bowl with the spout about 250 mm above the basin rim. A faucet MUST still be drawn even when no faucet reference photo is attached — it is functionally required. MIRROR (mandatory): a mirror on the WALL DIRECTLY ABOVE the basin. Prefer the ATTACHED mirror reference photo when one is provided; otherwise draw a plain framed wall mirror. FORBIDDEN: do NOT render a bare basin with NO faucet; do NOT leave the wall directly above the basin EMPTY with no mirror.
+
+### `vanity`
+
+BASIN SCENE (mandatory): a real bathroom wash-basin / vanity. FAUCET (mandatory, FUNCTIONAL — the ONE exception to the 'no reference ⇒ don't draw' iron law): the basin MUST have a water faucet / mixer tap, positioned correctly over the bowl with the spout about 250 mm above the basin rim. A faucet MUST still be drawn even when no faucet reference photo is attached — it is functionally required. MIRROR (mandatory): a mirror on the WALL DIRECTLY ABOVE the basin. Prefer the ATTACHED mirror reference photo when one is provided; otherwise draw a plain framed wall mirror. FORBIDDEN: do NOT render a bare basin with NO faucet; do NOT leave the wall directly above the basin EMPTY with no mirror.
+
+### `basin`
+
+BASIN SCENE (mandatory): a real bathroom wash-basin / vanity. FAUCET (mandatory, FUNCTIONAL — the ONE exception to the 'no reference ⇒ don't draw' iron law): the basin MUST have a water faucet / mixer tap, positioned correctly over the bowl with the spout about 250 mm above the basin rim. A faucet MUST still be drawn even when no faucet reference photo is attached — it is functionally required. MIRROR (mandatory): a mirror on the WALL DIRECTLY ABOVE the basin. Prefer the ATTACHED mirror reference photo when one is provided; otherwise draw a plain framed wall mirror. FORBIDDEN: do NOT render a bare basin with NO faucet; do NOT leave the wall directly above the basin EMPTY with no mirror.
+
 ### `faucet`(无条件盆承接铁律 + 厨房/浴室分流)
 
 faucet 不在上面的 map —— 盆承接是**无条件铁律**(不依赖 mounting 命中,mounting 为空也生效),并按**产品名**分流:命中 `kitchen` / `sink` / `pull-out` / `pull out` / `pullout` / `厨房` → kitchen(不锈钢厨房水槽 + 厨房语境);否则 → basin(陶瓷台盆 + 浴室语境)。承接盆是主产品的**物理承接**,库内无参照也必须画(不适用「无参照不画」道具铁律);有参照则喂图 + 记 `scene_reference_product_ids`。
@@ -69,6 +81,22 @@ PLACEMENT (mandatory, IRON LAW — no exceptions): a faucet ALWAYS pours into a 
 #### `faucet · basin`
 
 PLACEMENT (mandatory, IRON LAW — no exceptions): a faucet ALWAYS pours into a fixture that catches the water. There MUST be one DIRECTLY BELOW the spout, with the spout about 250 mm above its rim. When mounting is known this stacks with the mounting rule (wall-mounted = basin on a counter below the projecting spout; deck-mounted = faucet rising from the counter or the fixture's own rim). FORBIDDEN under ALL circumstances: do NOT place the faucet on a bare wall, an empty counter, the floor, or as a standalone decorative object; the area directly under the spout must NEVER be empty — a catching fixture is always present. CATCHING FIXTURE (mandatory): a CERAMIC WASH BASIN on a vanity/counter. BATHROOM context. FORBIDDEN: do NOT use a stainless-steel kitchen sink or a kitchen setting for a basin faucet.
+
+### 主产品结构约束(无条件,全类别)
+
+`structuralIntegrityRule(mounting)` 由 `buildScenePromptForProduct` **无条件注入每一张**场景 prompt(三张 vanity 图暴露的台面脱节悬浮 / 挂墙柜画成四腿落地柜)。基线永远生效;挂墙/落地细则随 mounting 叠加。
+
+#### 基线(mounting 未知)
+
+STRUCTURAL INTEGRITY (mandatory, applies to EVERY product): all parts of the product are structurally CONNECTED and physically supported — a countertop / top and its cabinet / base / frame are ONE joined piece, never separated; nothing is detached and no part floats or hovers in mid-air. FORBIDDEN: no part may be disconnected, floating, hovering, or drawn standing on legs it does not have.
+
+#### wall_mounted(挂墙:无腿、下方悬空)
+
+STRUCTURAL INTEGRITY (mandatory, applies to EVERY product): all parts of the product are structurally CONNECTED and physically supported — a countertop / top and its cabinet / base / frame are ONE joined piece, never separated; nothing is detached and no part floats or hovers in mid-air. This product is WALL-MOUNTED: it is fixed FLUSH to the wall and the space directly BELOW it is EMPTY — it has NO legs and NO feet, and nothing of it touches the floor. FORBIDDEN: no part may be disconnected, floating, hovering, or drawn standing on legs it does not have.
+
+#### floor_standing(落地:触地)
+
+STRUCTURAL INTEGRITY (mandatory, applies to EVERY product): all parts of the product are structurally CONNECTED and physically supported — a countertop / top and its cabinet / base / frame are ONE joined piece, never separated; nothing is detached and no part floats or hovers in mid-air. This product is FLOOR-STANDING: its base rests firmly ON the floor, in full contact with it. FORBIDDEN: no part may be disconnected, floating, hovering, or drawn standing on legs it does not have.
 
 ## ③ 背景色调池(材质 → 色调池,每次从池随机抽一个)
 
@@ -128,18 +156,21 @@ PLACEMENT (mandatory, IRON LAW — no exceptions): a faucet ALWAYS pours into a 
 
 ### `basin`
 
-- `towel`(概率 30%,参照 `bathroom_equipments`):a towel rail or rack on the wall holding a folded towel
-- `shelf`(概率 30%,参照 `bathroom_equipments`):a small wall shelf beside the basin
+- `towel_ring`(概率 30%,参照 `bathroom_equipments`):a towel ring on the wall with a hand towel
+- `glass_shelf`(概率 30%,参照 `bathroom_equipments`):a small glass shelf on the wall beside the basin
+- `rack`(概率 30%,参照 `bathroom_equipments`):a towel rack or rail on the wall holding a folded towel
 
 ### `bathroom_vanity`
 
-- `mirror`(概率 90%,参照 `mirror`):a wall mirror mounted on the wall directly above the basin
 - `towel_ring`(概率 30%,参照 `bathroom_equipments`):a towel ring on the wall with a hand towel
+- `glass_shelf`(概率 30%,参照 `bathroom_equipments`):a small glass shelf on the wall beside the basin
+- `rack`(概率 30%,参照 `bathroom_equipments`):a towel rack or rail on the wall holding a folded towel
 
 ### `vanity`
 
-- `mirror`(概率 90%,参照 `mirror`):a wall mirror mounted on the wall directly above the basin
 - `towel_ring`(概率 30%,参照 `bathroom_equipments`):a towel ring on the wall with a hand towel
+- `glass_shelf`(概率 30%,参照 `bathroom_equipments`):a small glass shelf on the wall beside the basin
+- `rack`(概率 30%,参照 `bathroom_equipments`):a towel rack or rail on the wall holding a folded towel
 
 ### 流程裁定:异形/非常规几何产品
 

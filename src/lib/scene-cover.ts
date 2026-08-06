@@ -6,6 +6,8 @@ import {
   resolveItemTypeSceneRule,
   resolveSizeTierPhrasing,
   faucetKind,
+  structuralIntegrityRule,
+  VANITY_BASIN_TYPES,
 } from "@config/mounting-scene-rules";
 import {
   resolveScenePalettePool,
@@ -153,6 +155,10 @@ export function scenePrompt(
    *  did the catalog reference lookup). null for item_types with no prop rule.
    *  Appended AFTER the #28 segments — it never touches placement/size. */
   propsClause?: string | null,
+  /** Structural-integrity clause (structuralIntegrityRule). UNCONDITIONAL — the
+   *  caller always supplies it (all item_types), so a detached/floating part or a
+   *  wall-hung unit drawn with legs is forbidden every time. */
+  structuralClause?: string | null,
 ): string {
   // Material class + item_type → background-scene pool (config), one picked by
   // the per-product seed so a batch of white toilets spreads across looks.
@@ -161,6 +167,7 @@ export function scenePrompt(
   // Empties dropped so a missing layer doesn't leave a double space.
   const constraints = [
     mountingConstraint ?? surfaceHint(itemType, name),
+    structuralClause,
     itemTypeConstraint,
     dimensionClause,
     propsClause,
@@ -285,6 +292,11 @@ export function buildScenePromptForProduct(
         `nothing floats, hovers or is stuck to a blank wall.`
       : null;
 
+  // Structural integrity — UNCONDITIONAL, all item_types. Wall/floor specifics
+  // apply only when mounting is known (unknown → base connected/supported rule).
+  const canonicalMount = mount.kind === "unknown" ? null : mount.mounting;
+  const structuralClause = structuralIntegrityRule(canonicalMount);
+
   const tone = classify(product.colors ?? [], product.name);
   const prompt = scenePrompt(
     product.item_type,
@@ -295,6 +307,7 @@ export function buildScenePromptForProduct(
     itemTypeConstraint,
     dimensionClause,
     propsClause,
+    structuralClause,
   );
   const note =
     mount.kind === "no_rule"
@@ -737,6 +750,26 @@ export async function maybeGenerateSceneCover(
     }
   }
 
+  // vanity/basin mandatory-fixture references (PB): a wash-basin's faucet and
+  // the mirror above it are MANDATORY (drawn even with no reference — written
+  // into VANITY_BASIN_RULE). If the catalog HAS a real faucet / mirror white-bg
+  // product, feed its photo as a style reference + record it. Same reference
+  // mechanism as the faucet fixture; separate from pickSceneProps.
+  let vanityFaucetRefId: string | null = null;
+  let vanityMirrorRefId: string | null = null;
+  if (VANITY_BASIN_TYPES.has((product.item_type ?? "").trim())) {
+    const f = await findSceneReferenceProducts(supabase, ["faucet"]);
+    if (f.length > 0) {
+      vanityFaucetRefId = f[0].id;
+      refUrlById.set(f[0].id, f[0].url);
+    }
+    const m = await findSceneReferenceProducts(supabase, ["mirror"]);
+    if (m.length > 0) {
+      vanityMirrorRefId = m[0].id;
+      refUrlById.set(m[0].id, m[0].url);
+    }
+  }
+
   // Prompt pre-flight — ONE entry (buildScenePromptForProduct) resolves
   // mounting + real size + item_type placement + props and assembles the
   // prompt, OR blocks. Runs BEFORE the source image is fetched, so a product
@@ -745,14 +778,23 @@ export async function maybeGenerateSceneCover(
   if (!promptResult.ok) return skip(promptResult.reason);
 
   // Only tell the model to "model on the ATTACHED reference" when one is really
-  // attached; append it for the faucet fixture reference.
-  const finalPrompt = faucetRefId
-    ? promptResult.prompt +
-      " The wash basin/sink below the faucet — model it on the ATTACHED reference product photo (a real fixture we sell)."
-    : promptResult.prompt;
+  // attached; append a line per mandatory-fixture reference that exists.
+  const finalPrompt =
+    promptResult.prompt +
+    (faucetRefId
+      ? " The wash basin/sink below the faucet — model it on the ATTACHED reference product photo (a real fixture we sell)."
+      : "") +
+    (vanityFaucetRefId
+      ? " The faucet/mixer tap on the basin — model it on the ATTACHED reference product photo (a real faucet we sell)."
+      : "") +
+    (vanityMirrorRefId
+      ? " The mirror above the basin — model it on the ATTACHED reference product photo (a real mirror we sell)."
+      : "");
   const allRefIds = [
     ...promptResult.referenceProductIds,
     ...(faucetRefId ? [faucetRefId] : []),
+    ...(vanityFaucetRefId ? [vanityFaucetRefId] : []),
+    ...(vanityMirrorRefId ? [vanityMirrorRefId] : []),
   ];
 
   const srcUrl =
