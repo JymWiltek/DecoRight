@@ -120,6 +120,12 @@ export type ProductRow = {
    *  badge on the product page. Operator toggle; default false. */
   is_verified_real_product: boolean;
   status: ProductStatus;
+  /** Mig 0056 — publish audit: which path published this row ('manual' single
+   *  / 'bulk'), and when the draft→published transition happened. NULL = never
+   *  published, or legacy. After the auto-publish removal these are the record
+   *  that every publish was a human action. */
+  published_by: "manual" | "bulk" | null;
+  published_at: string | null;
   /** Mig 0051 — operator-raised "this product is bad". NOT a status: it is
    *  orthogonal to draft/published and blocks publishing via the sixth
    *  publish gate until someone clears it. */

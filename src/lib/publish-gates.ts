@@ -102,3 +102,21 @@ export function checkPublishGates(input: PublishGateInput):
   const reasons = missingPublishGates(input);
   return reasons.length === 0 ? { ok: true } : { ok: false, reasons };
 }
+
+/** Which human action published a row (mig 0056 audit). There is no automatic
+ *  source: after the 2026-08-05 auto-publish removal, publishing is ALWAYS a
+ *  human click. */
+export type PublishSource = "manual" | "bulk";
+
+/**
+ * The publish-audit stamp for a draft→published transition — the SINGLE place
+ * that shapes `published_by` + `published_at`, so every publish path records
+ * identically. Spread into the products UPDATE only on the transition (not on
+ * re-saves of an already-published row). `now` is injectable for tests.
+ */
+export function publishAudit(
+  source: PublishSource,
+  now: Date = new Date(),
+): { published_by: PublishSource; published_at: string } {
+  return { published_by: source, published_at: now.toISOString() };
+}
